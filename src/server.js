@@ -90,6 +90,7 @@ function sanitizeApiKeyRecord(record, includeKey = true) {
     key: includeKey ? key : maskKey(key),
     preview: maskKey(key),
     enabled: record?.enabled !== false,
+    allowedModels: Array.isArray(record?.allowedModels) ? record.allowedModels : [],
     createdAt: record?.createdAt || "",
     updatedAt: record?.updatedAt || "",
     lastUsedAt: record?.lastUsedAt || ""
@@ -537,6 +538,14 @@ function recordRequestLog({
   });
 }
 
+function isModelAllowed(apiKeyRecord, model) {
+  const allowed = apiKeyRecord?.allowedModels;
+  if (!Array.isArray(allowed) || allowed.length === 0) return true;
+  const modelId = String(model || "").trim();
+  if (!modelId) return true;
+  return allowed.some((item) => String(item || "").trim() === modelId);
+}
+
 async function proxyToProvider(req, res) {
   const apiKey = getUserApiKey(req);
   if (!apiKey) {
@@ -547,6 +556,12 @@ async function proxyToProvider(req, res) {
   const { db, user, apiKeyRecord } = findUserByKey(apiKey);
   if (!user) {
     sendError(res, 401, "Invalid or disabled SAPI API key.", "invalid_api_key");
+    return;
+  }
+
+  const model = req.body?.model || "";
+  if (model && !isModelAllowed(apiKeyRecord, model)) {
+    sendError(res, 403, `Model "${model}" is not allowed for this API key.`, "model_not_allowed");
     return;
   }
 
@@ -741,7 +756,7 @@ app.get("/api/user/me", requireUserAccount, (req, res) => {
   res.json({ user: sanitizeUser(req.user), config: serviceConfig() });
 });
 
-function createUserApiKeyRecord(user, name = "") {
+function createUserApiKeyRecord(user, name = "", allowedModels = []) {
   const createdAt = now();
   const apiKeys = getApiKeys(user);
   const record = {
@@ -749,6 +764,7 @@ function createUserApiKeyRecord(user, name = "") {
     name: String(name || "").trim() || `API Key ${apiKeys.length + 1}`,
     key: randomApiKey(),
     enabled: true,
+    allowedModels: Array.isArray(allowedModels) ? allowedModels : [],
     createdAt,
     updatedAt: createdAt,
     lastUsedAt: ""
@@ -762,10 +778,12 @@ function createUserApiKeyRecord(user, name = "") {
 }
 
 app.post("/api/user/api-key", requireUserAccount, (req, res) => {
+  const name = String(req.body?.name || "").trim();
+  const allowedModels = Array.isArray(req.body?.allowedModels) ? req.body.allowedModels : [];
   const updated = mutateDb((db) => {
     const user = db.users.find((item) => item.id === req.user.id);
     if (!user) return null;
-    createUserApiKeyRecord(user, req.body?.name);
+    createUserApiKeyRecord(user, name, allowedModels);
     return user;
   });
 
@@ -841,6 +859,9 @@ app.put("/api/user/api-keys/:id", requireUserAccount, (req, res) => {
     }
     if (req.body?.enabled !== undefined) {
       target.enabled = Boolean(req.body.enabled);
+    }
+    if (req.body?.allowedModels !== undefined) {
+      target.allowedModels = Array.isArray(req.body.allowedModels) ? req.body.allowedModels : [];
     }
     const updatedAt = now();
     target.updatedAt = updatedAt;
@@ -1247,13 +1268,13 @@ app.get("/api/public/key/:apiKey", (req, res) => {
 
 app.get("/v1/models", (req, res) => {
   const apiKey = getUserApiKey(req);
-  const { db, user } = findUserByKey(apiKey);
+  const { db, user, apiKeyRecord } = findUserByKey(apiKey);
   if (!user) {
     sendError(res, 401, "Invalid or disabled SAPI API key.", "invalid_api_key");
     return;
   }
 
-  const models = [
+  let models = [
     ...new Map(
       db.providers
         .filter((provider) => provider.enabled)
@@ -1261,6 +1282,12 @@ app.get("/v1/models", (req, res) => {
         .map((m) => [m.id, m])
     ).values()
   ];
+
+  const allowed = apiKeyRecord?.allowedModels;
+  if (Array.isArray(allowed) && allowed.length > 0) {
+    const allowedSet = new Set(allowed.map((item) => String(item || "").trim()));
+    models = models.filter((model) => allowedSet.has(model.id));
+  }
 
   res.json({
     object: "list",
@@ -1274,6 +1301,25 @@ app.get("/v1/models", (req, res) => {
   });
 });
 
+app.get("/api/health/providers", (req, res) => {
+  const db = readDb();
+  const providers = db.providers
+    .filter((p) => p.enabled)
+    .map((p) => ({
+      id: p.id,
+      name: p.name,
+      baseUrl: p.baseUrl,
+      models: (p.models || []).map(normalizeModel),
+      healthStatus: p.healthStatus || "unknown",
+      latency: p.latency || 0,
+      ping: p.ping || 0,
+      availability7d: p.availability7d ?? 100,
+      lastHealthCheck: p.lastHealthCheck || "",
+      healthHistory: (p.healthHistory || []).slice(-60)
+    }));
+  res.json({ providers });
+});
+
 app.all("/v1/*", proxyToProvider);
 
 app.use((req, res) => {
@@ -1285,7 +1331,87 @@ app.use((req, res) => {
   res.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });
 
+function inferProviderVendor(name = "", baseUrl = "") {
+  const text = `${name} ${baseUrl}`.toLowerCase();
+  if (text.includes("openai")) return "OpenAI";
+  if (text.includes("anthropic")) return "Anthropic";
+  if (text.includes("deepseek")) return "DeepSeek";
+  if (text.includes("gemini") || text.includes("google")) return "Google";
+  if (text.includes("azure")) return "Azure";
+  if (text.includes("cohere")) return "Cohere";
+  if (text.includes("mistral")) return "Mistral";
+  if (text.includes("x.ai") || text.includes("grok")) return "xAI";
+  return "";
+}
+
+function computeAvailability(history) {
+  const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const recent = history.filter((h) => h.timestamp >= since);
+  if (recent.length === 0) return 100;
+  const okCount = recent.filter((h) => h.status === "ok").length;
+  return Math.round((okCount / recent.length) * 10000) / 100;
+}
+
+async function checkProviderHealth(provider) {
+  const url = buildUpstreamUrl(provider.baseUrl, "/v1/models");
+  const startedAt = Date.now();
+  let status = "fail";
+  let latency = 0;
+
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        authorization: `Bearer ${provider.apiKey}`,
+        accept: "application/json"
+      }
+    });
+    latency = Date.now() - startedAt;
+    if (response.ok) {
+      status = latency > 5000 ? "slow" : "ok";
+    } else {
+      status = "fail";
+    }
+  } catch {
+    latency = Date.now() - startedAt;
+    status = "fail";
+  }
+
+  const healthStatus = status === "ok" ? "healthy" : status === "slow" ? "degraded" : "down";
+  const historyEntry = {
+    timestamp: now(),
+    status,
+    latency
+  };
+
+  mutateDb((db) => {
+    const p = db.providers.find((item) => item.id === provider.id);
+    if (!p) return;
+    p.healthStatus = healthStatus;
+    p.latency = latency;
+    p.ping = latency;
+    p.lastHealthCheck = historyEntry.timestamp;
+    if (!Array.isArray(p.healthHistory)) p.healthHistory = [];
+    p.healthHistory.push(historyEntry);
+    if (p.healthHistory.length > 120) {
+      p.healthHistory = p.healthHistory.slice(-120);
+    }
+    p.availability7d = computeAvailability(p.healthHistory);
+    p.updatedAt = now();
+  });
+}
+
+function runHealthChecks() {
+  const db = readDb();
+  const enabledProviders = db.providers.filter((p) => p.enabled);
+  for (const provider of enabledProviders) {
+    checkProviderHealth(provider).catch(() => {});
+  }
+}
+
 app.listen(PORT, () => {
   console.log(`SAPI is running at http://localhost:${PORT}`);
   console.log(`Admin console: http://localhost:${PORT}/#admin`);
+  runHealthChecks();
+  setInterval(runHealthChecks, 60000);
 });

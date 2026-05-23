@@ -53,6 +53,33 @@ function readDb() {
     db.requestLogs = [];
     changed = true;
   }
+  for (const provider of db.providers) {
+    if (!provider.healthStatus) {
+      provider.healthStatus = "unknown";
+      changed = true;
+    }
+    if (typeof provider.latency !== "number") {
+      provider.latency = 0;
+      changed = true;
+    }
+    if (typeof provider.ping !== "number") {
+      provider.ping = 0;
+      changed = true;
+    }
+    if (typeof provider.availability7d !== "number") {
+      provider.availability7d = 100;
+      changed = true;
+    }
+    if (!Array.isArray(provider.healthHistory)) {
+      provider.healthHistory = [];
+      changed = true;
+    }
+    if (!provider.lastHealthCheck) {
+      provider.lastHealthCheck = "";
+      changed = true;
+    }
+  }
+
   for (const user of db.users) {
     if (!user.username) {
       user.username = String(user.name || user.id || "").trim().toLowerCase();
@@ -108,6 +135,10 @@ function readDb() {
         }
         if (normalized.lastUsedAt === undefined) {
           normalized.lastUsedAt = "";
+          itemChanged = true;
+        }
+        if (!Array.isArray(normalized.allowedModels)) {
+          normalized.allowedModels = [];
           itemChanged = true;
         }
         if (itemChanged) changed = true;

@@ -5,6 +5,7 @@ import {
   AppBar,
   Box,
   Button,
+  Checkbox,
   Chip,
   CircularProgress,
   CssBaseline,
@@ -14,13 +15,18 @@ import {
   DialogContentText,
   DialogTitle,
   Drawer,
+  FormControl,
   FormControlLabel,
   IconButton,
+  InputLabel,
   List,
   ListItemButton,
   ListItemIcon,
   ListItemText,
+  MenuItem,
+  OutlinedInput,
   Paper,
+  Select,
   Snackbar,
   Stack,
   Switch,
@@ -181,6 +187,9 @@ function App() {
   const [userUsage, setUserUsage] = useState(null);
   const [toast, setToast] = useState({ open: false, message: "", severity: "success" });
   const [confirm, setConfirm] = useState(null);
+  const [createKeyOpen, setCreateKeyOpen] = useState(false);
+  const [createdKeyInfo, setCreatedKeyInfo] = useState(null);
+  const [providerHealth, setProviderHealth] = useState([]);
   const compact = useMediaQuery(theme.breakpoints.down("md"));
 
   const showToast = useCallback((message, severity = "success") => {
@@ -193,6 +202,15 @@ function App() {
       setHealth("ok");
     } catch {
       setHealth("fail");
+    }
+  }, []);
+
+  const loadProviderHealth = useCallback(async () => {
+    try {
+      const data = await request("/api/health/providers", { admin: false });
+      setProviderHealth(data.providers || []);
+    } catch {
+      setProviderHealth([]);
     }
   }, []);
 
@@ -249,6 +267,12 @@ function App() {
   useEffect(() => {
     checkHealth();
   }, [checkHealth]);
+
+  useEffect(() => {
+    loadProviderHealth();
+    const timer = setInterval(loadProviderHealth, 30000);
+    return () => clearInterval(timer);
+  }, [loadProviderHealth]);
 
   useEffect(() => {
     if (route === "admin" && adminToken) {
@@ -331,15 +355,22 @@ function App() {
     navigate("portal");
   };
 
-  const createUserApiKey = async () => {
+  const createUserApiKey = async ({ name, allowedModels }) => {
     const data = await request("/api/user/api-key", {
       method: "POST",
       admin: false,
-      token: userToken
+      token: userToken,
+      body: { name, allowedModels }
     });
     setUserSession((current) => ({ ...(current || {}), user: data.user }));
-    const createdKey = data.user.apiKeys?.slice(-1)[0]?.key || data.user.apiKey || "";
+    const record = data.user.apiKeys?.slice(-1)[0];
+    const createdKey = record?.key || data.user.apiKey || "";
     setSelectedKey(createdKey);
+    setCreatedKeyInfo({
+      key: createdKey,
+      name: record?.name || "API Key",
+      allowedModels: record?.allowedModels || []
+    });
     showToast("API Key 已创建");
   };
 
@@ -542,13 +573,13 @@ function App() {
                 selectedKey={selectedKey}
                 user={userSession?.user || null}
                 usage={userUsage}
+                providerHealth={providerHealth}
                 onNavigate={navigate}
                 onUserLogout={() => {
                   userLogout();
                   showToast("已退出");
                 }}
-                onCreateApiKey={() =>
-                  createUserApiKey().catch((error) => showToast(error.message, "error"))
+                onCreateApiKey={() => setCreateKeyOpen(true)
                 }
                 onRotateApiKey={(key) =>
                   setConfirm({
@@ -562,7 +593,7 @@ function App() {
                   updateUserApiKey(keyId, body).catch((error) => showToast(error.message, "error"))
                 }
                 onRefresh={() =>
-                  Promise.all([loadUserSession(), loadUserUsage()])
+                  Promise.all([loadUserSession(), loadUserUsage(), loadProviderHealth()])
                     .then(() => showToast("已刷新"))
                     .catch((error) => showToast(error.message, "error"))
                 }
@@ -572,6 +603,7 @@ function App() {
               <AdminView
                 page={adminPage}
                 state={adminState}
+                providerHealth={providerHealth}
                 onLogout={() => {
                   logout();
                   showToast("已退出");
@@ -595,6 +627,20 @@ function App() {
         confirm={confirm}
         onClose={() => setConfirm(null)}
         onError={(error) => showToast(error.message, "error")}
+      />
+      <CreateApiKeyDialog
+        open={createKeyOpen}
+        models={userSession?.config?.models || []}
+        onClose={() => setCreateKeyOpen(false)}
+        onCreate={({ name, allowedModels }) =>
+          createUserApiKey({ name, allowedModels })
+            .catch((error) => showToast(error.message, "error"))
+        }
+      />
+      <CreatedKeyDialog
+        info={createdKeyInfo}
+        onClose={() => setCreatedKeyInfo(null)}
+        onCopy={copyText}
       />
       {snackbar}
     </ThemeProvider>
@@ -1193,6 +1239,7 @@ function PortalView({
   selectedKey,
   user,
   usage,
+  providerHealth,
   onNavigate,
   onUserLogout,
   onCreateApiKey,
@@ -1271,6 +1318,10 @@ function PortalView({
         <Metric icon={<ApiIcon />} label="可用模型" value={effectiveConfig.models.length} />
         <Metric icon={<KeyIcon />} label="端点数量" value={effectiveConfig.endpoints.length} />
       </Box>
+      ) : null}
+
+      {providerHealth.length > 0 && ["overview", "models"].includes(currentPage) ? (
+        <ProviderHealthSection providers={providerHealth} />
       ) : null}
 
       {["overview", "key", "models"].includes(currentPage) ? (
@@ -1457,6 +1508,16 @@ function ApiKeyCard({ apiKey, usage, onCopy, onRotate, onToggle }) {
             />
           ) : null}
         </Stack>
+        {apiKey.allowedModels?.length > 0 ? (
+          <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap">
+            <Typography variant="caption" color="text.secondary" sx={{ mr: 0.5 }}>
+              可用模型：
+            </Typography>
+            {apiKey.allowedModels.map((model) => (
+              <Chip key={model} label={model} size="small" variant="outlined" color="primary" />
+            ))}
+          </Stack>
+        ) : null}
         <Box component="code" sx={{ ...inlineCodeSx, display: "block", p: 1.1, mx: 0 }}>
           {apiKey.key || apiKey.preview || "-"}
         </Box>
@@ -1720,6 +1781,7 @@ function UsageSection({ usage }) {
 function AdminView({
   page = "overview",
   state,
+  providerHealth,
   onLogout,
   onCopy,
   onRefresh,
@@ -1777,6 +1839,10 @@ function AdminView({
           <Metric icon={<DnsIcon />} label="上游供应商" value={providers.length} />
           <Metric icon={<KeyIcon />} label="用户账号" value={users.length} />
         </Box>
+      ) : null}
+
+      {providerHealth.length > 0 && currentPage === "overview" ? (
+        <ProviderHealthSection providers={providerHealth} />
       ) : null}
 
       {currentPage === "usage" && usage ? <UsageSection usage={usage} /> : null}
@@ -2503,6 +2569,204 @@ function EmptyState({ text }) {
   );
 }
 
+function inferVendor(name = "", baseUrl = "") {
+  const text = `${name} ${baseUrl}`.toLowerCase();
+  if (text.includes("openai")) return "OpenAI";
+  if (text.includes("anthropic")) return "Anthropic";
+  if (text.includes("deepseek")) return "DeepSeek";
+  if (text.includes("gemini") || text.includes("google")) return "Google";
+  if (text.includes("azure")) return "Azure";
+  if (text.includes("cohere")) return "Cohere";
+  if (text.includes("mistral")) return "Mistral";
+  if (text.includes("x.ai") || text.includes("grok")) return "xAI";
+  return "";
+}
+
+function statusColor(status) {
+  if (status === "healthy") return "#34d399";
+  if (status === "degraded") return "#fbbf24";
+  return "#f87171";
+}
+
+function statusLabel(status) {
+  if (status === "healthy") return "正常";
+  if (status === "degraded") return "降级";
+  return "不可用";
+}
+
+function ProviderHealthCard({ provider }) {
+  const vendor = inferVendor(provider.name, provider.baseUrl);
+  const primaryModel = provider.models?.[0];
+  const modelName = primaryModel?.name || primaryModel?.id || "";
+  const history = (provider.healthHistory || []).slice(-60);
+  const availability = provider.availability7d ?? 100;
+  const label = statusLabel(provider.healthStatus);
+  const statusChipColor =
+    provider.healthStatus === "healthy"
+      ? "success"
+      : provider.healthStatus === "degraded"
+        ? "warning"
+        : "error";
+  const availabilityColor =
+    availability >= 90 ? "success.main" : availability >= 70 ? "warning.main" : "error.main";
+
+  return (
+    <Paper
+      variant="outlined"
+      sx={{
+        p: 2,
+        display: "flex",
+        flexDirection: "column",
+        gap: 1.5,
+        bgcolor: "background.paper"
+      }}
+    >
+      <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
+        <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0 }}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 780, overflowWrap: "anywhere" }}>
+            {provider.name}
+          </Typography>
+          {vendor ? (
+            <Chip label={vendor} size="small" color="primary" variant="outlined" sx={{ fontSize: 11, height: 22, flexShrink: 0 }} />
+          ) : null}
+        </Stack>
+        <Chip label={label} size="small" color={statusChipColor} variant="outlined" sx={{ fontWeight: 700, flexShrink: 0 }} />
+      </Stack>
+
+      {modelName ? (
+        <Typography
+          variant="caption"
+          sx={{
+            color: "text.secondary",
+            fontFamily: 'Consolas, monospace',
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap"
+          }}
+          title={modelName}
+        >
+          {modelName}
+        </Typography>
+      ) : null}
+
+      <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1.5 }}>
+        <Paper variant="outlined" sx={{ p: 1.25, bgcolor: "rgba(15,118,110,0.04)" }}>
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.25 }}>
+            对话延迟
+          </Typography>
+          <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+            {provider.latency || 0}
+            <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 0.3 }}>
+              ms
+            </Typography>
+          </Typography>
+        </Paper>
+        <Paper variant="outlined" sx={{ p: 1.25, bgcolor: "rgba(37,99,235,0.04)" }}>
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.25 }}>
+            端点 PING
+          </Typography>
+          <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+            {provider.ping || 0}
+            <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 0.3 }}>
+              ms
+            </Typography>
+          </Typography>
+        </Paper>
+      </Box>
+
+      <Stack direction="row" alignItems="center" justifyContent="space-between">
+        <Typography variant="body2" color="text.secondary">
+          可用性 · 7 天
+        </Typography>
+        <Stack direction="row" alignItems="baseline" spacing={0.3}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 800, color: availabilityColor }}>
+            {availability.toFixed(2)}
+          </Typography>
+          <Typography variant="body2" sx={{ fontWeight: 700, color: availabilityColor }}>
+            %
+          </Typography>
+        </Stack>
+      </Stack>
+
+      <Box>
+        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 0.5 }}>
+          <Typography variant="caption" color="text.secondary">
+            近 {history.length} 次记录
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            {provider.lastHealthCheck
+              ? `${Math.max(0, Math.round((Date.now() - new Date(provider.lastHealthCheck).getTime()) / 1000))}s 后刷新`
+              : ""}
+          </Typography>
+        </Stack>
+        <Box sx={{ display: "flex", alignItems: "flex-end", gap: 0.4, height: 32 }}>
+          {history.length === 0 ? (
+            <Typography variant="caption" color="text.secondary">
+              暂无记录
+            </Typography>
+          ) : (
+            history.map((entry, index) => {
+              const hColor =
+                entry.status === "ok"
+                  ? "success.main"
+                  : entry.status === "slow"
+                    ? "warning.main"
+                    : "error.main";
+              const heightPct = Math.min(100, Math.max(12, (entry.latency / 5000) * 100));
+              return (
+                <Tooltip
+                  key={index}
+                  title={`${new Date(entry.timestamp).toLocaleTimeString("zh-CN")} · ${entry.latency}ms · ${entry.status}`}
+                  arrow
+                >
+                  <Box
+                    sx={{
+                      flex: 1,
+                      minWidth: 2,
+                      maxWidth: 5,
+                      height: `${heightPct}%`,
+                      bgcolor: hColor,
+                      borderRadius: 0.4,
+                      opacity: 0.85,
+                      transition: "opacity 0.2s",
+                      "&:hover": { opacity: 1 }
+                    }}
+                  />
+                </Tooltip>
+              );
+            })
+          )}
+        </Box>
+        <Stack direction="row" justifyContent="space-between" sx={{ mt: 0.25 }}>
+          <Typography variant="caption" sx={{ color: "text.disabled", fontSize: 10 }}>
+            PAST
+          </Typography>
+          <Typography variant="caption" sx={{ color: "text.disabled", fontSize: 10 }}>
+            NOW
+          </Typography>
+        </Stack>
+      </Box>
+    </Paper>
+  );
+}
+
+function ProviderHealthSection({ providers }) {
+  if (!providers || providers.length === 0) return null;
+  return (
+    <Box
+      sx={{
+        display: "grid",
+        gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" },
+        gap: 2
+      }}
+    >
+      {providers.map((provider) => (
+        <ProviderHealthCard key={provider.id} provider={provider} />
+      ))}
+    </Box>
+  );
+}
+
 function ConfirmDialog({ confirm, onClose, onError }) {
   const [loading, setLoading] = useState(false);
 
@@ -2536,6 +2800,137 @@ function ConfirmDialog({ confirm, onClose, onError }) {
           disabled={loading}
         >
           {confirm?.confirmText || "确认"}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+function CreateApiKeyDialog({ open, models, onClose, onCreate }) {
+  const [name, setName] = useState("");
+  const [selectedModels, setSelectedModels] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const handleClose = () => {
+    if (loading) return;
+    setName("");
+    setSelectedModels([]);
+    onClose();
+  };
+
+  const handleCreate = async () => {
+    setLoading(true);
+    try {
+      await onCreate({
+        name: name.trim(),
+        allowedModels: selectedModels
+      });
+      setName("");
+      setSelectedModels([]);
+      onClose();
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const modelOptions = models.map((item) => {
+    const id = item?.id || item;
+    return { id, label: item?.name || id };
+  });
+
+  return (
+    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
+      <DialogTitle>新增 API Key</DialogTitle>
+      <DialogContent>
+        <Stack spacing={2} sx={{ mt: 0.5 }}>
+          <TextField
+            label="名称"
+            placeholder="例如：开发测试 Key"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            fullWidth
+            size="small"
+          />
+          <FormControl fullWidth size="small">
+            <InputLabel id="models-select-label">允许使用的模型（可选）</InputLabel>
+            <Select
+              labelId="models-select-label"
+              multiple
+              value={selectedModels}
+              onChange={(e) => setSelectedModels(e.target.value)}
+              input={<OutlinedInput label="允许使用的模型（可选）" />}
+              renderValue={(selected) => (
+                <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+                  {selected.map((value) => (
+                    <Chip key={value} label={value} size="small" />
+                  ))}
+                </Box>
+              )}
+            >
+              {modelOptions.map((option) => (
+                <MenuItem key={option.id} value={option.id}>
+                  <Checkbox checked={selectedModels.includes(option.id)} />
+                  <ListItemText primary={option.label} />
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <DialogContentText sx={{ fontSize: 13 }}>
+            不选择任何模型则允许使用全部模型。
+          </DialogContentText>
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={handleClose} disabled={loading}>
+          取消
+        </Button>
+        <Button variant="contained" onClick={handleCreate} disabled={loading}>
+          创建
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+function CreatedKeyDialog({ info, onClose, onCopy }) {
+  if (!info) return null;
+  return (
+    <Dialog open={Boolean(info)} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle>API Key 已创建</DialogTitle>
+      <DialogContent>
+        <Stack spacing={2} sx={{ mt: 0.5 }}>
+          <Alert severity="warning">
+            请立即复制并妥善保存 Key，关闭后无法再次查看完整 Key。
+          </Alert>
+          <TextField
+            label="API Key"
+            value={info.key}
+            fullWidth
+            size="small"
+            InputProps={{ readOnly: true }}
+          />
+          {info.allowedModels?.length > 0 ? (
+            <Box>
+              <Typography variant="caption" color="text.secondary">
+                允许使用的模型：
+              </Typography>
+              <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ mt: 0.5 }}>
+                {info.allowedModels.map((model) => (
+                  <Chip key={model} label={model} size="small" variant="outlined" />
+                ))}
+              </Stack>
+            </Box>
+          ) : null}
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>关闭</Button>
+        <Button
+          variant="contained"
+          startIcon={<ContentCopyIcon />}
+          onClick={() => onCopy(info.key)}
+        >
+          复制 Key
         </Button>
       </DialogActions>
     </Dialog>
