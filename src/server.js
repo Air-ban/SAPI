@@ -4,6 +4,7 @@ const express = require("express");
 const path = require("node:path");
 const {
   mutateDb,
+  normalizeModel,
   normalizeProviderInput,
   now,
   randomApiKey,
@@ -57,15 +58,41 @@ function sendError(res, status, message, code = "sapi_error") {
 }
 
 function sanitizeUser(user, includeKey = true) {
+  const apiKeys = getApiKeys(user);
+  const primaryKey = getPrimaryApiKey(user);
   return {
     id: user.id,
     name: user.name,
     username: user.username || "",
-    apiKey: includeKey ? user.apiKey || "" : maskKey(user.apiKey),
-    hasApiKey: Boolean(user.apiKey),
+    apiKey: includeKey ? primaryKey : maskKey(primaryKey),
+    apiKeys: apiKeys.map((item) => sanitizeApiKeyRecord(item, includeKey)),
+    hasApiKey: apiKeys.length > 0 || Boolean(primaryKey),
     enabled: Boolean(user.enabled),
     createdAt: user.createdAt,
     updatedAt: user.updatedAt
+  };
+}
+
+function getApiKeys(user) {
+  return Array.isArray(user?.apiKeys) ? user.apiKeys.filter((item) => item?.key) : [];
+}
+
+function getPrimaryApiKey(user) {
+  const apiKeys = getApiKeys(user);
+  return apiKeys.find((item) => item.enabled !== false)?.key || apiKeys[0]?.key || user?.apiKey || "";
+}
+
+function sanitizeApiKeyRecord(record, includeKey = true) {
+  const key = record?.key || "";
+  return {
+    id: record?.id || "",
+    name: record?.name || "API Key",
+    key: includeKey ? key : maskKey(key),
+    preview: maskKey(key),
+    enabled: record?.enabled !== false,
+    createdAt: record?.createdAt || "",
+    updatedAt: record?.updatedAt || "",
+    lastUsedAt: record?.lastUsedAt || ""
   };
 }
 
@@ -118,11 +145,32 @@ function requireUserAccount(req, res, next) {
 
 function findUserByKey(apiKey) {
   const db = readDb();
-  const user = db.users.find(
-    (candidate) => candidate.enabled && candidate.apiKey && safeEqual(candidate.apiKey, apiKey)
-  );
+  let matchedKey = null;
+  const user = db.users.find((candidate) => {
+    if (!candidate.enabled) return false;
 
-  return { db, user };
+    const apiKeys = getApiKeys(candidate);
+    for (const keyRecord of apiKeys) {
+      if (keyRecord.enabled !== false && safeEqual(keyRecord.key, apiKey)) {
+        matchedKey = keyRecord;
+        return true;
+      }
+    }
+
+    if (!apiKeys.length && candidate.apiKey && safeEqual(candidate.apiKey, apiKey)) {
+      matchedKey = {
+        id: "legacy",
+        name: "默认 Key",
+        key: candidate.apiKey,
+        enabled: true
+      };
+      return true;
+    }
+
+    return false;
+  });
+
+  return { db, user, apiKeyRecord: matchedKey };
 }
 
 function publicConfig() {
@@ -135,7 +183,13 @@ function publicConfig() {
 function serviceConfig() {
   const db = readDb();
   const providers = db.providers.filter((provider) => provider.enabled);
-  const models = [...new Set(providers.flatMap((provider) => provider.models || []))];
+  const models = [
+    ...new Map(
+      providers
+        .flatMap((provider) => (provider.models || []).map(normalizeModel))
+        .map((m) => [m.id, m])
+    ).values()
+  ];
 
   return {
     name: "SAPI",
@@ -173,7 +227,10 @@ function chooseProvider(db, body = {}) {
 
   if (model) {
     const exactMatch = providers.find((provider) =>
-      (provider.models || []).some((candidate) => candidate === model)
+      (provider.models || []).some((candidate) => {
+        const id = typeof candidate === "object" ? candidate.id : candidate;
+        return id === model;
+      })
     );
     if (exactMatch) return exactMatch;
   }
@@ -220,6 +277,266 @@ function extractModelIds(payload) {
   ];
 }
 
+function finiteTokenCount(...values) {
+  for (const value of values) {
+    if (value === undefined || value === null || value === "") continue;
+    const number = Number(value);
+    if (Number.isFinite(number) && number >= 0) return number;
+  }
+  return 0;
+}
+
+function normalizeUsage(usage) {
+  if (!usage || typeof usage !== "object") return null;
+
+  const promptDetails =
+    usage.prompt_tokens_details ||
+    usage.promptTokensDetails ||
+    usage.input_tokens_details ||
+    usage.inputTokensDetails ||
+    {};
+  const completionDetails =
+    usage.completion_tokens_details ||
+    usage.completionTokensDetails ||
+    usage.output_tokens_details ||
+    usage.outputTokensDetails ||
+    {};
+  const promptTokens = finiteTokenCount(
+    usage.prompt_tokens,
+    usage.promptTokens,
+    usage.input_tokens,
+    usage.inputTokens
+  );
+  const completionTokens = finiteTokenCount(
+    usage.completion_tokens,
+    usage.completionTokens,
+    usage.output_tokens,
+    usage.outputTokens
+  );
+  let totalTokens = finiteTokenCount(
+    usage.total_tokens,
+    usage.totalTokens
+  );
+  if (!totalTokens && promptTokens + completionTokens > 0) {
+    totalTokens = promptTokens + completionTokens;
+  }
+
+  const cachedTokens = finiteTokenCount(
+    usage.cached_tokens,
+    usage.cachedTokens,
+    usage.prompt_cache_hit_tokens,
+    usage.promptCacheHitTokens,
+    usage.cache_read_input_tokens,
+    usage.cacheReadInputTokens,
+    promptDetails.cached_tokens,
+    promptDetails.cachedTokens
+  );
+  const cacheCreationTokens = finiteTokenCount(
+    usage.cache_creation_input_tokens,
+    usage.cacheCreationInputTokens,
+    usage.cache_write_input_tokens,
+    usage.cacheWriteInputTokens,
+    promptDetails.cache_creation_tokens,
+    promptDetails.cacheCreationTokens
+  );
+  const cacheMissTokens = finiteTokenCount(
+    usage.prompt_cache_miss_tokens,
+    usage.promptCacheMissTokens,
+    usage.cache_miss_input_tokens,
+    usage.cacheMissInputTokens
+  );
+  const reasoningTokens = finiteTokenCount(
+    usage.reasoning_tokens,
+    usage.reasoningTokens,
+    completionDetails.reasoning_tokens,
+    completionDetails.reasoningTokens
+  );
+
+  if (
+    !totalTokens &&
+    !promptTokens &&
+    !completionTokens &&
+    !cachedTokens &&
+    !cacheCreationTokens &&
+    !cacheMissTokens &&
+    !reasoningTokens
+  ) {
+    return null;
+  }
+
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    cachedTokens,
+    cacheCreationTokens,
+    cacheMissTokens,
+    reasoningTokens
+  };
+}
+
+function findUsagePayload(payload) {
+  if (!payload || typeof payload !== "object") return null;
+
+  const candidates = [
+    payload.usage,
+    payload.token_usage,
+    payload.tokenUsage,
+    payload.response?.usage
+  ];
+
+  for (const candidate of candidates) {
+    if (normalizeUsage(candidate)) return candidate;
+  }
+
+  if (Array.isArray(payload)) {
+    for (let index = payload.length - 1; index >= 0; index -= 1) {
+      const candidate = findUsagePayload(payload[index]);
+      if (candidate) return candidate;
+    }
+  }
+
+  return null;
+}
+
+function extractUsageFromResponseText(text) {
+  if (!text || typeof text !== "string") return null;
+
+  try {
+    const payload = JSON.parse(text);
+    const usage = findUsagePayload(payload);
+    if (usage) return usage;
+  } catch {
+    // The response may be an SSE or NDJSON stream.
+  }
+
+  let usage = null;
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith(":")) continue;
+
+    const item = trimmed.startsWith("data:")
+      ? trimmed.slice(5).trim()
+      : trimmed;
+    if (!item || item === "[DONE]" || (!item.startsWith("{") && !item.startsWith("["))) {
+      continue;
+    }
+
+    try {
+      const payload = JSON.parse(item);
+      const candidate = findUsagePayload(payload);
+      if (candidate) usage = candidate;
+    } catch {
+      // Ignore malformed stream fragments.
+    }
+  }
+
+  return usage;
+}
+
+function buildUpstreamBody(req) {
+  if (req.method === "GET" || req.method === "HEAD" || req.body === undefined) {
+    return undefined;
+  }
+
+  const body =
+    req.body && typeof req.body === "object" && !Array.isArray(req.body)
+      ? { ...req.body }
+      : req.body;
+
+  if (body && typeof body === "object" && !Array.isArray(body) && body.stream === true) {
+    const streamOptions =
+      body.stream_options && typeof body.stream_options === "object"
+        ? body.stream_options
+        : {};
+    body.stream_options = {
+      ...streamOptions,
+      include_usage: true
+    };
+  }
+
+  return JSON.stringify(body);
+}
+
+function trimStoredRecords(db, key, maxRecords = 50000) {
+  if (db[key].length > maxRecords) {
+    db[key] = db[key].slice(db[key].length - maxRecords);
+  }
+}
+
+function recordRequestLog({
+  userId,
+  userName,
+  username,
+  apiKeyId,
+  apiKeyName,
+  apiKeyPreview,
+  providerId,
+  providerName,
+  model,
+  endpoint,
+  method,
+  status,
+  ok,
+  stream,
+  durationMs,
+  usage,
+  errorCode,
+  errorMessage
+}) {
+  const normalized = normalizeUsage(usage) || {
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    cachedTokens: 0,
+    cacheCreationTokens: 0,
+    cacheMissTokens: 0,
+    reasoningTokens: 0
+  };
+
+  mutateDb((db) => {
+    if (!Array.isArray(db.requestLogs)) db.requestLogs = [];
+    const user = db.users.find((item) => item.id === userId);
+    const apiKeyRecord = user && apiKeyId
+      ? getApiKeys(user).find((item) => item.id === apiKeyId)
+      : null;
+    const timestamp = now();
+    if (apiKeyRecord) {
+      apiKeyRecord.lastUsedAt = timestamp;
+      apiKeyRecord.updatedAt = timestamp;
+    }
+    db.requestLogs.push({
+      id: randomId("req"),
+      userId,
+      userName: String(userName || user?.name || "").trim(),
+      username: String(username || user?.username || "").trim(),
+      apiKeyId: String(apiKeyId || "").trim(),
+      apiKeyName: String(apiKeyName || apiKeyRecord?.name || "").trim(),
+      apiKeyPreview: String(apiKeyPreview || maskKey(apiKeyRecord?.key || "")).trim(),
+      providerId,
+      providerName: String(providerName || "").trim(),
+      model: String(model || "").trim() || "unknown",
+      endpoint: String(endpoint || "").trim(),
+      method: String(method || "").trim().toUpperCase(),
+      status: Number(status) || 0,
+      ok: Boolean(ok),
+      stream: Boolean(stream),
+      durationMs: Number(durationMs) || 0,
+      promptTokens: normalized.promptTokens,
+      completionTokens: normalized.completionTokens,
+      totalTokens: normalized.totalTokens,
+      cachedTokens: normalized.cachedTokens,
+      cacheCreationTokens: normalized.cacheCreationTokens,
+      cacheMissTokens: normalized.cacheMissTokens,
+      reasoningTokens: normalized.reasoningTokens,
+      errorCode: String(errorCode || "").trim(),
+      errorMessage: String(errorMessage || "").trim().slice(0, 500),
+      timestamp
+    });
+    trimStoredRecords(db, "requestLogs");
+  });
+}
+
 async function proxyToProvider(req, res) {
   const apiKey = getUserApiKey(req);
   if (!apiKey) {
@@ -227,7 +544,7 @@ async function proxyToProvider(req, res) {
     return;
   }
 
-  const { db, user } = findUserByKey(apiKey);
+  const { db, user, apiKeyRecord } = findUserByKey(apiKey);
   if (!user) {
     sendError(res, 401, "Invalid or disabled SAPI API key.", "invalid_api_key");
     return;
@@ -247,11 +564,13 @@ async function proxyToProvider(req, res) {
 
   if (req.headers.accept) headers.accept = req.headers.accept;
 
+  const startedAt = Date.now();
+
   try {
     const upstreamResponse = await fetch(upstreamUrl, {
       method: req.method,
       headers,
-      body: req.method === "GET" || req.method === "HEAD" ? undefined : JSON.stringify(req.body)
+      body: buildUpstreamBody(req)
     });
 
     res.status(upstreamResponse.status);
@@ -259,8 +578,49 @@ async function proxyToProvider(req, res) {
     if (contentType) res.setHeader("content-type", contentType);
 
     const text = await upstreamResponse.text();
+    const usage = extractUsageFromResponseText(text);
+
+    recordRequestLog({
+      userId: user.id,
+      userName: user.name,
+      username: user.username,
+      apiKeyId: apiKeyRecord?.id || "",
+      apiKeyName: apiKeyRecord?.name || "",
+      apiKeyPreview: maskKey(apiKeyRecord?.key || apiKey),
+      providerId: provider.id,
+      providerName: provider.name,
+      model: req.body?.model || "",
+      endpoint: req.originalUrl || "",
+      method: req.method,
+      status: upstreamResponse.status,
+      ok: upstreamResponse.ok,
+      stream: req.body?.stream === true,
+      durationMs: Date.now() - startedAt,
+      usage
+    });
+
     res.send(text);
   } catch (error) {
+    recordRequestLog({
+      userId: user.id,
+      userName: user.name,
+      username: user.username,
+      apiKeyId: apiKeyRecord?.id || "",
+      apiKeyName: apiKeyRecord?.name || "",
+      apiKeyPreview: maskKey(apiKeyRecord?.key || apiKey),
+      providerId: provider.id,
+      providerName: provider.name,
+      model: req.body?.model || "",
+      endpoint: req.originalUrl || "",
+      method: req.method,
+      status: 502,
+      ok: false,
+      stream: req.body?.stream === true,
+      durationMs: Date.now() - startedAt,
+      usage: null,
+      errorCode: "upstream_request_failed",
+      errorMessage: error.message
+    });
     sendError(
       res,
       502,
@@ -355,6 +715,7 @@ app.post("/api/auth/register", (req, res) => {
         name: displayName || username,
         passwordHash: hashPassword(password),
         apiKey: "",
+        apiKeys: [],
         enabled: true,
         createdAt,
         updatedAt: createdAt
@@ -380,16 +741,31 @@ app.get("/api/user/me", requireUserAccount, (req, res) => {
   res.json({ user: sanitizeUser(req.user), config: serviceConfig() });
 });
 
+function createUserApiKeyRecord(user, name = "") {
+  const createdAt = now();
+  const apiKeys = getApiKeys(user);
+  const record = {
+    id: randomId("key"),
+    name: String(name || "").trim() || `API Key ${apiKeys.length + 1}`,
+    key: randomApiKey(),
+    enabled: true,
+    createdAt,
+    updatedAt: createdAt,
+    lastUsedAt: ""
+  };
+
+  if (!Array.isArray(user.apiKeys)) user.apiKeys = [];
+  user.apiKeys.push(record);
+  if (!user.apiKey) user.apiKey = record.key;
+  user.updatedAt = createdAt;
+  return record;
+}
+
 app.post("/api/user/api-key", requireUserAccount, (req, res) => {
-  let created = false;
   const updated = mutateDb((db) => {
     const user = db.users.find((item) => item.id === req.user.id);
     if (!user) return null;
-    if (!user.apiKey) {
-      user.apiKey = randomApiKey();
-      user.updatedAt = now();
-      created = true;
-    }
+    createUserApiKeyRecord(user, req.body?.name);
     return user;
   });
 
@@ -398,15 +774,24 @@ app.post("/api/user/api-key", requireUserAccount, (req, res) => {
     return;
   }
 
-  res.status(created ? 201 : 200).json({ user: sanitizeUser(updated) });
+  res.status(201).json({ user: sanitizeUser(updated) });
 });
 
 app.post("/api/user/api-key/rotate", requireUserAccount, (req, res) => {
   const updated = mutateDb((db) => {
     const user = db.users.find((item) => item.id === req.user.id);
     if (!user) return null;
-    user.apiKey = randomApiKey();
-    user.updatedAt = now();
+    const apiKeys = getApiKeys(user);
+    const target = apiKeys.find((item) => item.id === req.body?.id) || apiKeys.find((item) => item.enabled !== false);
+    if (!target) {
+      createUserApiKeyRecord(user, req.body?.name);
+      return user;
+    }
+    const updatedAt = now();
+    target.key = randomApiKey();
+    target.updatedAt = updatedAt;
+    user.apiKey = getPrimaryApiKey(user);
+    user.updatedAt = updatedAt;
     return user;
   });
 
@@ -418,13 +803,278 @@ app.post("/api/user/api-key/rotate", requireUserAccount, (req, res) => {
   res.json({ user: sanitizeUser(updated) });
 });
 
+app.post("/api/user/api-keys/:id/rotate", requireUserAccount, (req, res) => {
+  const updated = mutateDb((db) => {
+    const user = db.users.find((item) => item.id === req.user.id);
+    if (!user) return null;
+    const target = getApiKeys(user).find((item) => item.id === req.params.id);
+    if (!target) return false;
+    const updatedAt = now();
+    target.key = randomApiKey();
+    target.updatedAt = updatedAt;
+    user.apiKey = getPrimaryApiKey(user);
+    user.updatedAt = updatedAt;
+    return user;
+  });
+
+  if (updated === false) {
+    sendError(res, 404, "API key not found.", "not_found");
+    return;
+  }
+  if (!updated) {
+    sendError(res, 404, "User not found.", "not_found");
+    return;
+  }
+
+  res.json({ user: sanitizeUser(updated) });
+});
+
+app.put("/api/user/api-keys/:id", requireUserAccount, (req, res) => {
+  const updated = mutateDb((db) => {
+    const user = db.users.find((item) => item.id === req.user.id);
+    if (!user) return null;
+    const target = getApiKeys(user).find((item) => item.id === req.params.id);
+    if (!target) return false;
+
+    if (req.body?.name !== undefined) {
+      target.name = String(req.body.name || "").trim() || target.name;
+    }
+    if (req.body?.enabled !== undefined) {
+      target.enabled = Boolean(req.body.enabled);
+    }
+    const updatedAt = now();
+    target.updatedAt = updatedAt;
+    user.apiKey = getPrimaryApiKey(user);
+    user.updatedAt = updatedAt;
+    return user;
+  });
+
+  if (updated === false) {
+    sendError(res, 404, "API key not found.", "not_found");
+    return;
+  }
+  if (!updated) {
+    sendError(res, 404, "User not found.", "not_found");
+    return;
+  }
+
+  res.json({ user: sanitizeUser(updated) });
+});
+
+function getUsageStats(db, { userId = null, days = 30 } = {}) {
+  const since = new Date();
+  since.setDate(since.getDate() - days);
+  const sinceIso = since.toISOString();
+
+  const inRange = (item) => {
+    if (userId && item.userId !== userId) return false;
+    return item.timestamp >= sinceIso;
+  };
+  const usersById = new Map((db.users || []).map((user) => [user.id, user]));
+  const normalizeRecord = (item, legacy = false) => {
+    const owner = usersById.get(item.userId) || {};
+    const promptTokens = Number(item.promptTokens || 0);
+    const completionTokens = Number(item.completionTokens || 0);
+    const totalTokens = Number(item.totalTokens || promptTokens + completionTokens || 0);
+
+    return {
+      id: item.id,
+      userId: item.userId,
+      userName: item.userName || owner.name || "",
+      username: item.username || owner.username || "",
+      apiKeyId: item.apiKeyId || "",
+      apiKeyName: item.apiKeyName || "",
+      apiKeyPreview: item.apiKeyPreview || "",
+      providerId: item.providerId || "",
+      providerName: item.providerName || "",
+      model: item.model || "unknown",
+      endpoint: item.endpoint || "",
+      method: item.method || "",
+      status: Number(item.status || (legacy ? 200 : 0)),
+      ok: legacy ? true : Boolean(item.ok),
+      stream: Boolean(item.stream),
+      durationMs: Number(item.durationMs || 0),
+      promptTokens,
+      completionTokens,
+      totalTokens,
+      cachedTokens: Number(item.cachedTokens || 0),
+      cacheCreationTokens: Number(item.cacheCreationTokens || 0),
+      cacheMissTokens: Number(item.cacheMissTokens || 0),
+      reasoningTokens: Number(item.reasoningTokens || 0),
+      errorCode: item.errorCode || "",
+      errorMessage: item.errorMessage || "",
+      timestamp: item.timestamp
+    };
+  };
+  const requestRecords = (db.requestLogs || []).filter(inRange).map((item) => normalizeRecord(item));
+  const legacyRecords = (db.tokenUsage || []).filter(inRange).map((item) => normalizeRecord(item, true));
+  const records = [...legacyRecords, ...requestRecords].sort((a, b) =>
+    String(a.timestamp || "").localeCompare(String(b.timestamp || ""))
+  );
+
+  const totalPrompt = records.reduce((sum, item) => sum + (item.promptTokens || 0), 0);
+  const totalCompletion = records.reduce((sum, item) => sum + (item.completionTokens || 0), 0);
+  const totalTokens = records.reduce((sum, item) => sum + (item.totalTokens || 0), 0);
+  const totalCachedTokens = records.reduce((sum, item) => sum + (item.cachedTokens || 0), 0);
+  const totalCacheCreationTokens = records.reduce((sum, item) => sum + (item.cacheCreationTokens || 0), 0);
+  const totalCacheMissTokens = records.reduce((sum, item) => sum + (item.cacheMissTokens || 0), 0);
+  const totalReasoningTokens = records.reduce((sum, item) => sum + (item.reasoningTokens || 0), 0);
+  const failedRequests = records.filter((item) => !item.ok).length;
+
+  const byUser = {};
+  const byModel = {};
+  const byDay = {};
+  const byApiKey = {};
+
+  for (const item of records) {
+    if (!byUser[item.userId]) {
+      byUser[item.userId] = {
+        userId: item.userId,
+        userName: item.userName,
+        username: item.username,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        cachedTokens: 0,
+        cacheCreationTokens: 0,
+        cacheMissTokens: 0,
+        reasoningTokens: 0,
+        requests: 0,
+        failedRequests: 0
+      };
+    }
+    byUser[item.userId].promptTokens += item.promptTokens || 0;
+    byUser[item.userId].completionTokens += item.completionTokens || 0;
+    byUser[item.userId].totalTokens += item.totalTokens || 0;
+    byUser[item.userId].cachedTokens += item.cachedTokens || 0;
+    byUser[item.userId].cacheCreationTokens += item.cacheCreationTokens || 0;
+    byUser[item.userId].cacheMissTokens += item.cacheMissTokens || 0;
+    byUser[item.userId].reasoningTokens += item.reasoningTokens || 0;
+    byUser[item.userId].requests += 1;
+    if (!item.ok) byUser[item.userId].failedRequests += 1;
+
+    const apiKeyKey = `${item.userId}:${item.apiKeyId || item.apiKeyPreview || "unknown"}`;
+    if (!byApiKey[apiKeyKey]) {
+      byApiKey[apiKeyKey] = {
+        userId: item.userId,
+        userName: item.userName,
+        username: item.username,
+        apiKeyId: item.apiKeyId,
+        apiKeyName: item.apiKeyName || "未知 Key",
+        apiKeyPreview: item.apiKeyPreview || "",
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        cachedTokens: 0,
+        cacheCreationTokens: 0,
+        cacheMissTokens: 0,
+        reasoningTokens: 0,
+        requests: 0,
+        failedRequests: 0
+      };
+    }
+    byApiKey[apiKeyKey].promptTokens += item.promptTokens || 0;
+    byApiKey[apiKeyKey].completionTokens += item.completionTokens || 0;
+    byApiKey[apiKeyKey].totalTokens += item.totalTokens || 0;
+    byApiKey[apiKeyKey].cachedTokens += item.cachedTokens || 0;
+    byApiKey[apiKeyKey].cacheCreationTokens += item.cacheCreationTokens || 0;
+    byApiKey[apiKeyKey].cacheMissTokens += item.cacheMissTokens || 0;
+    byApiKey[apiKeyKey].reasoningTokens += item.reasoningTokens || 0;
+    byApiKey[apiKeyKey].requests += 1;
+    if (!item.ok) byApiKey[apiKeyKey].failedRequests += 1;
+
+    const modelKey = item.model || "unknown";
+    if (!byModel[modelKey]) {
+      byModel[modelKey] = {
+        model: modelKey,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        cachedTokens: 0,
+        cacheCreationTokens: 0,
+        cacheMissTokens: 0,
+        reasoningTokens: 0,
+        requests: 0,
+        failedRequests: 0
+      };
+    }
+    byModel[modelKey].promptTokens += item.promptTokens || 0;
+    byModel[modelKey].completionTokens += item.completionTokens || 0;
+    byModel[modelKey].totalTokens += item.totalTokens || 0;
+    byModel[modelKey].cachedTokens += item.cachedTokens || 0;
+    byModel[modelKey].cacheCreationTokens += item.cacheCreationTokens || 0;
+    byModel[modelKey].cacheMissTokens += item.cacheMissTokens || 0;
+    byModel[modelKey].reasoningTokens += item.reasoningTokens || 0;
+    byModel[modelKey].requests += 1;
+    if (!item.ok) byModel[modelKey].failedRequests += 1;
+
+    const day = item.timestamp.slice(0, 10);
+    if (!byDay[day]) {
+      byDay[day] = {
+        day,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        cachedTokens: 0,
+        cacheCreationTokens: 0,
+        cacheMissTokens: 0,
+        reasoningTokens: 0,
+        requests: 0,
+        failedRequests: 0
+      };
+    }
+    byDay[day].promptTokens += item.promptTokens || 0;
+    byDay[day].completionTokens += item.completionTokens || 0;
+    byDay[day].totalTokens += item.totalTokens || 0;
+    byDay[day].cachedTokens += item.cachedTokens || 0;
+    byDay[day].cacheCreationTokens += item.cacheCreationTokens || 0;
+    byDay[day].cacheMissTokens += item.cacheMissTokens || 0;
+    byDay[day].reasoningTokens += item.reasoningTokens || 0;
+    byDay[day].requests += 1;
+    if (!item.ok) byDay[day].failedRequests += 1;
+  }
+
+  const recentRequests = records.slice(-100).reverse();
+
+  return {
+    totalPromptTokens: totalPrompt,
+    totalCompletionTokens: totalCompletion,
+    totalTokens,
+    totalCachedTokens,
+    totalCacheCreationTokens,
+    totalCacheMissTokens,
+    totalReasoningTokens,
+    requests: records.length,
+    failedRequests,
+    byUser: Object.values(byUser).sort((a, b) => b.totalTokens - a.totalTokens),
+    byApiKey: Object.values(byApiKey).sort((a, b) => b.totalTokens - a.totalTokens),
+    byModel: Object.values(byModel).sort((a, b) => b.totalTokens - a.totalTokens),
+    byDay: Object.values(byDay).sort((a, b) => a.day.localeCompare(b.day)),
+    recent: recentRequests,
+    recentRequests
+  };
+}
+
 app.get("/api/admin/state", requireAdmin, (req, res) => {
   const db = readDb();
   res.json({
     providers: db.providers.map(redactProvider),
     users: db.users.map((user) => sanitizeUser(user)),
-    publicConfig: serviceConfig()
+    publicConfig: serviceConfig(),
+    usage: getUsageStats(db)
   });
+});
+
+app.get("/api/admin/usage", requireAdmin, (req, res) => {
+  const db = readDb();
+  const days = Math.min(365, Math.max(1, Number(req.query.days) || 30));
+  res.json(getUsageStats(db, { days }));
+});
+
+app.get("/api/user/usage", requireUserAccount, (req, res) => {
+  const db = readDb();
+  const days = Math.min(365, Math.max(1, Number(req.query.days) || 30));
+  res.json(getUsageStats(db, { userId: req.user.id, days }));
 });
 
 app.post("/api/admin/providers/models", requireAdmin, async (req, res) => {
@@ -604,20 +1254,22 @@ app.get("/v1/models", (req, res) => {
   }
 
   const models = [
-    ...new Set(
+    ...new Map(
       db.providers
         .filter((provider) => provider.enabled)
-        .flatMap((provider) => provider.models || [])
-    )
+        .flatMap((provider) => (provider.models || []).map(normalizeModel))
+        .map((m) => [m.id, m])
+    ).values()
   ];
 
   res.json({
     object: "list",
     data: models.map((model) => ({
-      id: model,
+      id: model.id,
       object: "model",
       created: 0,
-      owned_by: "sapi"
+      owned_by: "sapi",
+      name: model.name || model.id
     }))
   });
 });

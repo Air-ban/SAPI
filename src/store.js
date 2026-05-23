@@ -18,6 +18,8 @@ function ensureDb() {
     appSecret: randomSecret(),
     providers: [],
     users: [],
+    tokenUsage: [],
+    requestLogs: [],
     createdAt,
     updatedAt: createdAt
   };
@@ -43,6 +45,14 @@ function readDb() {
     db.users = [];
     changed = true;
   }
+  if (!Array.isArray(db.tokenUsage)) {
+    db.tokenUsage = [];
+    changed = true;
+  }
+  if (!Array.isArray(db.requestLogs)) {
+    db.requestLogs = [];
+    changed = true;
+  }
   for (const user of db.users) {
     if (!user.username) {
       user.username = String(user.name || user.id || "").trim().toLowerCase();
@@ -50,6 +60,63 @@ function readDb() {
     }
     if (user.apiKey === undefined || user.apiKey === null) {
       user.apiKey = "";
+      changed = true;
+    }
+    if (!Array.isArray(user.apiKeys)) {
+      user.apiKeys = [];
+      changed = true;
+    }
+    if (user.apiKey && !user.apiKeys.some((item) => item && item.key === user.apiKey)) {
+      const createdAt = user.createdAt || now();
+      user.apiKeys.unshift({
+        id: randomId("key"),
+        name: "默认 Key",
+        key: user.apiKey,
+        enabled: true,
+        createdAt,
+        updatedAt: user.updatedAt || createdAt,
+        lastUsedAt: ""
+      });
+      changed = true;
+    }
+    user.apiKeys = user.apiKeys
+      .map((item, index) => {
+        if (!item || typeof item !== "object") return null;
+        const key = String(item.key || "").trim();
+        if (!key) return null;
+        let itemChanged = false;
+        const normalized = { ...item, key };
+        if (!normalized.id) {
+          normalized.id = randomId("key");
+          itemChanged = true;
+        }
+        if (!normalized.name) {
+          normalized.name = index === 0 ? "默认 Key" : `API Key ${index + 1}`;
+          itemChanged = true;
+        }
+        if (normalized.enabled === undefined) {
+          normalized.enabled = true;
+          itemChanged = true;
+        }
+        if (!normalized.createdAt) {
+          normalized.createdAt = user.createdAt || now();
+          itemChanged = true;
+        }
+        if (!normalized.updatedAt) {
+          normalized.updatedAt = user.updatedAt || normalized.createdAt;
+          itemChanged = true;
+        }
+        if (normalized.lastUsedAt === undefined) {
+          normalized.lastUsedAt = "";
+          itemChanged = true;
+        }
+        if (itemChanged) changed = true;
+        return normalized;
+      })
+      .filter(Boolean);
+    const primaryKey = user.apiKeys.find((item) => item.enabled !== false)?.key || user.apiKeys[0]?.key || "";
+    if (user.apiKey !== primaryKey) {
+      user.apiKey = primaryKey;
       changed = true;
     }
   }
@@ -81,15 +148,24 @@ function redactProvider(provider) {
   };
 }
 
-function parseModels(value) {
-  if (Array.isArray(value)) {
-    return value.map(String).map((item) => item.trim()).filter(Boolean);
+function normalizeModel(item) {
+  if (item && typeof item === "object") {
+    const id = String(item.id || item.name || "").trim();
+    return { id, name: String(item.name || id || "").trim() };
   }
+  const id = String(item || "").trim();
+  return { id, name: id };
+}
 
-  return String(value || "")
-    .split(/[\n,]/)
-    .map((item) => item.trim())
-    .filter(Boolean);
+function normalizeModels(value) {
+  if (!value) return [];
+  const arr = Array.isArray(value)
+    ? value
+    : String(value)
+        .split(/[\n,]/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+  return arr.map(normalizeModel).filter((m) => m.id);
 }
 
 function normalizeProviderInput(input, existing = null) {
@@ -113,7 +189,7 @@ function normalizeProviderInput(input, existing = null) {
     name,
     baseUrl: baseUrl.replace(/\/+$/, ""),
     apiKey,
-    models: parseModels(input.models ?? existing?.models ?? ""),
+    models: normalizeModels(input.models ?? existing?.models ?? ""),
     enabled: Boolean(input.enabled ?? existing?.enabled ?? true)
   };
 }
@@ -121,9 +197,10 @@ function normalizeProviderInput(input, existing = null) {
 module.exports = {
   DATA_FILE,
   mutateDb,
+  normalizeModel,
+  normalizeModels,
   normalizeProviderInput,
   now,
-  parseModels,
   randomApiKey,
   randomId,
   readDb,
