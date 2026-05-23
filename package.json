@@ -1,0 +1,30 @@
+{
+  "name": "sapi",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SAPI - a lightweight LLM API relay with admin-managed upstream APIs and user-facing API keys.",
+  "main": "src/server.js",
+  "scripts": {
+    "build": "vite build",
+    "client:dev": "vite --host 0.0.0.0",
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "@emotion/react": "^11.13.3",
+    "@emotion/styled": "^11.13.0",
+    "@mui/icons-material": "^6.1.6",
+    "@mui/material": "^6.1.6",
+    "dotenv": "^16.4.7",
+    "express": "^4.19.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.3",
+    "vite": "^5.4.10"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
