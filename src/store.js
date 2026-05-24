@@ -53,6 +53,10 @@ function readDb() {
     db.requestLogs = [];
     changed = true;
   }
+  if (!Array.isArray(db.adminApiKeys)) {
+    db.adminApiKeys = [];
+    changed = true;
+  }
   for (const provider of db.providers) {
     if (!provider.healthStatus) {
       provider.healthStatus = "unknown";

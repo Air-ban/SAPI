@@ -1,6 +1,9 @@
 require("dotenv").config();
 
+const crypto = require("node:crypto");
 const express = require("express");
+const { once } = require("node:events");
+const fs = require("node:fs");
 const path = require("node:path");
 const {
   mutateDb,
@@ -18,6 +21,18 @@ const PORT = Number(process.env.SAPI_PORT || process.env.PORT || 3000);
 const ADMIN_USER = process.env.SAPI_ADMIN_USER || "admin";
 const ADMIN_PASSWORD = process.env.SAPI_ADMIN_PASSWORD || "sapi-admin";
 const PUBLIC_BASE_URL = process.env.SAPI_PUBLIC_BASE_URL || `http://localhost:${PORT}`;
+const HOP_BY_HOP_HEADERS = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailers",
+  "transfer-encoding",
+  "upgrade",
+  "content-encoding",
+  "content-length"
+]);
 
 const app = express();
 
@@ -55,6 +70,17 @@ function sendError(res, status, message, code = "sapi_error") {
       code
     }
   });
+}
+
+function appendDebugLog(label, data) {
+  try {
+    fs.appendFileSync(
+      path.join(__dirname, "..", "data", "fetch-debug.log"),
+      `${new Date().toISOString()} ${label} ${JSON.stringify(data)}\n`
+    );
+  } catch {
+    // Ignore debug logging failures.
+  }
 }
 
 function sanitizeUser(user, includeKey = true) {
@@ -171,7 +197,28 @@ function findUserByKey(apiKey) {
     return false;
   });
 
-  return { db, user, apiKeyRecord: matchedKey };
+  if (user) {
+    return { db, user, apiKeyRecord: matchedKey };
+  }
+
+  // Check admin API keys
+  const adminKeys = db.adminApiKeys || [];
+  for (const keyRecord of adminKeys) {
+    if (keyRecord.enabled !== false && safeEqual(keyRecord.key, apiKey)) {
+      return {
+        db,
+        user: {
+          id: "__admin__",
+          name: "Administrator",
+          username: "admin",
+          enabled: true
+        },
+        apiKeyRecord: keyRecord
+      };
+    }
+  }
+
+  return { db, user: null, apiKeyRecord: null };
 }
 
 function publicConfig() {
@@ -435,6 +482,80 @@ function extractUsageFromResponseText(text) {
   return usage;
 }
 
+function createUsageCollector() {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let usage = null;
+
+  const inspectLine = (line) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith(":")) return;
+
+    const item = trimmed.startsWith("data:")
+      ? trimmed.slice(5).trim()
+      : trimmed;
+    if (!item || item === "[DONE]" || (!item.startsWith("{") && !item.startsWith("["))) {
+      return;
+    }
+
+    try {
+      const payload = JSON.parse(item);
+      const candidate = findUsagePayload(payload);
+      if (candidate) usage = candidate;
+    } catch {
+      // Ignore partial or malformed stream fragments.
+    }
+  };
+
+  return {
+    push(chunk) {
+      buffer += decoder.decode(chunk, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() || "";
+      for (const line of lines) inspectLine(line);
+    },
+    finish() {
+      buffer += decoder.decode();
+      if (buffer) inspectLine(buffer);
+      return usage;
+    }
+  };
+}
+
+function shouldStreamResponse(req, upstreamResponse) {
+  const contentType = upstreamResponse.headers.get("content-type") || "";
+  return (
+    req.body?.stream === true ||
+    contentType.includes("text/event-stream") ||
+    contentType.includes("application/x-ndjson")
+  );
+}
+
+async function writeUpstreamStreamToResponse(upstreamResponse, res) {
+  const reader = upstreamResponse.body?.getReader();
+  if (!reader) return null;
+
+  const usageCollector = createUsageCollector();
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+
+      usageCollector.push(value);
+
+      if (!res.write(Buffer.from(value))) {
+        await once(res, "drain");
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return usageCollector.finish();
+}
+
 function buildUpstreamBody(req) {
   if (req.method === "GET" || req.method === "HEAD" || req.body === undefined) {
     return undefined;
@@ -546,6 +667,979 @@ function isModelAllowed(apiKeyRecord, model) {
   return allowed.some((item) => String(item || "").trim() === modelId);
 }
 
+function generateTimestamp() {
+  return Math.floor(Date.now() / 1000);
+}
+
+function generateId(prefix) {
+  return `${prefix}_${crypto.randomUUID().replace(/-/g, "")}`;
+}
+
+function isHopByHopHeader(name) {
+  return HOP_BY_HOP_HEADERS.has(String(name || "").toLowerCase());
+}
+
+function filterForwardHeaders(headers = {}) {
+  const result = {};
+  const allowedHeaders = new Set([
+    "accept",
+    "content-type"
+  ]);
+
+  for (const [key, value] of Object.entries(headers)) {
+    const lower = key.toLowerCase();
+    if (
+      !allowedHeaders.has(lower) ||
+      lower === "host" ||
+      lower === "authorization" ||
+      lower === "x-api-key" ||
+      lower === "content-length" ||
+      isHopByHopHeader(lower)
+    ) {
+      continue;
+    }
+    if (value === undefined || value === null) continue;
+    result[key] = Array.isArray(value) ? value.join(", ") : String(value);
+  }
+  return result;
+}
+
+function copyUpstreamHeaders(sourceHeaders, res, overrides = {}) {
+  if (!sourceHeaders || typeof sourceHeaders.forEach !== "function") return;
+
+  sourceHeaders.forEach((value, key) => {
+    const lower = String(key).toLowerCase();
+    if (isHopByHopHeader(lower)) return;
+    res.setHeader(key, value);
+  });
+
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined || value === null) continue;
+    res.setHeader(key, value);
+  }
+}
+
+function extractTextFromContent(content) {
+  if (content === null || content === undefined) return "";
+  if (typeof content === "string") return content;
+  if (typeof content === "number" || typeof content === "boolean") return String(content);
+  if (Array.isArray(content)) {
+    return content.map((item) => extractTextFromContent(item)).join("");
+  }
+  if (typeof content !== "object") return String(content);
+
+  const type = String(content.type || "").toLowerCase();
+  if ((type === "input_text" || type === "output_text") && content.text !== undefined) {
+    return extractTextFromContent(content.text);
+  }
+  if (content.text !== undefined && typeof content.text !== "object") {
+    return extractTextFromContent(content.text);
+  }
+  if (content.content !== undefined) {
+    return extractTextFromContent(content.content);
+  }
+  if (content.parts !== undefined) {
+    return extractTextFromContent(content.parts);
+  }
+  if (content.value !== undefined) {
+    return extractTextFromContent(content.value);
+  }
+  return "";
+}
+
+function normalizeResponseFormat(format) {
+  if (!format || typeof format !== "object") return null;
+
+  const type = String(format.type || "").trim();
+  if (type === "json_object") {
+    return { type: "json_object" };
+  }
+
+  if (type === "json_schema") {
+    const jsonSchema =
+      format.json_schema && typeof format.json_schema === "object"
+        ? format.json_schema
+        : {
+            name: format.name || "response",
+            schema: format.schema || {},
+            strict: format.strict !== false
+          };
+
+    return {
+      type: "json_schema",
+      json_schema: {
+        name: String(jsonSchema.name || format.name || "response"),
+        schema: jsonSchema.schema || format.schema || {},
+        strict: jsonSchema.strict !== false
+      }
+    };
+  }
+
+  return null;
+}
+
+function convertTools(tools) {
+  if (!Array.isArray(tools)) return [];
+
+  return tools
+    .map((tool) => {
+      const source = tool?.function && typeof tool.function === "object" ? tool.function : tool;
+      if (!source || String(tool?.type || source.type || "").trim() !== "function") return null;
+
+      const name = String(source.name || "").trim();
+      if (!name) return null;
+
+      return {
+        type: "function",
+        function: {
+          name,
+          description: String(source.description || "").trim(),
+          parameters:
+            source.parameters && typeof source.parameters === "object"
+              ? source.parameters
+              : { type: "object", properties: {} }
+        }
+      };
+    })
+    .filter(Boolean);
+}
+
+function appendMessage(messages, role, content) {
+  const text = extractTextFromContent(content).trim();
+  if (!text) return;
+  messages.push({
+    role: role === "developer" ? "system" : String(role || "user").trim() || "user",
+    content: text
+  });
+}
+
+function convertInputToMessages(input, instructions) {
+  const messages = [];
+
+  if (String(instructions || "").trim()) {
+    messages.push({ role: "system", content: String(instructions).trim() });
+  }
+
+  const visit = (item) => {
+    if (item === null || item === undefined) return;
+    if (typeof item === "string") {
+      appendMessage(messages, "user", item);
+      return;
+    }
+    if (Array.isArray(item)) {
+      for (const entry of item) visit(entry);
+      return;
+    }
+    if (typeof item !== "object") {
+      appendMessage(messages, "user", String(item));
+      return;
+    }
+
+    const role = item.role === "developer" ? "system" : item.role || "user";
+    const content =
+      item.content !== undefined
+        ? item.content
+        : item.text !== undefined
+          ? item.text
+          : item.value !== undefined
+            ? item.value
+            : item;
+    appendMessage(messages, role, content);
+  };
+
+  visit(input);
+  return messages;
+}
+
+function convertResponseInputItems(messages) {
+  return messages
+    .map((message) => {
+      const text = extractTextFromContent(message.content).trim();
+      if (!text) return null;
+      return {
+        id: generateId("msg"),
+        type: "message",
+        role: message.role === "developer" ? "system" : message.role || "user",
+        content: [{ type: "input_text", text }]
+      };
+    })
+    .filter(Boolean);
+}
+
+function buildResponseFormat(body = {}) {
+  return normalizeResponseFormat(body.text?.format) || normalizeResponseFormat(body.response_format);
+}
+
+function convertToChatCompletionsPayload(body = {}) {
+  const messages = convertInputToMessages(body.input ?? body.messages ?? "", body.instructions);
+  const stream = body.stream !== false;
+  const responseFormat = buildResponseFormat(body);
+  const payload = {
+    model: String(body.model || "gpt-4o").trim() || "gpt-4o",
+    messages,
+    stream,
+    tool_choice: body.tool_choice ?? "auto"
+  };
+
+  if (stream) {
+    payload.stream_options = { include_usage: true };
+  }
+
+  const tools = convertTools(body.tools);
+  if (tools.length > 0) payload.tools = tools;
+
+  const maxTokens = body.max_output_tokens ?? body.max_tokens;
+  if (maxTokens !== undefined && maxTokens !== null && maxTokens !== "") {
+    payload.max_tokens = maxTokens;
+  }
+
+  for (const key of [
+    "temperature",
+    "top_p",
+    "frequency_penalty",
+    "presence_penalty"
+  ]) {
+    if (body[key] !== undefined) {
+      payload[key] = body[key];
+    }
+  }
+
+  if (responseFormat) {
+    payload.response_format = responseFormat;
+  }
+
+  return {
+    payload,
+    messages,
+    input: convertResponseInputItems(messages),
+    responseFormat,
+    stream,
+    reasoningEffort: String(body.reasoning?.effort || "").trim(),
+    metadata: body.metadata && typeof body.metadata === "object" ? body.metadata : {}
+  };
+}
+
+function extractChatCompletionText(payload) {
+  if (!payload || typeof payload !== "object") {
+    return { text: "", finishReason: "", usage: null };
+  }
+
+  const choices = Array.isArray(payload.choices) ? payload.choices : [];
+  const choice = choices[0] || {};
+  const messageContent = choice.message?.content;
+  const messageReasoning = choice.message?.reasoning_content || choice.message?.reasoningContent;
+  const deltaContent = choice.delta?.content;
+  const deltaReasoning = choice.delta?.reasoning_content || choice.delta?.reasoningContent;
+  const text = extractTextFromContent(messageContent || deltaContent || choice.text || "");
+  const fallbackText = extractTextFromContent(messageReasoning || deltaReasoning || "");
+  const finishReason = String(choice.finish_reason || choice.finishReason || "").trim();
+  const usage = findUsagePayload(payload);
+  return { text: text || fallbackText, finishReason, usage };
+}
+
+function buildResponseUsage(usage, outputText = "") {
+  const normalized = normalizeUsage(usage);
+  const source = usage && typeof usage === "object" ? usage : {};
+  const promptDetails =
+    source.prompt_tokens_details ||
+    source.promptTokensDetails ||
+    source.input_tokens_details ||
+    source.inputTokensDetails ||
+    {};
+  const completionDetails =
+    source.completion_tokens_details ||
+    source.completionTokensDetails ||
+    source.output_tokens_details ||
+    source.outputTokensDetails ||
+    {};
+  const inputTokens = finiteTokenCount(
+    source.prompt_tokens,
+    source.promptTokens,
+    source.input_tokens,
+    source.inputTokens,
+    normalized?.promptTokens,
+    normalized?.inputTokens
+  );
+  let outputTokens = finiteTokenCount(
+    source.completion_tokens,
+    source.completionTokens,
+    source.output_tokens,
+    source.outputTokens,
+    normalized?.completionTokens,
+    normalized?.outputTokens
+  );
+  if (!outputTokens && String(outputText || "").trim()) {
+    outputTokens = String(outputText)
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean).length;
+  }
+  let totalTokens = finiteTokenCount(
+    source.total_tokens,
+    source.totalTokens,
+    normalized?.totalTokens
+  );
+  if (!totalTokens && (inputTokens + outputTokens > 0)) {
+    totalTokens = inputTokens + outputTokens;
+  }
+
+  const cachedTokens = finiteTokenCount(
+    source.cached_tokens,
+    source.cachedTokens,
+    promptDetails.cached_tokens,
+    promptDetails.cachedTokens,
+    normalized?.cachedTokens
+  );
+  const reasoningTokens = finiteTokenCount(
+    source.reasoning_tokens,
+    source.reasoningTokens,
+    completionDetails.reasoning_tokens,
+    completionDetails.reasoningTokens,
+    normalized?.reasoningTokens
+  );
+
+  return {
+    input_tokens: inputTokens,
+    input_tokens_details: {
+      cached_tokens: cachedTokens
+    },
+    output_tokens: outputTokens,
+    output_tokens_details: {
+      reasoning_tokens: reasoningTokens
+    },
+    total_tokens: totalTokens
+  };
+}
+
+function buildIncompleteDetails(finishReason) {
+  const reason = String(finishReason || "").trim();
+  if (!reason) return null;
+  if (reason === "length") return { reason: "max_output_tokens" };
+  if (reason === "content_filter") return { reason: "content_filter" };
+  return { reason };
+}
+
+function createReasoningItem(effort) {
+  return {
+    id: generateId("rs"),
+    type: "reasoning",
+    encrypted_content: `gAAAAAB${crypto.randomBytes(100).toString("hex")}`,
+    summary: [],
+    effort: String(effort || "").trim() || "low"
+  };
+}
+
+function createAssistantMessageItem(text) {
+  return {
+    id: generateId("msg"),
+    type: "message",
+    status: "completed",
+    content: [
+      {
+        type: "output_text",
+        annotations: [],
+        logprobs: [],
+        text: String(text || "")
+      }
+    ],
+    phase: "final_answer",
+    role: "assistant"
+  };
+}
+
+function buildResponseObject({
+  status = "completed",
+  model = "gpt-4o",
+  input = [],
+  instructions = "",
+  output = [],
+  outputText = "",
+  usage = null,
+  reasoningEffort = "",
+  toolChoice = "auto",
+  tools = [],
+  temperature = 1,
+  topP = 0.98,
+  frequencyPenalty = 0,
+  presencePenalty = 0,
+  maxOutputTokens = null,
+  responseFormat = null,
+  finishReason = "",
+  metadata = {},
+  previousResponseId = null,
+  store = false
+} = {}) {
+  const createdAt = generateTimestamp();
+  const responseUsage = buildResponseUsage(usage, outputText);
+
+  return {
+    id: generateId("resp"),
+    object: "response",
+    created_at: createdAt,
+    status,
+    background: false,
+    completed_at: status === "completed" ? createdAt : null,
+    error: null,
+    frequency_penalty: Number(frequencyPenalty || 0),
+    incomplete_details: buildIncompleteDetails(finishReason),
+    input,
+    instructions: String(instructions || ""),
+    max_output_tokens: maxOutputTokens === undefined ? null : maxOutputTokens,
+    max_tool_calls: null,
+    model: String(model || "gpt-4o"),
+    moderation: null,
+    output,
+    output_text: String(outputText || ""),
+    parallel_tool_calls: true,
+    presence_penalty: Number(presencePenalty || 0),
+    previous_response_id: previousResponseId,
+    prompt_cache_key: null,
+    prompt_cache_retention: "24h",
+    reasoning: {
+      context: "current_turn",
+      effort: reasoningEffort || null,
+      summary: null
+    },
+    safety_identifier: `user-${crypto.randomBytes(8).toString("hex")}`,
+    service_tier: "auto",
+    store: Boolean(store),
+    temperature: Number(temperature ?? 1),
+    text: responseFormat ? { format: responseFormat } : {},
+    tool_choice: toolChoice || "auto",
+    tool_usage: {
+      image_gen: null,
+      web_search: { num_requests: 0 }
+    },
+    tools,
+    top_logprobs: 0,
+    top_p: Number(topP ?? 0.98),
+    truncation: "disabled",
+    usage: responseUsage,
+    user: null,
+    metadata: metadata && typeof metadata === "object" ? metadata : {}
+  };
+}
+
+function createSseWriter(res) {
+  let sequence = 0;
+  return {
+    write(type, payload) {
+      sequence += 1;
+      res.write(`event: ${type}\n`);
+      res.write(`data: ${JSON.stringify({ type, ...payload, sequence_number: sequence })}\n\n`);
+      return sequence;
+    },
+    nextSequence() {
+      sequence += 1;
+      return sequence;
+    },
+    current() {
+      return sequence;
+    }
+  };
+}
+
+function parseSseDataLines(text, onData) {
+  const lines = String(text || "").split(/\r?\n/);
+  let current = [];
+
+  const flush = () => {
+    if (current.length === 0) return;
+    onData(current.join("\n"));
+    current = [];
+  };
+
+  for (const line of lines) {
+    if (line === "") {
+      flush();
+      continue;
+    }
+    if (line.startsWith(":")) continue;
+    if (line.startsWith("data:")) {
+      current.push(line.slice(5).replace(/^ /, ""));
+      continue;
+    }
+    if (line.startsWith("event:")) {
+      continue;
+    }
+  }
+
+  flush();
+}
+
+async function relayUpstreamResponse(upstreamResponse, res) {
+  const text = await upstreamResponse.text();
+  res.status(upstreamResponse.status);
+  copyUpstreamHeaders(upstreamResponse.headers, res);
+  res.send(text);
+}
+
+async function handleResponsesProxy(req, res) {
+  const apiKey = getUserApiKey(req);
+  if (!apiKey) {
+    sendError(res, 401, "SAPI API key is required.", "missing_api_key");
+    return;
+  }
+
+  const { db, user, apiKeyRecord } = findUserByKey(apiKey);
+  if (!user) {
+    sendError(res, 401, "Invalid or disabled SAPI API key.", "invalid_api_key");
+    return;
+  }
+
+  const responseRequest = convertToChatCompletionsPayload(req.body || {});
+  const model = responseRequest.payload.model;
+
+  if (model && !isModelAllowed(apiKeyRecord, model)) {
+    sendError(res, 403, `Model "${model}" is not allowed for this API key.`, "model_not_allowed");
+    return;
+  }
+
+  const provider = chooseProvider(db, responseRequest.payload);
+  if (!provider) {
+    sendError(res, 503, "No enabled upstream provider is configured.", "no_provider");
+    return;
+  }
+
+  const operator = {
+    id: user.id,
+    name: user.name,
+    username: user.username || user.name
+  };
+
+  const upstreamUrl = buildUpstreamUrl(provider.baseUrl, "/v1/chat/completions");
+  const headers = filterForwardHeaders(req.headers);
+  headers.authorization = `Bearer ${provider.apiKey}`;
+  headers["content-type"] = "application/json";
+  if (req.headers.accept) headers.accept = req.headers.accept;
+
+  const startedAt = Date.now();
+
+  try {
+    appendDebugLog("responses.request", {
+      url: upstreamUrl,
+      method: "POST",
+      bodyLength: Buffer.byteLength(JSON.stringify(responseRequest.payload), "utf8")
+    });
+    const upstreamResponse = await fetch(upstreamUrl, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(responseRequest.payload)
+    });
+
+    if (!upstreamResponse.ok) {
+      await relayUpstreamResponse(upstreamResponse, res);
+      recordRequestLog({
+        userId: user.id,
+        userName: user.name,
+        username: user.username,
+        apiKeyId: apiKeyRecord?.id || "",
+        apiKeyName: apiKeyRecord?.name || "",
+        apiKeyPreview: maskKey(apiKeyRecord?.key || apiKey),
+        providerId: provider.id,
+        providerName: provider.name,
+        model: model || "",
+        endpoint: "/responses",
+        method: "POST",
+        status: upstreamResponse.status,
+        ok: false,
+        stream: responseRequest.stream === true,
+        durationMs: Date.now() - startedAt,
+        usage: null
+      });
+      return;
+    }
+
+    if (!responseRequest.stream) {
+      const text = await upstreamResponse.text();
+      let payload = {};
+      try {
+        payload = text ? JSON.parse(text) : {};
+      } catch {
+        sendError(res, 502, "Upstream chat completion response was not valid JSON.", "upstream_response_invalid");
+        return;
+      }
+
+      const { text: outputText, finishReason, usage } = extractChatCompletionText(payload);
+      const reasoningItem = responseRequest.reasoningEffort
+        ? createReasoningItem(responseRequest.reasoningEffort)
+        : null;
+      const outputItems = reasoningItem ? [reasoningItem] : [];
+      const assistantItem = createAssistantMessageItem(outputText);
+      outputItems.push(assistantItem);
+
+      res.status(200);
+      res.json(
+        buildResponseObject({
+          status: "completed",
+          model,
+          input: responseRequest.input,
+          instructions: String(req.body?.instructions || ""),
+          output: outputItems,
+          outputText,
+          usage,
+          reasoningEffort: responseRequest.reasoningEffort,
+          toolChoice: responseRequest.payload.tool_choice,
+          tools: responseRequest.payload.tools || [],
+          temperature: responseRequest.payload.temperature,
+          topP: responseRequest.payload.top_p,
+          frequencyPenalty: responseRequest.payload.frequency_penalty,
+          presencePenalty: responseRequest.payload.presence_penalty,
+          maxOutputTokens: responseRequest.payload.max_tokens ?? null,
+          responseFormat: responseRequest.responseFormat,
+          finishReason,
+          metadata: responseRequest.metadata
+        })
+      );
+      recordRequestLog({
+        userId: user.id,
+        userName: user.name,
+        username: user.username,
+        apiKeyId: apiKeyRecord?.id || "",
+        apiKeyName: apiKeyRecord?.name || "",
+        apiKeyPreview: maskKey(apiKeyRecord?.key || apiKey),
+        providerId: provider.id,
+        providerName: provider.name,
+        model: model || "",
+        endpoint: "/responses",
+        method: "POST",
+        status: 200,
+        ok: true,
+        stream: false,
+        durationMs: Date.now() - startedAt,
+        usage
+      });
+      return;
+    }
+
+    res.status(200);
+    res.setHeader("content-type", "text/event-stream; charset=utf-8");
+    res.setHeader("cache-control", "no-cache, no-transform");
+    res.setHeader("x-accel-buffering", "no");
+    res.flushHeaders?.();
+
+    const writer = createSseWriter(res);
+    const responseId = generateId("resp");
+    const messageId = generateId("msg");
+    const reasoningItem = responseRequest.reasoningEffort
+      ? createReasoningItem(responseRequest.reasoningEffort)
+      : null;
+    const outputItems = [];
+    if (reasoningItem) outputItems.push(reasoningItem);
+    const assistantItem = {
+      id: messageId,
+      type: "message",
+      status: "in_progress",
+      content: [],
+      phase: "final_answer",
+      role: "assistant"
+    };
+    outputItems.push(assistantItem);
+    const baseResponse = buildResponseObject({
+      status: "in_progress",
+      model,
+      input: responseRequest.input,
+      instructions: String(req.body?.instructions || ""),
+      output: outputItems,
+      outputText: "",
+      usage: null,
+      reasoningEffort: responseRequest.reasoningEffort,
+      toolChoice: responseRequest.payload.tool_choice,
+      tools: responseRequest.payload.tools || [],
+      temperature: responseRequest.payload.temperature,
+      topP: responseRequest.payload.top_p,
+      frequencyPenalty: responseRequest.payload.frequency_penalty,
+      presencePenalty: responseRequest.payload.presence_penalty,
+      maxOutputTokens: responseRequest.payload.max_tokens ?? null,
+      responseFormat: responseRequest.responseFormat,
+      metadata: responseRequest.metadata
+    });
+    baseResponse.id = responseId;
+    baseResponse.status = "in_progress";
+    baseResponse.completed_at = null;
+    baseResponse.output = outputItems;
+
+    writer.write("response.created", { response: baseResponse });
+    writer.write("response.in_progress", { response: baseResponse });
+
+    if (reasoningItem) {
+      writer.write("response.output_item.added", {
+        item: reasoningItem,
+        output_index: 0
+      });
+      writer.write("response.output_item.done", {
+        item: reasoningItem,
+        output_index: 0
+      });
+    }
+
+    writer.write("response.output_item.added", {
+      item: assistantItem,
+      output_index: reasoningItem ? 1 : 0
+    });
+
+    const contentPart = {
+      type: "output_text",
+      annotations: [],
+      logprobs: [],
+      text: ""
+    };
+    writer.write("response.content_part.added", {
+      content_index: 0,
+      item_id: messageId,
+      output_index: reasoningItem ? 1 : 0,
+      part: contentPart
+    });
+
+    const reader = upstreamResponse.body?.getReader();
+    if (!reader) {
+      const finalResponse = {
+        ...baseResponse,
+        status: "completed",
+        completed_at: generateTimestamp(),
+        output: [
+          ...(reasoningItem ? [reasoningItem] : []),
+          {
+            ...assistantItem,
+            status: "completed",
+            content: [
+              {
+                type: "output_text",
+                annotations: [],
+                logprobs: [],
+                text: ""
+              }
+            ]
+          }
+        ],
+        output_text: "",
+        usage: buildResponseUsage(null, "")
+      };
+      writer.write("response.output_text.done", {
+        content_index: 0,
+        item_id: messageId,
+        output_index: reasoningItem ? 1 : 0,
+        logprobs: [],
+        text: ""
+      });
+      writer.write("response.content_part.done", {
+        content_index: 0,
+        item_id: messageId,
+        output_index: reasoningItem ? 1 : 0,
+        part: { ...contentPart, text: "" }
+      });
+      writer.write("response.output_item.done", {
+        item: finalResponse.output[finalResponse.output.length - 1],
+        output_index: reasoningItem ? 1 : 0
+      });
+      writer.write("response.completed", { response: finalResponse });
+      res.end();
+      return;
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let outputText = "";
+    let finishReason = "";
+    let usagePayload = null;
+
+    const processData = (data) => {
+      const trimmed = String(data || "").trim();
+      if (!trimmed || trimmed === "[DONE]") return;
+
+      let payload;
+      try {
+        payload = JSON.parse(trimmed);
+      } catch {
+        return;
+      }
+
+      const extracted = extractChatCompletionText(payload);
+      if (extracted.finishReason) finishReason = extracted.finishReason;
+      if (extracted.usage) usagePayload = extracted.usage;
+
+      const choice = Array.isArray(payload.choices) ? payload.choices[0] : null;
+      const delta =
+        choice?.delta?.content ||
+        choice?.delta?.reasoning_content ||
+        choice?.delta?.reasoningContent;
+      const deltaText = extractTextFromContent(delta);
+      if (!deltaText) return;
+
+      outputText += deltaText;
+      writer.write("response.output_text.delta", {
+        content_index: 0,
+        delta: deltaText,
+        item_id: messageId,
+        output_index: reasoningItem ? 1 : 0
+      });
+    };
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() || "";
+        let current = [];
+
+        const flush = () => {
+          if (current.length === 0) return;
+          processData(current.join("\n"));
+          current = [];
+        };
+
+        for (const line of lines) {
+          if (line === "") {
+            flush();
+            continue;
+          }
+          if (line.startsWith(":")) continue;
+          if (line.startsWith("data:")) {
+            current.push(line.slice(5).replace(/^ /, ""));
+          }
+        }
+        flush();
+      }
+
+      buffer += decoder.decode();
+      if (buffer) {
+        const lines = buffer.split(/\r?\n/);
+        let current = [];
+        const flush = () => {
+          if (current.length === 0) return;
+          processData(current.join("\n"));
+          current = [];
+        };
+        for (const line of lines) {
+          if (line === "") {
+            flush();
+            continue;
+          }
+          if (line.startsWith(":")) continue;
+          if (line.startsWith("data:")) {
+            current.push(line.slice(5).replace(/^ /, ""));
+          }
+        }
+        flush();
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    const assistantDoneItem = {
+      ...assistantItem,
+      status: "completed",
+      content: [
+        {
+          type: "output_text",
+          annotations: [],
+          logprobs: [],
+          text: outputText
+        }
+      ]
+    };
+
+    writer.write("response.output_text.done", {
+      content_index: 0,
+      item_id: messageId,
+      output_index: reasoningItem ? 1 : 0,
+      logprobs: [],
+      text: outputText
+    });
+    writer.write("response.content_part.done", {
+      content_index: 0,
+      item_id: messageId,
+      output_index: reasoningItem ? 1 : 0,
+      part: {
+        type: "output_text",
+        annotations: [],
+        logprobs: [],
+        text: outputText
+      }
+    });
+    writer.write("response.output_item.done", {
+      item: assistantDoneItem,
+      output_index: reasoningItem ? 1 : 0
+    });
+
+    const finalResponse = {
+      ...baseResponse,
+      id: responseId,
+      status: "completed",
+      completed_at: generateTimestamp(),
+      output: [...(reasoningItem ? [reasoningItem] : []), assistantDoneItem],
+      output_text: outputText,
+      incomplete_details: buildIncompleteDetails(finishReason),
+      usage: buildResponseUsage(usagePayload, outputText)
+    };
+
+    writer.write("response.completed", { response: finalResponse });
+    recordRequestLog({
+      userId: user.id,
+      userName: user.name,
+      username: user.username,
+      apiKeyId: apiKeyRecord?.id || "",
+      apiKeyName: apiKeyRecord?.name || "",
+      apiKeyPreview: maskKey(apiKeyRecord?.key || apiKey),
+      providerId: provider.id,
+      providerName: provider.name,
+      model: model || "",
+      endpoint: "/responses",
+      method: "POST",
+      status: 200,
+      ok: true,
+      stream: true,
+      durationMs: Date.now() - startedAt,
+      usage: buildResponseUsage(usagePayload, outputText)
+    });
+    res.end();
+  } catch (error) {
+    appendDebugLog("responses.error", {
+      message: error.message,
+      name: error.name,
+      code: error.code,
+      causeCode: error.cause?.code,
+      causeMessage: error.cause?.message
+    });
+    console.error("[responses] upstream fetch failed", {
+      message: error.message,
+      name: error.name,
+      code: error.code,
+      causeCode: error.cause?.code,
+      causeMessage: error.cause?.message
+    });
+    if (res.headersSent) {
+      if (!res.destroyed) res.destroy(error);
+      return;
+    }
+    recordRequestLog({
+      userId: user.id,
+      userName: user.name,
+      username: user.username,
+      apiKeyId: apiKeyRecord?.id || "",
+      apiKeyName: apiKeyRecord?.name || "",
+      apiKeyPreview: maskKey(apiKeyRecord?.key || apiKey),
+      providerId: provider.id,
+      providerName: provider.name,
+      model: model || "",
+      endpoint: "/responses",
+      method: "POST",
+      status: 502,
+      ok: false,
+      stream: responseRequest.stream === true,
+      durationMs: Date.now() - startedAt,
+      usage: null,
+      errorCode: "upstream_request_failed",
+      errorMessage: error.message
+    });
+    sendError(res, 502, `Upstream provider request failed: ${error.message}`, "upstream_request_failed");
+  }
+}
+
 async function proxyToProvider(req, res) {
   const apiKey = getUserApiKey(req);
   if (!apiKey) {
@@ -572,29 +1666,73 @@ async function proxyToProvider(req, res) {
   }
 
   const upstreamUrl = buildUpstreamUrl(provider.baseUrl, req.originalUrl);
-  const headers = {
-    authorization: `Bearer ${provider.apiKey}`,
-    "content-type": req.headers["content-type"] || "application/json"
-  };
-
-  if (req.headers.accept) headers.accept = req.headers.accept;
+  const headers = filterForwardHeaders(req.headers);
+  headers.authorization = `Bearer ${provider.apiKey}`;
+  if (req.body !== undefined && !headers["content-type"]) {
+    headers["content-type"] = "application/json";
+  }
 
   const startedAt = Date.now();
 
   try {
+    appendDebugLog("proxy.request", {
+      url: upstreamUrl,
+      method: req.method,
+      bodyLength: Buffer.byteLength(buildUpstreamBody(req) || "", "utf8")
+    });
     const upstreamResponse = await fetch(upstreamUrl, {
       method: req.method,
       headers,
       body: buildUpstreamBody(req)
     });
 
-    res.status(upstreamResponse.status);
-    const contentType = upstreamResponse.headers.get("content-type");
-    if (contentType) res.setHeader("content-type", contentType);
+    if (shouldStreamResponse(req, upstreamResponse)) {
+      res.status(upstreamResponse.status);
+      copyUpstreamHeaders(upstreamResponse.headers, res, {
+        "cache-control": "no-cache, no-transform",
+        "x-accel-buffering": "no"
+      });
+      res.flushHeaders?.();
+
+      let usage = null;
+      try {
+        usage = await writeUpstreamStreamToResponse(upstreamResponse, res);
+        res.end();
+      } catch (streamError) {
+        if (!res.headersSent) {
+          throw streamError;
+        }
+        res.destroy(streamError);
+        throw streamError;
+      }
+
+      recordRequestLog({
+        userId: user.id,
+        userName: user.name,
+        username: user.username,
+        apiKeyId: apiKeyRecord?.id || "",
+        apiKeyName: apiKeyRecord?.name || "",
+        apiKeyPreview: maskKey(apiKeyRecord?.key || apiKey),
+        providerId: provider.id,
+        providerName: provider.name,
+        model: req.body?.model || "",
+        endpoint: req.originalUrl || "",
+        method: req.method,
+        status: upstreamResponse.status,
+        ok: upstreamResponse.ok,
+        stream: true,
+        durationMs: Date.now() - startedAt,
+        usage
+      });
+
+      return;
+    }
 
     const text = await upstreamResponse.text();
     const usage = extractUsageFromResponseText(text);
 
+    res.status(upstreamResponse.status);
+    copyUpstreamHeaders(upstreamResponse.headers, res);
     recordRequestLog({
       userId: user.id,
       userName: user.name,
@@ -616,6 +1754,20 @@ async function proxyToProvider(req, res) {
 
     res.send(text);
   } catch (error) {
+    appendDebugLog("proxy.error", {
+      message: error.message,
+      name: error.name,
+      code: error.code,
+      causeCode: error.cause?.code,
+      causeMessage: error.cause?.message
+    });
+    console.error("[proxy] upstream fetch failed", {
+      message: error.message,
+      name: error.name,
+      code: error.code,
+      causeCode: error.cause?.code,
+      causeMessage: error.cause?.message
+    });
     recordRequestLog({
       userId: user.id,
       userName: user.name,
@@ -636,6 +1788,11 @@ async function proxyToProvider(req, res) {
       errorCode: "upstream_request_failed",
       errorMessage: error.message
     });
+    if (res.headersSent) {
+      if (!res.destroyed) res.destroy(error);
+      return;
+    }
+
     sendError(
       res,
       502,
@@ -882,6 +2039,94 @@ app.put("/api/user/api-keys/:id", requireUserAccount, (req, res) => {
   res.json({ user: sanitizeUser(updated) });
 });
 
+function createAdminApiKeyRecord(db, name = "") {
+  const createdAt = now();
+  if (!Array.isArray(db.adminApiKeys)) db.adminApiKeys = [];
+  const record = {
+    id: randomId("key"),
+    name: String(name || "").trim() || `Admin Key ${db.adminApiKeys.length + 1}`,
+    key: randomApiKey(),
+    enabled: true,
+    allowedModels: [],
+    createdAt,
+    updatedAt: createdAt,
+    lastUsedAt: ""
+  };
+  db.adminApiKeys.push(record);
+  return record;
+}
+
+app.get("/api/admin/api-keys", requireAdmin, (req, res) => {
+  const db = readDb();
+  res.json({
+    apiKeys: (db.adminApiKeys || []).map((item) => sanitizeApiKeyRecord(item, true))
+  });
+});
+
+app.post("/api/admin/api-keys", requireAdmin, (req, res) => {
+  const name = String(req.body?.name || "").trim();
+  const record = mutateDb((db) => createAdminApiKeyRecord(db, name));
+  res.status(201).json({ apiKey: sanitizeApiKeyRecord(record, true) });
+});
+
+app.post("/api/admin/api-keys/:id/rotate", requireAdmin, (req, res) => {
+  const updated = mutateDb((db) => {
+    if (!Array.isArray(db.adminApiKeys)) db.adminApiKeys = [];
+    const target = db.adminApiKeys.find((item) => item.id === req.params.id);
+    if (!target) return false;
+    target.key = randomApiKey();
+    target.updatedAt = now();
+    return target;
+  });
+
+  if (updated === false) {
+    sendError(res, 404, "API key not found.", "not_found");
+    return;
+  }
+
+  res.json({ apiKey: sanitizeApiKeyRecord(updated, true) });
+});
+
+app.put("/api/admin/api-keys/:id", requireAdmin, (req, res) => {
+  const updated = mutateDb((db) => {
+    if (!Array.isArray(db.adminApiKeys)) db.adminApiKeys = [];
+    const target = db.adminApiKeys.find((item) => item.id === req.params.id);
+    if (!target) return false;
+
+    if (req.body?.name !== undefined) {
+      target.name = String(req.body.name || "").trim() || target.name;
+    }
+    if (req.body?.enabled !== undefined) {
+      target.enabled = Boolean(req.body.enabled);
+    }
+    target.updatedAt = now();
+    return target;
+  });
+
+  if (updated === false) {
+    sendError(res, 404, "API key not found.", "not_found");
+    return;
+  }
+
+  res.json({ apiKey: sanitizeApiKeyRecord(updated, true) });
+});
+
+app.delete("/api/admin/api-keys/:id", requireAdmin, (req, res) => {
+  const removed = mutateDb((db) => {
+    if (!Array.isArray(db.adminApiKeys)) db.adminApiKeys = [];
+    const before = db.adminApiKeys.length;
+    db.adminApiKeys = db.adminApiKeys.filter((item) => item.id !== req.params.id);
+    return before !== db.adminApiKeys.length;
+  });
+
+  if (!removed) {
+    sendError(res, 404, "API key not found.", "not_found");
+    return;
+  }
+
+  res.json({ ok: true });
+});
+
 function getUsageStats(db, { userId = null, days = 30 } = {}) {
   const since = new Date();
   since.setDate(since.getDate() - days);
@@ -892,6 +2137,9 @@ function getUsageStats(db, { userId = null, days = 30 } = {}) {
     return item.timestamp >= sinceIso;
   };
   const usersById = new Map((db.users || []).map((user) => [user.id, user]));
+  if (!usersById.has("__admin__")) {
+    usersById.set("__admin__", { id: "__admin__", name: "Administrator", username: "admin" });
+  }
   const normalizeRecord = (item, legacy = false) => {
     const owner = usersById.get(item.userId) || {};
     const promptTokens = Number(item.promptTokens || 0);
@@ -1081,6 +2329,7 @@ app.get("/api/admin/state", requireAdmin, (req, res) => {
   res.json({
     providers: db.providers.map(redactProvider),
     users: db.users.map((user) => sanitizeUser(user)),
+    adminApiKeys: (db.adminApiKeys || []).map((item) => sanitizeApiKeyRecord(item, true)),
     publicConfig: serviceConfig(),
     usage: getUsageStats(db)
   });
@@ -1320,10 +2569,11 @@ app.get("/api/health/providers", (req, res) => {
   res.json({ providers });
 });
 
+app.post("/responses", handleResponsesProxy);
 app.all("/v1/*", proxyToProvider);
 
 app.use((req, res) => {
-  if (req.path.startsWith("/api/") || req.path.startsWith("/v1/")) {
+  if (req.path.startsWith("/api/") || req.path.startsWith("/v1/") || req.path === "/responses") {
     sendError(res, 404, "Route not found.", "not_found");
     return;
   }

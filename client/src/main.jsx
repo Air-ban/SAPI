@@ -18,6 +18,7 @@ import {
   FormControl,
   FormControlLabel,
   IconButton,
+  InputAdornment,
   InputLabel,
   List,
   ListItemButton,
@@ -617,6 +618,7 @@ function App() {
                 onConfirm={setConfirm}
                 afterChange={afterAdminChange}
                 onToast={showToast}
+                adminToken={adminToken}
               />
             )}
           </Box>
@@ -1030,6 +1032,7 @@ function Sidebar({
     { id: "example", icon: <RocketLaunchIcon />, primary: "调用示例", secondary: "curl 请求模板" }
   ];
   const adminPages = [
+    { id: "responses", icon: <DnsIcon />, primary: "代理设置", secondary: "端点、用量、上游地址" },
     { id: "overview", icon: <AnalyticsIcon />, primary: "概览", secondary: "用量、供应商、用户摘要" },
     { id: "usage", icon: <BarChartIcon />, primary: "请求与用量", secondary: "全局统计和明细" },
     { id: "providers", icon: <ApiIcon />, primary: "上游供应商", secondary: "API、模型和密钥" },
@@ -1778,6 +1781,91 @@ function UsageSection({ usage }) {
   );
 }
 
+function ProxySettingsSection({ state, usage, providers, onCopy, onAddProvider, onEditProvider }) {
+  const publicBaseUrl = state?.publicConfig?.baseUrl || window.location.origin;
+  const baseUrl = `${publicBaseUrl}/v1`;
+  const responseUrl = `${publicBaseUrl}/responses`;
+  const responsesExample = [
+    "curl " + responseUrl,
+    '  -H "Authorization: Bearer YOUR_API_KEY"',
+    '  -H "Content-Type: application/json"',
+    '  -d \'{"model":"gpt-4o","input":[{"role":"user","content":"hello"}]}\''
+  ].join(" \\\n");
+
+  return (
+    <Stack spacing={2}>
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: { xs: "1fr", md: "repeat(3, minmax(0, 1fr))" },
+          gap: 2
+        }}
+      >
+        <Metric icon={<DnsIcon />} label="对外 Base URL" value={publicBaseUrl} />
+        <Metric icon={<BarChartIcon />} label="近 30 天请求" value={formatNumber(usage?.requests || 0)} />
+        <Metric icon={<ApiIcon />} label="上游供应商" value={providers.length} />
+      </Box>
+
+      <Section title="对外端点" icon={<ApiIcon />}>
+        <Stack spacing={1.5}>
+          <TextField label="对外 `/v1` 地址" value={baseUrl} fullWidth size="small" InputProps={{ readOnly: true }} />
+          <TextField label="`/responses` 地址" value={responseUrl} fullWidth size="small" InputProps={{ readOnly: true }} />
+          <TextField
+            label="调用示例（/responses）"
+            value={responsesExample}
+            fullWidth
+            size="small"
+            multiline
+            rows={4}
+            InputProps={{
+              readOnly: true,
+              endAdornment: (
+                <InputAdornment position="end" sx={{ alignSelf: "flex-start", mt: 0.5 }}>
+                  <Tooltip title="复制示例">
+                    <IconButton onClick={() => onCopy(responsesExample)} edge="end" size="small">
+                      <ContentCopyIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </InputAdornment>
+              )
+            }}
+          />
+          <Alert severity="info">
+            /responses 与普通 /v1 端点一样，使用用户的 API Key 进行认证，用量会正常统计到对应 Key 下。
+          </Alert>
+        </Stack>
+      </Section>
+
+      <Section
+        title="上游设置"
+        icon={<ApiIcon />}
+        action={
+          <Button startIcon={<AddIcon />} variant="contained" size="small" onClick={onAddProvider}>
+            新增上游
+          </Button>
+        }
+      >
+        {providers.length ? (
+          <Stack spacing={1.5}>
+            {providers.map((provider) => (
+              <ProviderRow
+                key={provider.id}
+                provider={provider}
+                afterChange={onEditProvider.afterChange}
+                onConfirm={onEditProvider.onConfirm}
+                onToast={onEditProvider.onToast}
+                onEdit={() => onEditProvider.open(provider)}
+              />
+            ))}
+          </Stack>
+        ) : (
+          <EmptyState text="尚未配置上游。添加后会通过对应的 /v1 地址对外提供服务。" />
+        )}
+      </Section>
+    </Stack>
+  );
+}
+
 function AdminView({
   page = "overview",
   state,
@@ -1787,7 +1875,8 @@ function AdminView({
   onRefresh,
   onConfirm,
   afterChange,
-  onToast
+  onToast,
+  adminToken
 }) {
   const [providerDialogOpen, setProviderDialogOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState(null);
@@ -1795,7 +1884,7 @@ function AdminView({
   const providers = state?.providers || [];
   const users = state?.users || [];
   const usage = state?.usage;
-  const currentPage = ["overview", "usage", "providers", "users"].includes(page)
+  const currentPage = ["overview", "usage", "providers", "responses", "users"].includes(page)
     ? page
     : "overview";
   const pageMeta = {
@@ -1812,8 +1901,8 @@ function AdminView({
     <Stack spacing={2.5}>
       <PageHeader
         eyebrow="管理后台"
-        title={pageMeta.title}
-        description={pageMeta.description}
+        title={currentPage === "responses" ? "代理设置" : pageMeta.title}
+        description={currentPage === "responses" ? "查看对外端点、用量概览，并维护上游 /v1 地址。" : pageMeta.description}
         action={
           <Stack direction="row" spacing={1}>
             <Button startIcon={<RefreshIcon />} variant="outlined" onClick={onRefresh}>
@@ -1846,6 +1935,25 @@ function AdminView({
       ) : null}
 
       {currentPage === "usage" && usage ? <UsageSection usage={usage} /> : null}
+
+      {currentPage === "responses" ? (
+        <ProxySettingsSection
+          state={state}
+          usage={usage}
+          providers={providers}
+          onCopy={onCopy}
+          onAddProvider={() => setProviderDialogOpen(true)}
+          onEditProvider={{
+            afterChange,
+            onConfirm,
+            onToast,
+            open: (provider) => {
+              setEditingProvider(provider);
+              setProviderDialogOpen(true);
+            }
+          }}
+        />
+      ) : null}
 
       {currentPage === "providers" ? (
         <Section
@@ -1895,28 +2003,38 @@ function AdminView({
       />
 
       {currentPage === "users" ? (
-        <Section title="用户账号" icon={<KeyIcon />}>
-          {users.length ? (
-            <Stack spacing={1.5}>
-              {users.map((user) => {
-                const userUsage = usage?.byUser?.find((u) => u.userId === user.id);
-                return (
-                  <UserRow
-                    key={user.id}
-                    user={user}
-                    usage={userUsage}
-                    afterChange={afterChange}
-                    onConfirm={onConfirm}
-                    onCopy={onCopy}
-                    onToast={onToast}
-                  />
-                );
-              })}
-            </Stack>
-          ) : (
-            <EmptyState text="还没有注册用户。" />
-          )}
-        </Section>
+        <>
+          <Section title="用户账号" icon={<KeyIcon />}>
+            {users.length ? (
+              <Stack spacing={1.5}>
+                {users.map((user) => {
+                  const userUsage = usage?.byUser?.find((u) => u.userId === user.id);
+                  return (
+                    <UserRow
+                      key={user.id}
+                      user={user}
+                      usage={userUsage}
+                      afterChange={afterChange}
+                      onConfirm={onConfirm}
+                      onCopy={onCopy}
+                      onToast={onToast}
+                    />
+                  );
+                })}
+              </Stack>
+            ) : (
+              <EmptyState text="还没有注册用户。" />
+            )}
+          </Section>
+          <AdminApiKeysSection
+            apiKeys={state?.adminApiKeys || []}
+            usage={usage}
+            onCopy={onCopy}
+            onConfirm={onConfirm}
+            afterChange={afterChange}
+            onToast={onToast}
+          />
+        </>
       ) : null}
     </Stack>
   );
@@ -2146,7 +2264,7 @@ function ProviderDialog({ open, onClose, provider, afterChange, onToast }) {
               获取模型
             </Button>
             <Typography variant="body2" color="text.secondary">
-              填写 Base URL 和 Key 后会自动尝试读取 /v1/models。
+              填写上游 /v1 Base URL 和 Key 后会自动尝试读取 /v1/models。
             </Typography>
           </Stack>
           {lookup.error ? <Alert severity="warning">{lookup.error}</Alert> : null}
@@ -2405,6 +2523,114 @@ function UserRow({ user, usage, afterChange, onConfirm, onCopy, onToast }) {
         </>
       }
     />
+  );
+}
+
+function AdminApiKeysSection({ apiKeys, usage, onCopy, onConfirm, afterChange, onToast }) {
+  const [name, setName] = useState("");
+
+  const createKey = async () => {
+    await request("/api/admin/api-keys", {
+      method: "POST",
+      body: { name }
+    });
+    setName("");
+    await afterChange("管理员 API Key 已创建");
+  };
+
+  const rotateKey = (id) => async () => {
+    await request(`/api/admin/api-keys/${id}/rotate`, { method: "POST" });
+    await afterChange("API Key 已轮换");
+  };
+
+  const toggleKey = (id, enabled) => async () => {
+    await request(`/api/admin/api-keys/${id}`, {
+      method: "PUT",
+      body: { enabled: !enabled }
+    });
+    await afterChange(enabled ? "API Key 已停用" : "API Key 已启用");
+  };
+
+  const deleteKey = (id, keyName) => {
+    onConfirm({
+      title: "删除管理员 API Key",
+      message: `确认删除 ${keyName || "该 Key"}？`,
+      confirmText: "删除",
+      danger: true,
+      action: async () => {
+        await request(`/api/admin/api-keys/${id}`, { method: "DELETE" });
+        await afterChange("API Key 已删除");
+      }
+    });
+  };
+
+  return (
+    <Section
+      title="管理员 API Key"
+      icon={<AdminPanelSettingsIcon />}
+      action={
+        <Stack direction="row" spacing={1}>
+          <TextField
+            size="small"
+            placeholder="Key 名称"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            sx={{ width: 180 }}
+          />
+          <Button startIcon={<AddIcon />} variant="contained" size="small" onClick={() => createKey().catch((error) => onToast(error.message, "error"))}>
+            创建
+          </Button>
+        </Stack>
+      }
+    >
+      {apiKeys.length ? (
+        <Stack spacing={1.5}>
+          {apiKeys.map((apiKey) => {
+            const keyUsage = usage?.byApiKey?.find((k) => k.apiKeyId === apiKey.id);
+            const meta = [
+              ["Key", apiKey.key || apiKey.preview || "-"],
+              ["创建时间", formatDate(apiKey.createdAt)]
+            ];
+            if (keyUsage) {
+              meta.push(["用量", `请求 ${keyUsage.requests} 次 / ${keyUsage.totalTokens.toLocaleString()} tokens`]);
+            }
+            return (
+              <EntityRow
+                key={apiKey.id}
+                title={apiKey.name || "管理员 Key"}
+                enabled={apiKey.enabled !== false}
+                icon={<KeyIcon />}
+                meta={meta}
+                actions={
+                  <>
+                    <Tooltip title="复制 Key">
+                      <IconButton onClick={() => onCopy(apiKey.key)} disabled={!apiKey.key}>
+                        <ContentCopyIcon />
+                      </IconButton>
+                    </Tooltip>
+                    <Tooltip title="轮换 Key">
+                      <IconButton onClick={rotateKey(apiKey.id)}>
+                        <RotateRightIcon />
+                      </IconButton>
+                    </Tooltip>
+                    <Button size="small" variant="outlined" onClick={() => toggleKey(apiKey.id, apiKey.enabled).catch((error) => onToast(error.message, "error"))}>
+                      {apiKey.enabled !== false ? "停用" : "启用"}
+                    </Button>
+                    <Tooltip title="删除">
+                      <IconButton color="error" onClick={() => deleteKey(apiKey.id, apiKey.name)}>
+                        <DeleteOutlineIcon />
+                      </IconButton>
+                    </Tooltip>
+                  </>
+                }
+              />
+            );
+          })}
+        </Stack>
+      ) : (
+        <EmptyState text="尚未创建管理员 API Key。创建后可用于调用 /v1 和 /responses 端点，拥有全部模型权限。" />
+      )}
+    </Section>
   );
 }
 
