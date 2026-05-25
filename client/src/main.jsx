@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   BarChart,
@@ -78,6 +78,7 @@ import SendIcon from "@mui/icons-material/Send";
 import VpnKeyIcon from "@mui/icons-material/VpnKey";
 import SettingsIcon from "@mui/icons-material/Settings";
 
+const TURNSTILE_SCRIPT_SRC = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
 const DRAWER_WIDTH = 276;
 const ADMIN_TOKEN_KEY = "sapiAdminToken";
 const USER_TOKEN_KEY = "sapiUserToken";
@@ -186,6 +187,94 @@ async function request(path, options = {}) {
   return data;
 }
 
+function loadTurnstileScript() {
+  if (window.turnstile) return Promise.resolve(window.turnstile);
+  if (window.__sapiTurnstilePromise) return window.__sapiTurnstilePromise;
+
+  window.__sapiTurnstilePromise = new Promise((resolve, reject) => {
+    const existing = document.querySelector(`script[src="${TURNSTILE_SCRIPT_SRC}"]`);
+    if (existing) {
+      existing.addEventListener("load", () => resolve(window.turnstile), { once: true });
+      existing.addEventListener("error", reject, { once: true });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = TURNSTILE_SCRIPT_SRC;
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve(window.turnstile);
+    script.onerror = reject;
+    document.head.appendChild(script);
+  });
+
+  return window.__sapiTurnstilePromise;
+}
+
+const TurnstileWidget = React.forwardRef(function TurnstileWidget({ siteKey, action }, ref) {
+  const containerRef = useRef(null);
+  const widgetRef = useRef(null);
+  const [token, setToken] = useState("");
+  const [error, setError] = useState("");
+
+  const reset = useCallback(() => {
+    setToken("");
+    if (window.turnstile && widgetRef.current !== null) {
+      window.turnstile.reset(widgetRef.current);
+    }
+  }, []);
+
+  useImperativeHandle(ref, () => ({
+    getToken: () => token,
+    reset
+  }), [reset, token]);
+
+  useEffect(() => {
+    if (!siteKey || !containerRef.current) return;
+    let cancelled = false;
+
+    loadTurnstileScript()
+      .then((turnstile) => {
+        if (cancelled || !turnstile || !containerRef.current || widgetRef.current !== null) return;
+        widgetRef.current = turnstile.render(containerRef.current, {
+          sitekey: siteKey,
+          action,
+          callback: (value) => {
+            setToken(value || "");
+            setError("");
+          },
+          "expired-callback": () => setToken(""),
+          "error-callback": () => {
+            setToken("");
+            setError("Turnstile verification failed. Please retry.");
+          }
+        });
+      })
+      .catch(() => setError("Turnstile could not be loaded."));
+
+    return () => {
+      cancelled = true;
+      if (window.turnstile && widgetRef.current !== null) {
+        window.turnstile.remove(widgetRef.current);
+        widgetRef.current = null;
+      }
+    };
+  }, [action, siteKey]);
+
+  if (!siteKey) return null;
+
+  return (
+    <Box>
+      <Box ref={containerRef} sx={{ minHeight: 65 }} />
+      {error ? (
+        <Typography variant="caption" color="error">
+          {error}
+        </Typography>
+      ) : null}
+    </Box>
+  );
+});
+
 function App() {
   const [route, setRoute] = useState(getInitialRoute);
   const [portalPage, setPortalPage] = useState("overview");
@@ -205,6 +294,7 @@ function App() {
   const [createKeyOpen, setCreateKeyOpen] = useState(false);
   const [createdKeyInfo, setCreatedKeyInfo] = useState(null);
   const [providerHealth, setProviderHealth] = useState([]);
+  const [publicConfig, setPublicConfig] = useState(null);
   const compact = useMediaQuery(theme.breakpoints.down("md"));
 
   const showToast = useCallback((message, severity = "success") => {
@@ -217,6 +307,15 @@ function App() {
       setHealth("ok");
     } catch {
       setHealth("fail");
+    }
+  }, []);
+
+  const loadPublicConfig = useCallback(async () => {
+    try {
+      const config = await request("/api/public/config", { admin: false });
+      setPublicConfig(config);
+    } catch {
+      setPublicConfig(null);
     }
   }, []);
 
@@ -281,7 +380,8 @@ function App() {
 
   useEffect(() => {
     checkHealth();
-  }, [checkHealth]);
+    loadPublicConfig();
+  }, [checkHealth, loadPublicConfig]);
 
   useEffect(() => {
     loadProviderHealth();
@@ -314,11 +414,11 @@ function App() {
     setMobileOpen(false);
   };
 
-  const login = async ({ username, password }) => {
+  const login = async ({ username, password, turnstileToken }) => {
     const data = await request("/api/auth/login", {
       method: "POST",
       admin: false,
-      body: { username, password }
+      body: { username, password, turnstileToken }
     });
 
     if (data.role === "admin") {
@@ -349,35 +449,35 @@ function App() {
     navigate("portal");
   };
 
-  const sendVerificationCode = async (email, purpose = "register") => {
+  const sendVerificationCode = async (email, purpose = "register", turnstileToken = "") => {
     await request("/api/auth/send-verification-code", {
       method: "POST",
       admin: false,
-      body: { email, purpose }
+      body: { email, purpose, turnstileToken }
     });
   };
 
-  const sendForgotPasswordCode = async (email) => {
+  const sendForgotPasswordCode = async (email, turnstileToken = "") => {
     await request("/api/auth/forgot-password/send-code", {
       method: "POST",
       admin: false,
-      body: { email }
+      body: { email, turnstileToken }
     });
   };
 
-  const resetPassword = async (email, verificationCode, password) => {
+  const resetPassword = async (email, verificationCode, password, turnstileToken = "") => {
     await request("/api/auth/forgot-password/reset", {
       method: "POST",
       admin: false,
-      body: { email, verificationCode, password }
+      body: { email, verificationCode, password, turnstileToken }
     });
   };
 
-  const userRegister = async ({ username, email, password, verificationCode, invitationCode }) => {
+  const userRegister = async ({ username, email, password, verificationCode, invitationCode, turnstileToken }) => {
     const data = await request("/api/auth/register", {
       method: "POST",
       admin: false,
-      body: { username, email, password, verificationCode, invitationCode }
+      body: { username, email, password, verificationCode, invitationCode, turnstileToken }
     });
     localStorage.setItem(USER_TOKEN_KEY, data.token);
     localStorage.removeItem(ADMIN_TOKEN_KEY);
@@ -528,6 +628,7 @@ function App() {
           onResetPassword={resetPassword}
           onNavigate={navigate}
           onToast={showToast}
+          turnstileSiteKey={publicConfig?.turnstile?.siteKey || ""}
         />
         {snackbar}
       </ThemeProvider>
@@ -890,7 +991,8 @@ function LoadingPage({ text }) {
   );
 }
 
-function ForgotPasswordDialog({ open, onClose, onSendCode, onReset, onToast }) {
+function ForgotPasswordDialog({ open, onClose, onSendCode, onReset, onToast, turnstileSiteKey }) {
+  const turnstileRef = useRef(null);
   const [step, setStep] = useState(1);
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -908,6 +1010,7 @@ function ForgotPasswordDialog({ open, onClose, onSendCode, onReset, onToast }) {
       setPassword("");
       setConfirmPassword("");
       setCountdown(0);
+      turnstileRef.current?.reset();
     }
   }, [open]);
 
@@ -922,15 +1025,21 @@ function ForgotPasswordDialog({ open, onClose, onSendCode, onReset, onToast }) {
       onToast("请输入有效的邮箱地址", "warning");
       return;
     }
+    const turnstileToken = turnstileRef.current?.getToken() || "";
+    if (turnstileSiteKey && !turnstileToken) {
+      onToast("请完成人机验证", "warning");
+      return;
+    }
     setCodeLoading(true);
     try {
-      await onSendCode(email);
+      await onSendCode(email, turnstileToken);
       setCountdown(60);
       onToast("验证码已发送", "success");
     } catch (error) {
       onToast(error.message, "error");
     } finally {
       setCodeLoading(false);
+      turnstileRef.current?.reset();
     }
   };
 
@@ -943,15 +1052,22 @@ function ForgotPasswordDialog({ open, onClose, onSendCode, onReset, onToast }) {
       onToast("密码至少 8 个字符", "warning");
       return;
     }
+    const turnstileToken = turnstileRef.current?.getToken() || "";
+    if (turnstileSiteKey && !turnstileToken) {
+      onToast("请完成人机验证", "warning");
+      return;
+    }
+
     setLoading(true);
     try {
-      await onReset(email, code, password);
+      await onReset(email, code, password, turnstileToken);
       onToast("密码重置成功，请登录", "success");
       onClose();
     } catch (error) {
       onToast(error.message, "error");
     } finally {
       setLoading(false);
+      turnstileRef.current?.reset();
     }
   };
 
@@ -1039,6 +1155,11 @@ function ForgotPasswordDialog({ open, onClose, onSendCode, onReset, onToast }) {
               </Stack>
             </>
           )}
+          <TurnstileWidget
+            ref={turnstileRef}
+            siteKey={turnstileSiteKey}
+            action={step === 1 ? "forgot-password-code" : "forgot-password-reset"}
+          />
         </Stack>
       </DialogContent>
       <DialogActions>
@@ -1048,8 +1169,19 @@ function ForgotPasswordDialog({ open, onClose, onSendCode, onReset, onToast }) {
   );
 }
 
-function AuthPage({ mode, onLogin, onRegister, onSendCode, onSendForgotCode, onResetPassword, onNavigate, onToast }) {
+function AuthPage({
+  mode,
+  onLogin,
+  onRegister,
+  onSendCode,
+  onSendForgotCode,
+  onResetPassword,
+  onNavigate,
+  onToast,
+  turnstileSiteKey
+}) {
   const isRegister = mode === "register";
+  const turnstileRef = useRef(null);
   const [form, setForm] = useState({
     username: "",
     email: "",
@@ -1078,15 +1210,21 @@ function AuthPage({ mode, onLogin, onRegister, onSendCode, onSendForgotCode, onR
       onToast("请输入有效的邮箱地址", "warning");
       return;
     }
+    const turnstileToken = turnstileRef.current?.getToken() || "";
+    if (turnstileSiteKey && !turnstileToken) {
+      onToast("请完成人机验证", "warning");
+      return;
+    }
     setCodeLoading(true);
     try {
-      await onSendCode(form.email);
+      await onSendCode(form.email, "register", turnstileToken);
       setCountdown(60);
       onToast("验证码已发送", "success");
     } catch (error) {
       onToast(error.message, "error");
     } finally {
       setCodeLoading(false);
+      turnstileRef.current?.reset();
     }
   };
 
@@ -1108,6 +1246,12 @@ function AuthPage({ mode, onLogin, onRegister, onSendCode, onSendForgotCode, onR
       }
     }
 
+    const turnstileToken = turnstileRef.current?.getToken() || "";
+    if (turnstileSiteKey && !turnstileToken) {
+      onToast("请完成人机验证", "warning");
+      return;
+    }
+
     setLoading(true);
     try {
       if (isRegister) {
@@ -1116,18 +1260,21 @@ function AuthPage({ mode, onLogin, onRegister, onSendCode, onSendForgotCode, onR
           email: form.email,
           password: form.password,
           verificationCode: form.verificationCode,
-          invitationCode: form.invitationCode
+          invitationCode: form.invitationCode,
+          turnstileToken
         });
       } else {
         await onLogin({
           username: form.username,
-          password: form.password
+          password: form.password,
+          turnstileToken
         });
       }
     } catch (error) {
       onToast(error.message, "error");
     } finally {
       setLoading(false);
+      turnstileRef.current?.reset();
     }
   };
 
@@ -1256,6 +1403,11 @@ function AuthPage({ mode, onLogin, onRegister, onSendCode, onSendForgotCode, onR
                     />
                   </>
                 ) : null}
+                <TurnstileWidget
+                  ref={turnstileRef}
+                  siteKey={turnstileSiteKey}
+                  action={isRegister ? "register" : "login"}
+                />
                 <Button
                   type="submit"
                   variant="contained"
@@ -1296,6 +1448,7 @@ function AuthPage({ mode, onLogin, onRegister, onSendCode, onSendForgotCode, onR
         onSendCode={onSendForgotCode}
         onReset={onResetPassword}
         onToast={onToast}
+        turnstileSiteKey={turnstileSiteKey}
       />
     </>
   );

@@ -22,6 +22,9 @@ const PORT = Number(process.env.SAPI_PORT || process.env.PORT || 3000);
 const ADMIN_USER = process.env.SAPI_ADMIN_USER || "admin";
 const ADMIN_PASSWORD = process.env.SAPI_ADMIN_PASSWORD || "sapi-admin";
 const PUBLIC_BASE_URL = process.env.SAPI_PUBLIC_BASE_URL || `http://localhost:${PORT}`;
+const TURNSTILE_SITE_KEY = process.env.SAPI_TURNSTILE_SITE_KEY || "";
+const TURNSTILE_SECRET_KEY = process.env.SAPI_TURNSTILE_SECRET_KEY || "";
+const TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
   "keep-alive",
@@ -60,7 +63,7 @@ function getBearerToken(req) {
 }
 
 function getUserApiKey(req) {
-  return getBearerToken(req) || req.headers["x-api-key"] || req.query.api_key || "";
+  return getBearerToken(req) || req.headers["x-api-key"] || "";
 }
 
 function sendError(res, status, message, code = "sapi_error") {
@@ -226,8 +229,56 @@ function findUserByKey(apiKey) {
 function publicConfig() {
   return {
     name: "SAPI",
-    baseUrl: PUBLIC_BASE_URL
+    baseUrl: PUBLIC_BASE_URL,
+    turnstile: {
+      enabled: Boolean(TURNSTILE_SITE_KEY),
+      siteKey: TURNSTILE_SITE_KEY
+    }
   };
+}
+
+async function verifyTurnstile(req, res) {
+  if (!TURNSTILE_SECRET_KEY) return true;
+
+  const token = String(
+    req.body?.turnstileToken ||
+      req.body?.cfTurnstileResponse ||
+      req.body?.["cf-turnstile-response"] ||
+      ""
+  ).trim();
+
+  if (!token) {
+    sendError(res, 400, "Cloudflare Turnstile verification is required.", "turnstile_required");
+    return false;
+  }
+
+  try {
+    const body = new URLSearchParams({
+      secret: TURNSTILE_SECRET_KEY,
+      response: token
+    });
+    const remoteIp = req.ip || req.socket?.remoteAddress || "";
+    if (remoteIp) body.set("remoteip", remoteIp);
+
+    const response = await fetch(TURNSTILE_VERIFY_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      body
+    });
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok || payload.success !== true) {
+      sendError(res, 400, "Cloudflare Turnstile verification failed.", "turnstile_failed");
+      return false;
+    }
+
+    return true;
+  } catch {
+    sendError(res, 502, "Cloudflare Turnstile verification could not be completed.", "turnstile_unavailable");
+    return false;
+  }
 }
 
 function serviceConfig() {
@@ -1808,7 +1859,9 @@ app.get("/api/health", (req, res) => {
   res.json({ ok: true, name: "SAPI", time: now() });
 });
 
-app.post("/api/admin/login", (req, res) => {
+app.post("/api/admin/login", async (req, res) => {
+  if (!(await verifyTurnstile(req, res))) return;
+
   const { username, password } = req.body || {};
   if (!safeEqual(username || "", ADMIN_USER) || !safeEqual(password || "", ADMIN_PASSWORD)) {
     sendError(res, 401, "Invalid admin username or password.", "invalid_login");
@@ -1820,7 +1873,9 @@ app.post("/api/admin/login", (req, res) => {
   res.json({ token, username: ADMIN_USER });
 });
 
-app.post("/api/auth/login", (req, res) => {
+app.post("/api/auth/login", async (req, res) => {
+  if (!(await verifyTurnstile(req, res))) return;
+
   const identifier = String(req.body?.username || "").trim().toLowerCase();
   const password = String(req.body?.password || "");
 
@@ -2086,6 +2141,8 @@ function cleanupExpiredVerificationCodes(db) {
 }
 
 app.post("/api/auth/send-verification-code", async (req, res) => {
+  if (!(await verifyTurnstile(req, res))) return;
+
   const email = String(req.body?.email || "").trim().toLowerCase();
   const purpose = String(req.body?.purpose || "register").trim();
 
@@ -2161,7 +2218,9 @@ function verifyEmailCode(email, code, purpose = "register") {
   return true;
 }
 
-app.post("/api/auth/register", (req, res) => {
+app.post("/api/auth/register", async (req, res) => {
+  if (!(await verifyTurnstile(req, res))) return;
+
   const username = normalizeUsername(req.body?.username);
   const email = String(req.body?.email || "").trim().toLowerCase();
   const password = String(req.body?.password || "");
@@ -2908,6 +2967,8 @@ app.put("/api/admin/users/:id/password", requireAdmin, (req, res) => {
 });
 
 app.post("/api/auth/forgot-password/send-code", async (req, res) => {
+  if (!(await verifyTurnstile(req, res))) return;
+
   const email = String(req.body?.email || "").trim().toLowerCase();
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     sendError(res, 400, "Valid email address is required.", "invalid_email");
@@ -2963,7 +3024,9 @@ app.post("/api/auth/forgot-password/send-code", async (req, res) => {
   }
 });
 
-app.post("/api/auth/forgot-password/reset", (req, res) => {
+app.post("/api/auth/forgot-password/reset", async (req, res) => {
+  if (!(await verifyTurnstile(req, res))) return;
+
   const email = String(req.body?.email || "").trim().toLowerCase();
   const verificationCode = String(req.body?.verificationCode || "").trim();
   const newPassword = String(req.body?.password || "");
@@ -3008,15 +3071,16 @@ app.get("/api/public/config", (req, res) => {
   res.json(publicConfig());
 });
 
-app.get("/api/public/key/:apiKey", (req, res) => {
-  const { user } = findUserByKey(req.params.apiKey);
+app.get("/api/public/key", (req, res) => {
+  const apiKey = getUserApiKey(req);
+  const { user } = findUserByKey(apiKey);
   if (!user) {
     sendError(res, 404, "API key was not found or is disabled.", "key_not_found");
     return;
   }
 
   res.json({
-    user: sanitizeUser(user, false),
+    valid: true,
     config: serviceConfig()
   });
 });
