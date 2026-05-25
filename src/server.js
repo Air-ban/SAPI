@@ -16,6 +16,7 @@ const {
   redactProvider
 } = require("./store");
 const { hashPassword, safeEqual, signToken, verifyPassword, verifyToken } = require("./auth");
+const nodemailer = require("nodemailer");
 
 const PORT = Number(process.env.SAPI_PORT || process.env.PORT || 3000);
 const ADMIN_USER = process.env.SAPI_ADMIN_USER || "admin";
@@ -1848,10 +1849,250 @@ app.post("/api/auth/login", (req, res) => {
   res.json({ role: "user", token, user: sanitizeUser(user) });
 });
 
+function getSmtpConfig(db) {
+  const envConfig = {
+    host: process.env.SAPI_SMTP_HOST || "",
+    port: Number(process.env.SAPI_SMTP_PORT) || 587,
+    secure: process.env.SAPI_SMTP_SECURE === "true",
+    user: process.env.SAPI_SMTP_USER || "",
+    pass: process.env.SAPI_SMTP_PASS || "",
+    from: process.env.SAPI_SMTP_FROM || ""
+  };
+  const dbConfig = db.smtpConfig || {};
+  return {
+    host: dbConfig.host || envConfig.host,
+    port: Number(dbConfig.port) || envConfig.port,
+    secure: dbConfig.secure !== undefined ? Boolean(dbConfig.secure) : envConfig.secure,
+    user: dbConfig.user || envConfig.user,
+    pass: dbConfig.pass || envConfig.pass,
+    from: dbConfig.from || envConfig.from
+  };
+}
+
+function createSmtpTransport(config) {
+  if (!config.host || !config.user || !config.pass) return null;
+  return nodemailer.createTransport({
+    host: config.host,
+    port: config.port,
+    secure: config.secure,
+    auth: {
+      user: config.user,
+      pass: config.pass
+    }
+  });
+}
+
+app.get("/api/admin/smtp-config", requireAdmin, (req, res) => {
+  const db = readDb();
+  const config = getSmtpConfig(db);
+  res.json({
+    host: config.host,
+    port: config.port,
+    secure: config.secure,
+    user: config.user,
+    from: config.from,
+    hasPass: Boolean(config.pass)
+  });
+});
+
+app.put("/api/admin/smtp-config", requireAdmin, (req, res) => {
+  const updated = mutateDb((db) => {
+    db.smtpConfig = {
+      host: String(req.body?.host || "").trim(),
+      port: Number(req.body?.port) || 587,
+      secure: Boolean(req.body?.secure),
+      user: String(req.body?.user || "").trim(),
+      pass: String(req.body?.pass || "").trim(),
+      from: String(req.body?.from || "").trim()
+    };
+    return db.smtpConfig;
+  });
+  res.json({
+    host: updated.host,
+    port: updated.port,
+    secure: updated.secure,
+    user: updated.user,
+    from: updated.from,
+    hasPass: Boolean(updated.pass)
+  });
+});
+
+app.post("/api/admin/smtp-config/test", requireAdmin, async (req, res) => {
+  const db = readDb();
+  const config = getSmtpConfig(db);
+  const to = String(req.body?.to || "").trim();
+  if (!to) {
+    sendError(res, 400, "Recipient email is required.", "invalid_email");
+    return;
+  }
+  const transport = createSmtpTransport(config);
+  if (!transport) {
+    sendError(res, 400, "SMTP is not configured.", "smtp_not_configured");
+    return;
+  }
+  try {
+    await transport.sendMail({
+      from: config.from || config.user,
+      to,
+      subject: "SAPI SMTP Test",
+      text: "This is a test email from SAPI. If you received this, your SMTP configuration is working."
+    });
+    res.json({ success: true });
+  } catch (error) {
+    sendError(res, 502, `Failed to send test email: ${error.message}`, "smtp_send_failed");
+  }
+});
+
+app.get("/api/admin/invitation-codes", requireAdmin, (req, res) => {
+  const db = readDb();
+  res.json(db.invitationCodes || []);
+});
+
+app.post("/api/admin/invitation-codes", requireAdmin, (req, res) => {
+  const code = String(req.body?.code || "").trim();
+  const note = String(req.body?.note || "").trim();
+  const expiresAt = req.body?.expiresAt ? String(req.body.expiresAt).trim() : "";
+  const maxUses = Number(req.body?.maxUses) || 0;
+
+  const finalCode = code || crypto.randomBytes(12).toString("base64url");
+
+  if (!/^[a-zA-Z0-9_-]{4,64}$/.test(finalCode)) {
+    sendError(res, 400, "Invitation code must be 4-64 characters and contain only letters, numbers, underscore, or dash.", "invalid_code");
+    return;
+  }
+
+  const created = mutateDb((db) => {
+    const exists = (db.invitationCodes || []).some((c) => safeEqual(c.code, finalCode));
+    if (exists) return null;
+
+    const record = {
+      id: randomId("inv"),
+      code: finalCode,
+      note: note || "",
+      createdAt: now(),
+      expiresAt: expiresAt || "",
+      maxUses: maxUses > 0 ? maxUses : 0,
+      usedCount: 0,
+      usedBy: []
+    };
+    if (!db.invitationCodes) db.invitationCodes = [];
+    db.invitationCodes.push(record);
+    return record;
+  });
+
+  if (!created) {
+    sendError(res, 409, "Invitation code already exists.", "code_exists");
+    return;
+  }
+
+  res.status(201).json(created);
+});
+
+app.delete("/api/admin/invitation-codes/:id", requireAdmin, (req, res) => {
+  const removed = mutateDb((db) => {
+    if (!db.invitationCodes) db.invitationCodes = [];
+    const before = db.invitationCodes.length;
+    db.invitationCodes = db.invitationCodes.filter((c) => c.id !== req.params.id);
+    return before !== db.invitationCodes.length;
+  });
+
+  if (!removed) {
+    sendError(res, 404, "Invitation code not found.", "not_found");
+    return;
+  }
+
+  res.status(204).end();
+});
+
+app.post("/api/admin/invitation-codes/send", requireAdmin, async (req, res) => {
+  const email = String(req.body?.email || "").trim();
+  const codeId = String(req.body?.codeId || "").trim();
+  const customCode = String(req.body?.code || "").trim();
+
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    sendError(res, 400, "Valid email address is required.", "invalid_email");
+    return;
+  }
+
+  const db = readDb();
+  const config = getSmtpConfig(db);
+  const transport = createSmtpTransport(config);
+  if (!transport) {
+    sendError(res, 400, "SMTP is not configured.", "smtp_not_configured");
+    return;
+  }
+
+  let inviteCode = customCode;
+  if (codeId) {
+    const record = (db.invitationCodes || []).find((c) => c.id === codeId);
+    if (!record) {
+      sendError(res, 404, "Invitation code not found.", "not_found");
+      return;
+    }
+    inviteCode = record.code;
+  } else if (!inviteCode) {
+    sendError(res, 400, "Invitation code or code ID is required.", "invalid_code");
+    return;
+  }
+
+  try {
+    await transport.sendMail({
+      from: config.from || config.user,
+      to: email,
+      subject: "You have been invited to join SAPI",
+      text: `You are invited to register on SAPI.\n\nInvitation code: ${inviteCode}\n\nRegister at: ${PUBLIC_BASE_URL}/#register\n\nIf you did not expect this invitation, you can safely ignore it.`
+    });
+    res.json({ success: true });
+  } catch (error) {
+    sendError(res, 502, `Failed to send invitation email: ${error.message}`, "smtp_send_failed");
+  }
+});
+
+function validateInvitationCode(code) {
+  const db = readDb();
+  const record = (db.invitationCodes || []).find((c) => safeEqual(c.code, code));
+  if (!record) return { valid: false, reason: "invalid_code" };
+  if (record.expiresAt && new Date(record.expiresAt) < new Date()) {
+    return { valid: false, reason: "expired_code" };
+  }
+  if (record.maxUses > 0 && record.usedCount >= record.maxUses) {
+    return { valid: false, reason: "max_uses_reached" };
+  }
+  return { valid: true, record };
+}
+
+function consumeInvitationCode(code, userId) {
+  mutateDb((db) => {
+    const record = (db.invitationCodes || []).find((c) => safeEqual(c.code, code));
+    if (!record) return;
+    record.usedCount = (record.usedCount || 0) + 1;
+    if (!record.usedBy) record.usedBy = [];
+    record.usedBy.push({ userId, usedAt: now() });
+  });
+}
+
 app.post("/api/auth/register", (req, res) => {
   const username = normalizeUsername(req.body?.username);
   const password = String(req.body?.password || "");
   const displayName = String(req.body?.name || username).trim();
+  const invitationCode = String(req.body?.invitationCode || "").trim();
+
+  if (!invitationCode) {
+    sendError(res, 400, "Invitation code is required.", "invitation_code_required");
+    return;
+  }
+
+  const validation = validateInvitationCode(invitationCode);
+  if (!validation.valid) {
+    const message =
+      validation.reason === "expired_code"
+        ? "Invitation code has expired."
+        : validation.reason === "max_uses_reached"
+          ? "Invitation code has reached its maximum usage limit."
+          : "Invalid invitation code.";
+    sendError(res, 400, message, validation.reason);
+    return;
+  }
 
   if (!/^[a-z0-9._@-]{3,64}$/.test(username)) {
     sendError(
@@ -1900,6 +2141,8 @@ app.post("/api/auth/register", (req, res) => {
       sendError(res, 409, "Username is already registered.", "username_exists");
       return;
     }
+
+    consumeInvitationCode(invitationCode, user.id);
 
     const db = readDb();
     const token = signToken({ role: "user", sub: user.id }, db.appSecret);
@@ -2326,12 +2569,22 @@ function getUsageStats(db, { userId = null, days = 30 } = {}) {
 
 app.get("/api/admin/state", requireAdmin, (req, res) => {
   const db = readDb();
+  const smtp = getSmtpConfig(db);
   res.json({
     providers: db.providers.map(redactProvider),
     users: db.users.map((user) => sanitizeUser(user)),
     adminApiKeys: (db.adminApiKeys || []).map((item) => sanitizeApiKeyRecord(item, true)),
     publicConfig: serviceConfig(),
-    usage: getUsageStats(db)
+    usage: getUsageStats(db),
+    invitationCodes: db.invitationCodes || [],
+    smtpConfig: {
+      host: smtp.host,
+      port: smtp.port,
+      secure: smtp.secure,
+      user: smtp.user,
+      from: smtp.from,
+      hasPass: Boolean(smtp.pass)
+    }
   });
 });
 

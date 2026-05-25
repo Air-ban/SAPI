@@ -63,6 +63,10 @@ import PersonAddIcon from "@mui/icons-material/PersonAdd";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import RocketLaunchIcon from "@mui/icons-material/RocketLaunch";
 import RotateRightIcon from "@mui/icons-material/RotateRight";
+import MailIcon from "@mui/icons-material/Mail";
+import SendIcon from "@mui/icons-material/Send";
+import VpnKeyIcon from "@mui/icons-material/VpnKey";
+import SettingsIcon from "@mui/icons-material/Settings";
 
 const DRAWER_WIDTH = 276;
 const ADMIN_TOKEN_KEY = "sapiAdminToken";
@@ -335,11 +339,11 @@ function App() {
     navigate("portal");
   };
 
-  const userRegister = async ({ name, username, password }) => {
+  const userRegister = async ({ name, username, password, invitationCode }) => {
     const data = await request("/api/auth/register", {
       method: "POST",
       admin: false,
-      body: { name, username, password }
+      body: { name, username, password, invitationCode }
     });
     localStorage.setItem(USER_TOKEN_KEY, data.token);
     localStorage.removeItem(ADMIN_TOKEN_KEY);
@@ -855,7 +859,8 @@ function AuthPage({ mode, onLogin, onRegister, onNavigate, onToast }) {
     name: "",
     username: "",
     password: "",
-    confirmPassword: ""
+    confirmPassword: "",
+    invitationCode: ""
   });
   const [loading, setLoading] = useState(false);
 
@@ -877,7 +882,8 @@ function AuthPage({ mode, onLogin, onRegister, onNavigate, onToast }) {
         await onRegister({
           name: form.name,
           username: form.username,
-          password: form.password
+          password: form.password,
+          invitationCode: form.invitationCode
         });
       } else {
         await onLogin({
@@ -976,6 +982,16 @@ function AuthPage({ mode, onLogin, onRegister, onNavigate, onToast }) {
                   required
                 />
               ) : null}
+              {isRegister ? (
+                <TextField
+                  label="邀请码"
+                  value={form.invitationCode}
+                  onChange={update("invitationCode")}
+                  placeholder="输入管理员提供的邀请码"
+                  required
+                  helperText="注册需要有效的邀请码。"
+                />
+              ) : null}
               <Button
                 type="submit"
                 variant="contained"
@@ -1036,7 +1052,9 @@ function Sidebar({
     { id: "overview", icon: <AnalyticsIcon />, primary: "概览", secondary: "用量、供应商、用户摘要" },
     { id: "usage", icon: <BarChartIcon />, primary: "请求与用量", secondary: "全局统计和明细" },
     { id: "providers", icon: <ApiIcon />, primary: "上游供应商", secondary: "API、模型和密钥" },
-    { id: "users", icon: <KeyIcon />, primary: "用户账号", secondary: "用户 Key 与权限" }
+    { id: "users", icon: <KeyIcon />, primary: "用户账号", secondary: "用户 Key 与权限" },
+    { id: "invitations", icon: <VpnKeyIcon />, primary: "邀请码", secondary: "创建与管理邀请码" },
+    { id: "smtp", icon: <SettingsIcon />, primary: "SMTP 设置", secondary: "邮件服务配置" }
   ];
 
   return (
@@ -1884,14 +1902,16 @@ function AdminView({
   const providers = state?.providers || [];
   const users = state?.users || [];
   const usage = state?.usage;
-  const currentPage = ["overview", "usage", "providers", "responses", "users"].includes(page)
+  const currentPage = ["overview", "usage", "providers", "responses", "users", "invitations", "smtp"].includes(page)
     ? page
     : "overview";
   const pageMeta = {
     overview: { title: "上游 API 与用户 Key", description: "供应商、用户和用量摘要。" },
     usage: { title: "请求与用量", description: "查看全局 Token 统计和最近请求。" },
     providers: { title: "上游供应商", description: "配置模型来源、密钥和启用状态。" },
-    users: { title: "用户账号", description: "管理用户 Key 和访问状态。" }
+    users: { title: "用户账号", description: "管理用户 Key 和访问状态。" },
+    invitations: { title: "邀请码管理", description: "创建、发送和管理邀请码。" },
+    smtp: { title: "SMTP 设置", description: "配置邮件发送服务。" }
   }[currentPage] || {
     title: "上游 API 与用户 Key",
     description: "供应商、用户和用量摘要。"
@@ -2035,6 +2055,24 @@ function AdminView({
             onToast={onToast}
           />
         </>
+      ) : null}
+
+      {currentPage === "invitations" ? (
+        <InvitationCodesSection
+          codes={state?.invitationCodes || []}
+          afterChange={afterChange}
+          onConfirm={onConfirm}
+          onCopy={onCopy}
+          onToast={onToast}
+        />
+      ) : null}
+
+      {currentPage === "smtp" ? (
+        <SmtpConfigSection
+          config={state?.smtpConfig || {}}
+          afterChange={afterChange}
+          onToast={onToast}
+        />
       ) : null}
     </Stack>
   );
@@ -2630,6 +2668,252 @@ function AdminApiKeysSection({ apiKeys, usage, onCopy, onConfirm, afterChange, o
       ) : (
         <EmptyState text="尚未创建管理员 API Key。创建后可用于调用 /v1 和 /responses 端点，拥有全部模型权限。" />
       )}
+    </Section>
+  );
+}
+
+function InvitationCodesSection({ codes, afterChange, onConfirm, onCopy, onToast }) {
+  const [codeInput, setCodeInput] = useState("");
+  const [noteInput, setNoteInput] = useState("");
+  const [expiresAtInput, setExpiresAtInput] = useState("");
+  const [maxUsesInput, setMaxUsesInput] = useState("");
+  const [sendEmailOpen, setSendEmailOpen] = useState(false);
+  const [sendForm, setSendForm] = useState({ email: "", codeId: "", customCode: "" });
+  const [sendLoading, setSendLoading] = useState(false);
+
+  const createCode = async () => {
+    await request("/api/admin/invitation-codes", {
+      method: "POST",
+      body: {
+        code: codeInput,
+        note: noteInput,
+        expiresAt: expiresAtInput,
+        maxUses: maxUsesInput ? Number(maxUsesInput) : 0
+      }
+    });
+    setCodeInput("");
+    setNoteInput("");
+    setExpiresAtInput("");
+    setMaxUsesInput("");
+    await afterChange("邀请码已创建");
+  };
+
+  const deleteCode = (id, code) => {
+    onConfirm({
+      title: "删除邀请码",
+      message: `确认删除邀请码 ${code}？`,
+      confirmText: "删除",
+      danger: true,
+      action: async () => {
+        await request(`/api/admin/invitation-codes/${id}`, { method: "DELETE" });
+        await afterChange("邀请码已删除");
+      }
+    });
+  };
+
+  const openSendEmail = (codeId, customCode) => {
+    setSendForm({ email: "", codeId: codeId || "", customCode: customCode || "" });
+    setSendEmailOpen(true);
+  };
+
+  const sendEmail = async () => {
+    setSendLoading(true);
+    try {
+      await request("/api/admin/invitation-codes/send", {
+        method: "POST",
+        body: sendForm
+      });
+      setSendEmailOpen(false);
+      onToast("邀请邮件已发送", "success");
+    } catch (error) {
+      onToast(error.message, "error");
+    } finally {
+      setSendLoading(false);
+    }
+  };
+
+  return (
+    <>
+      <Section
+        title="邀请码"
+        icon={<VpnKeyIcon />}
+        action={
+          <Stack direction="row" spacing={1}>
+            <TextField size="small" placeholder="自定义邀请码（可选）" value={codeInput} onChange={(e) => setCodeInput(e.target.value)} sx={{ width: 180 }} />
+            <TextField size="small" placeholder="备注" value={noteInput} onChange={(e) => setNoteInput(e.target.value)} sx={{ width: 140 }} />
+            <TextField size="small" type="datetime-local" label="过期时间" InputLabelProps={{ shrink: true }} value={expiresAtInput} onChange={(e) => setExpiresAtInput(e.target.value)} sx={{ width: 180 }} />
+            <TextField size="small" type="number" placeholder="最大使用次数" value={maxUsesInput} onChange={(e) => setMaxUsesInput(e.target.value)} sx={{ width: 140 }} />
+            <Button startIcon={<AddIcon />} variant="contained" size="small" onClick={() => createCode().catch((error) => onToast(error.message, "error"))}>
+              创建
+            </Button>
+          </Stack>
+        }
+      >
+        {codes.length ? (
+          <Stack spacing={1.5}>
+            {codes.map((code) => {
+              const isExpired = code.expiresAt && new Date(code.expiresAt) < new Date();
+              const isMaxed = code.maxUses > 0 && code.usedCount >= code.maxUses;
+              const meta = [
+                ["创建时间", formatDate(code.createdAt)],
+                ["已使用", `${code.usedCount || 0} 次`]
+              ];
+              if (code.maxUses > 0) meta.push(["最大次数", String(code.maxUses)]);
+              if (code.expiresAt) meta.push(["过期时间", formatDate(code.expiresAt)]);
+              if (code.note) meta.push(["备注", code.note]);
+              return (
+                <EntityRow
+                  key={code.id}
+                  title={code.code}
+                  enabled={!isExpired && !isMaxed}
+                  icon={<VpnKeyIcon />}
+                  meta={meta}
+                  actions={
+                    <>
+                      <Tooltip title="复制邀请码">
+                        <IconButton onClick={() => onCopy(code.code)}>
+                          <ContentCopyIcon />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="发送邀请邮件">
+                        <IconButton onClick={() => openSendEmail(code.id, code.code)}>
+                          <MailIcon />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="删除">
+                        <IconButton color="error" onClick={() => deleteCode(code.id, code.code)}>
+                          <DeleteOutlineIcon />
+                        </IconButton>
+                      </Tooltip>
+                    </>
+                  }
+                />
+              );
+            })}
+          </Stack>
+        ) : (
+          <EmptyState text="还没有创建邀请码。创建后用户注册时需要输入有效的邀请码。" />
+        )}
+      </Section>
+
+      <Dialog open={sendEmailOpen} onClose={() => setSendEmailOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>发送邀请邮件</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <TextField
+              label="收件人邮箱"
+              value={sendForm.email}
+              onChange={(e) => setSendForm((f) => ({ ...f, email: e.target.value }))}
+              placeholder="user@example.com"
+              required
+            />
+            <TextField
+              label="邀请码"
+              value={sendForm.customCode}
+              onChange={(e) => setSendForm((f) => ({ ...f, customCode: e.target.value }))}
+              placeholder="留空则使用选中的邀请码"
+              helperText="可以输入自定义邀请码，或留空使用列表中的邀请码。"
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSendEmailOpen(false)} color="inherit">取消</Button>
+          <Button onClick={sendEmail} variant="contained" disabled={sendLoading} startIcon={sendLoading ? <CircularProgress size={16} /> : <SendIcon />}>
+            发送
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </>
+  );
+}
+
+function SmtpConfigSection({ config, afterChange, onToast }) {
+  const [form, setForm] = useState({
+    host: "",
+    port: 587,
+    secure: false,
+    user: "",
+    pass: "",
+    from: ""
+  });
+  const [loading, setLoading] = useState(false);
+  const [testEmail, setTestEmail] = useState("");
+  const [testLoading, setTestLoading] = useState(false);
+
+  useEffect(() => {
+    if (config) {
+      setForm({
+        host: config.host || "",
+        port: config.port || 587,
+        secure: config.secure || false,
+        user: config.user || "",
+        pass: "",
+        from: config.from || ""
+      });
+    }
+  }, [config]);
+
+  const update = (field) => (event) => {
+    const value = field === "secure" ? event.target.checked : event.target.value;
+    setForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const save = async () => {
+    setLoading(true);
+    try {
+      await request("/api/admin/smtp-config", {
+        method: "PUT",
+        body: form
+      });
+      await afterChange("SMTP 配置已保存");
+    } catch (error) {
+      onToast(error.message, "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const test = async () => {
+    if (!testEmail) {
+      onToast("请输入测试邮箱地址", "warning");
+      return;
+    }
+    setTestLoading(true);
+    try {
+      await request("/api/admin/smtp-config/test", {
+        method: "POST",
+        body: { to: testEmail }
+      });
+      onToast("测试邮件已发送", "success");
+    } catch (error) {
+      onToast(error.message, "error");
+    } finally {
+      setTestLoading(false);
+    }
+  };
+
+  return (
+    <Section title="SMTP 配置" icon={<SettingsIcon />}>
+      <Stack spacing={2}>
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+          <TextField label="SMTP 服务器" value={form.host} onChange={update("host")} placeholder="smtp.example.com" sx={{ flex: 1 }} />
+          <TextField label="端口" type="number" value={form.port} onChange={update("port")} sx={{ width: 120 }} />
+        </Stack>
+        <FormControlLabel control={<Switch checked={form.secure} onChange={update("secure")} />} label="使用 SSL/TLS（端口 465 通常需要启用）" />
+        <TextField label="用户名" value={form.user} onChange={update("user")} placeholder="your-email@example.com" />
+        <TextField label="密码" type="password" value={form.pass} onChange={update("pass")} placeholder={config.hasPass ? "已设置，留空保持不变" : "SMTP 密码"} />
+        <TextField label="发件人地址" value={form.from} onChange={update("from")} placeholder="noreply@example.com" helperText="留空则使用用户名作为发件人。" />
+
+        <Stack direction="row" spacing={1} alignItems="center">
+          <Button variant="contained" onClick={() => save().catch((e) => onToast(e.message, "error"))} disabled={loading} startIcon={loading ? <CircularProgress size={16} /> : null}>
+            保存配置
+          </Button>
+          <TextField size="small" placeholder="测试邮箱" value={testEmail} onChange={(e) => setTestEmail(e.target.value)} sx={{ width: 220 }} />
+          <Button variant="outlined" onClick={() => test().catch((e) => onToast(e.message, "error"))} disabled={testLoading} startIcon={testLoading ? <CircularProgress size={16} /> : <MailIcon />}>
+            发送测试
+          </Button>
+        </Stack>
+      </Stack>
     </Section>
   );
 }

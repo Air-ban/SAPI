@@ -57,6 +57,14 @@ function readDb() {
     db.adminApiKeys = [];
     changed = true;
   }
+  if (!Array.isArray(db.invitationCodes)) {
+    db.invitationCodes = [];
+    changed = true;
+  }
+  if (!db.smtpConfig || typeof db.smtpConfig !== "object") {
+    db.smtpConfig = {};
+    changed = true;
+  }
   for (const provider of db.providers) {
     if (!provider.healthStatus) {
       provider.healthStatus = "unknown";
