@@ -65,6 +65,10 @@ function readDb() {
     db.smtpConfig = {};
     changed = true;
   }
+  if (!Array.isArray(db.verificationCodes)) {
+    db.verificationCodes = [];
+    changed = true;
+  }
   for (const provider of db.providers) {
     if (!provider.healthStatus) {
       provider.healthStatus = "unknown";
@@ -95,6 +99,10 @@ function readDb() {
   for (const user of db.users) {
     if (!user.username) {
       user.username = String(user.name || user.id || "").trim().toLowerCase();
+      changed = true;
+    }
+    if (user.email === undefined) {
+      user.email = "";
       changed = true;
     }
     if (user.apiKey === undefined || user.apiKey === null) {

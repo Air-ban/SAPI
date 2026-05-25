@@ -339,11 +339,35 @@ function App() {
     navigate("portal");
   };
 
-  const userRegister = async ({ name, username, password, invitationCode }) => {
+  const sendVerificationCode = async (email, purpose = "register") => {
+    await request("/api/auth/send-verification-code", {
+      method: "POST",
+      admin: false,
+      body: { email, purpose }
+    });
+  };
+
+  const sendForgotPasswordCode = async (email) => {
+    await request("/api/auth/forgot-password/send-code", {
+      method: "POST",
+      admin: false,
+      body: { email }
+    });
+  };
+
+  const resetPassword = async (email, verificationCode, password) => {
+    await request("/api/auth/forgot-password/reset", {
+      method: "POST",
+      admin: false,
+      body: { email, verificationCode, password }
+    });
+  };
+
+  const userRegister = async ({ username, email, password, verificationCode, invitationCode }) => {
     const data = await request("/api/auth/register", {
       method: "POST",
       admin: false,
-      body: { name, username, password, invitationCode }
+      body: { username, email, password, verificationCode, invitationCode }
     });
     localStorage.setItem(USER_TOKEN_KEY, data.token);
     localStorage.removeItem(ADMIN_TOKEN_KEY);
@@ -489,6 +513,9 @@ function App() {
           mode={route === "register" ? "register" : "login"}
           onLogin={login}
           onRegister={userRegister}
+          onSendCode={sendVerificationCode}
+          onSendForgotCode={sendForgotPasswordCode}
+          onResetPassword={resetPassword}
           onNavigate={navigate}
           onToast={showToast}
         />
@@ -853,36 +880,232 @@ function LoadingPage({ text }) {
   );
 }
 
-function AuthPage({ mode, onLogin, onRegister, onNavigate, onToast }) {
+function ForgotPasswordDialog({ open, onClose, onSendCode, onReset, onToast }) {
+  const [step, setStep] = useState(1);
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [codeLoading, setCodeLoading] = useState(false);
+  const [countdown, setCountdown] = useState(0);
+
+  useEffect(() => {
+    if (!open) {
+      setStep(1);
+      setEmail("");
+      setCode("");
+      setPassword("");
+      setConfirmPassword("");
+      setCountdown(0);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (countdown <= 0) return;
+    const timer = setTimeout(() => setCountdown((c) => c - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [countdown]);
+
+  const sendCode = async () => {
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      onToast("请输入有效的邮箱地址", "warning");
+      return;
+    }
+    setCodeLoading(true);
+    try {
+      await onSendCode(email);
+      setCountdown(60);
+      onToast("验证码已发送", "success");
+    } catch (error) {
+      onToast(error.message, "error");
+    } finally {
+      setCodeLoading(false);
+    }
+  };
+
+  const handleReset = async () => {
+    if (password !== confirmPassword) {
+      onToast("两次输入的密码不一致", "warning");
+      return;
+    }
+    if (password.length < 8) {
+      onToast("密码至少 8 个字符", "warning");
+      return;
+    }
+    setLoading(true);
+    try {
+      await onReset(email, code, password);
+      onToast("密码重置成功，请登录", "success");
+      onClose();
+    } catch (error) {
+      onToast(error.message, "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle>重置密码</DialogTitle>
+      <DialogContent>
+        <Stack spacing={2} sx={{ pt: 1 }}>
+          {step === 1 ? (
+            <>
+              <Typography variant="body2" color="text.secondary">
+                输入注册时使用的邮箱地址，我们将发送验证码用于重置密码。
+              </Typography>
+              <Stack direction="row" spacing={1}>
+                <TextField
+                  label="邮箱"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="your-email@example.com"
+                  sx={{ flex: 1 }}
+                  autoFocus
+                />
+                <Button
+                  variant="outlined"
+                  onClick={sendCode}
+                  disabled={codeLoading || countdown > 0}
+                  sx={{ minWidth: 120, height: 56 }}
+                >
+                  {countdown > 0 ? `${countdown} 秒` : "获取验证码"}
+                </Button>
+              </Stack>
+              <TextField
+                label="验证码"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder="6 位数字"
+              />
+              <Button
+                variant="contained"
+                onClick={() => {
+                  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+                    onToast("请输入有效的邮箱地址", "warning");
+                    return;
+                  }
+                  if (!/^\d{6}$/.test(code)) {
+                    onToast("请输入 6 位数字验证码", "warning");
+                    return;
+                  }
+                  setStep(2);
+                }}
+              >
+                下一步
+              </Button>
+            </>
+          ) : (
+            <>
+              <Typography variant="body2" color="text.secondary">
+                请设置新密码。
+              </Typography>
+              <TextField
+                label="新密码"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                helperText="至少 8 个字符。"
+                autoFocus
+              />
+              <TextField
+                label="确认新密码"
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+              />
+              <Stack direction="row" spacing={1}>
+                <Button onClick={() => setStep(1)} color="inherit">上一步</Button>
+                <Button
+                  variant="contained"
+                  onClick={handleReset}
+                  disabled={loading}
+                  startIcon={loading ? <CircularProgress size={16} /> : null}
+                >
+                  重置密码
+                </Button>
+              </Stack>
+            </>
+          )}
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose} color="inherit">取消</Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+function AuthPage({ mode, onLogin, onRegister, onSendCode, onSendForgotCode, onResetPassword, onNavigate, onToast }) {
   const isRegister = mode === "register";
   const [form, setForm] = useState({
-    name: "",
     username: "",
+    email: "",
     password: "",
     confirmPassword: "",
+    verificationCode: "",
     invitationCode: ""
   });
   const [loading, setLoading] = useState(false);
+  const [codeLoading, setCodeLoading] = useState(false);
+  const [countdown, setCountdown] = useState(0);
+  const [forgotOpen, setForgotOpen] = useState(false);
 
   const update = (field) => (event) => {
     setForm((current) => ({ ...current, [field]: event.target.value }));
   };
 
+  useEffect(() => {
+    if (countdown <= 0) return;
+    const timer = setTimeout(() => setCountdown((c) => c - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [countdown]);
+
+  const sendCode = async () => {
+    if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
+      onToast("请输入有效的邮箱地址", "warning");
+      return;
+    }
+    setCodeLoading(true);
+    try {
+      await onSendCode(form.email);
+      setCountdown(60);
+      onToast("验证码已发送", "success");
+    } catch (error) {
+      onToast(error.message, "error");
+    } finally {
+      setCodeLoading(false);
+    }
+  };
+
   const submit = async (event) => {
     event.preventDefault();
 
-    if (isRegister && form.password !== form.confirmPassword) {
-      onToast("两次输入的密码不一致", "warning");
-      return;
+    if (isRegister) {
+      if (form.password !== form.confirmPassword) {
+        onToast("两次输入的密码不一致", "warning");
+        return;
+      }
+      if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
+        onToast("请输入有效的邮箱地址", "warning");
+        return;
+      }
+      if (!/^\d{6}$/.test(form.verificationCode)) {
+        onToast("验证码为 6 位数字", "warning");
+        return;
+      }
     }
 
     setLoading(true);
     try {
       if (isRegister) {
         await onRegister({
-          name: form.name,
           username: form.username,
+          email: form.email,
           password: form.password,
+          verificationCode: form.verificationCode,
           invitationCode: form.invitationCode
         });
       } else {
@@ -899,126 +1122,172 @@ function AuthPage({ mode, onLogin, onRegister, onNavigate, onToast }) {
   };
 
   return (
-    <Box
-      sx={{
-        minHeight: "100vh",
-        display: "grid",
-        placeItems: "center",
-        px: 2,
-        py: 4,
-        bgcolor: "background.default"
-      }}
-    >
-      <Paper
-        variant="outlined"
+    <>
+      <Box
         sx={{
-          width: "100%",
-          maxWidth: 440,
-          p: { xs: 2.25, sm: 3 },
-          boxShadow: "0 18px 46px rgba(15, 23, 42, 0.08)"
+          minHeight: "100vh",
+          display: "grid",
+          placeItems: "center",
+          px: 2,
+          py: 4,
+          bgcolor: "background.default"
         }}
       >
-        <Stack spacing={2.2}>
-          <Stack spacing={1} alignItems="center" textAlign="center">
-            <Box
-              sx={{
-                width: 48,
-                height: 48,
-                borderRadius: 1,
-                display: "grid",
-                placeItems: "center",
-                bgcolor: "primary.main",
-                color: "primary.contrastText"
-              }}
-            >
-              {isRegister ? <PersonAddIcon /> : <LoginIcon />}
-            </Box>
-            <Box>
-              <Typography variant="h5">
-                {isRegister ? "注册 SAPI 账号" : "登录 SAPI"}
-              </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                {isRegister
-                  ? "注册后进入用户控制台，自助创建 API Key。"
-                  : "管理员账号会进入后台，普通账号会进入用户控制台。"}
-              </Typography>
-            </Box>
-          </Stack>
-
-          <Box component="form" onSubmit={submit}>
-            <Stack spacing={1.5}>
-              {isRegister ? (
-                <TextField
-                  label="显示名称"
-                  value={form.name}
-                  onChange={update("name")}
-                  placeholder="团队或成员名称"
-                />
-              ) : null}
-              <TextField
-                label="用户名"
-                value={form.username}
-                onChange={update("username")}
-                autoComplete="username"
-                placeholder="name@example.com"
-                required
-              />
-              <TextField
-                label="密码"
-                type="password"
-                value={form.password}
-                onChange={update("password")}
-                autoComplete={isRegister ? "new-password" : "current-password"}
-                required
-                helperText={isRegister ? "至少 8 个字符。" : ""}
-              />
-              {isRegister ? (
-                <TextField
-                  label="确认密码"
-                  type="password"
-                  value={form.confirmPassword}
-                  onChange={update("confirmPassword")}
-                  autoComplete="new-password"
-                  required
-                />
-              ) : null}
-              {isRegister ? (
-                <TextField
-                  label="邀请码"
-                  value={form.invitationCode}
-                  onChange={update("invitationCode")}
-                  placeholder="输入管理员提供的邀请码"
-                  required
-                  helperText="注册需要有效的邀请码。"
-                />
-              ) : null}
-              <Button
-                type="submit"
-                variant="contained"
-                size="large"
-                startIcon={isRegister ? <PersonAddIcon /> : <LoginIcon />}
-                disabled={loading}
+        <Paper
+          variant="outlined"
+          sx={{
+            width: "100%",
+            maxWidth: 440,
+            p: { xs: 2.25, sm: 3 },
+            boxShadow: "0 18px 46px rgba(15, 23, 42, 0.08)"
+          }}
+        >
+          <Stack spacing={2.2}>
+            <Stack spacing={1} alignItems="center" textAlign="center">
+              <Box
+                sx={{
+                  width: 48,
+                  height: 48,
+                  borderRadius: 1,
+                  display: "grid",
+                  placeItems: "center",
+                  bgcolor: "primary.main",
+                  color: "primary.contrastText"
+                }}
               >
-                {isRegister ? "注册" : "登录"}
+                {isRegister ? <PersonAddIcon /> : <LoginIcon />}
+              </Box>
+              <Box>
+                <Typography variant="h5">
+                  {isRegister ? "注册 SAPI 账号" : "登录 SAPI"}
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                  {isRegister
+                    ? "注册后进入用户控制台，自助创建 API Key。"
+                    : "管理员账号会进入后台，普通账号会进入用户控制台。"}
+                </Typography>
+              </Box>
+            </Stack>
+
+            <Box component="form" onSubmit={submit}>
+              <Stack spacing={1.5}>
+                <TextField
+                  label={isRegister ? "用户名" : "用户名或邮箱"}
+                  value={form.username}
+                  onChange={update("username")}
+                  autoComplete="username"
+                  placeholder={isRegister ? "字母、数字、点、下划线、@、短横线" : "用户名或邮箱"}
+                  required
+                />
+                {isRegister ? (
+                  <TextField
+                    label="邮箱"
+                    type="email"
+                    value={form.email}
+                    onChange={update("email")}
+                    placeholder="your-email@example.com"
+                    required
+                  />
+                ) : null}
+                <TextField
+                  label="密码"
+                  type="password"
+                  value={form.password}
+                  onChange={update("password")}
+                  autoComplete={isRegister ? "new-password" : "current-password"}
+                  required
+                  helperText={isRegister ? "至少 8 个字符。" : ""}
+                />
+                {isRegister ? (
+                  <TextField
+                    label="确认密码"
+                    type="password"
+                    value={form.confirmPassword}
+                    onChange={update("confirmPassword")}
+                    autoComplete="new-password"
+                    required
+                  />
+                ) : null}
+                {isRegister ? (
+                  <Stack direction="row" spacing={1}>
+                    <TextField
+                      label="邮箱验证码"
+                      value={form.verificationCode}
+                      onChange={update("verificationCode")}
+                      placeholder="6 位数字"
+                      required
+                      sx={{ flex: 1 }}
+                    />
+                    <Button
+                      variant="outlined"
+                      onClick={sendCode}
+                      disabled={codeLoading || countdown > 0}
+                      sx={{ minWidth: 120, height: 56 }}
+                    >
+                      {countdown > 0 ? `${countdown} 秒` : "获取验证码"}
+                    </Button>
+                  </Stack>
+                ) : null}
+                {isRegister ? (
+                  <>
+                    <DividerLine />
+                    <TextField
+                      label="邀请码"
+                      value={form.invitationCode}
+                      onChange={update("invitationCode")}
+                      placeholder="输入管理员提供的邀请码"
+                      required
+                      helperText="注册需要有效的邀请码。"
+                      sx={{
+                        '& .MuiOutlinedInput-root': {
+                          bgcolor: 'rgba(15,118,110,0.04)'
+                        }
+                      }}
+                    />
+                  </>
+                ) : null}
+                <Button
+                  type="submit"
+                  variant="contained"
+                  size="large"
+                  startIcon={isRegister ? <PersonAddIcon /> : <LoginIcon />}
+                  disabled={loading}
+                >
+                  {isRegister ? "注册" : "登录"}
+                </Button>
+                {!isRegister ? (
+                  <Box sx={{ textAlign: "center" }}>
+                    <Button size="small" onClick={() => setForgotOpen(true)}>
+                      忘记密码？
+                    </Button>
+                  </Box>
+                ) : null}
+              </Stack>
+            </Box>
+
+            <DividerLine />
+            <Stack direction="row" spacing={1} justifyContent="center" flexWrap="wrap">
+              <Button
+                size="small"
+                onClick={() => onNavigate(isRegister ? "login" : "register")}
+              >
+                {isRegister ? "已有账号，去登录" : "没有账号，去注册"}
+              </Button>
+              <Button size="small" color="inherit" onClick={() => onNavigate("home")}>
+                返回首页
               </Button>
             </Stack>
-          </Box>
-
-          <DividerLine />
-          <Stack direction="row" spacing={1} justifyContent="center" flexWrap="wrap">
-            <Button
-              size="small"
-              onClick={() => onNavigate(isRegister ? "login" : "register")}
-            >
-              {isRegister ? "已有账号，去登录" : "没有账号，去注册"}
-            </Button>
-            <Button size="small" color="inherit" onClick={() => onNavigate("home")}>
-              返回首页
-            </Button>
           </Stack>
-        </Stack>
-      </Paper>
-    </Box>
+        </Paper>
+      </Box>
+      <ForgotPasswordDialog
+        open={forgotOpen}
+        onClose={() => setForgotOpen(false)}
+        onSendCode={onSendForgotCode}
+        onReset={onResetPassword}
+        onToast={onToast}
+      />
+    </>
   );
 }
 
@@ -1047,14 +1316,24 @@ function Sidebar({
     { id: "models", icon: <ApiIcon />, primary: "模型与端点", secondary: "可用模型和接口" },
     { id: "example", icon: <RocketLaunchIcon />, primary: "调用示例", secondary: "curl 请求模板" }
   ];
-  const adminPages = [
-    { id: "responses", icon: <DnsIcon />, primary: "代理设置", secondary: "端点、用量、上游地址" },
-    { id: "overview", icon: <AnalyticsIcon />, primary: "概览", secondary: "用量、供应商、用户摘要" },
-    { id: "usage", icon: <BarChartIcon />, primary: "请求与用量", secondary: "全局统计和明细" },
-    { id: "providers", icon: <ApiIcon />, primary: "上游供应商", secondary: "API、模型和密钥" },
-    { id: "users", icon: <KeyIcon />, primary: "用户账号", secondary: "用户 Key 与权限" },
-    { id: "invitations", icon: <VpnKeyIcon />, primary: "邀请码", secondary: "创建与管理邀请码" },
-    { id: "smtp", icon: <SettingsIcon />, primary: "SMTP 设置", secondary: "邮件服务配置" }
+  const adminNavGroups = [
+    {
+      label: "运营",
+      pages: [
+        { id: "responses", icon: <DnsIcon />, primary: "代理设置", secondary: "端点、用量、上游地址" },
+        { id: "overview", icon: <AnalyticsIcon />, primary: "概览", secondary: "用量、供应商、用户摘要" },
+        { id: "usage", icon: <BarChartIcon />, primary: "请求与用量", secondary: "全局统计和明细" },
+        { id: "providers", icon: <ApiIcon />, primary: "上游供应商", secondary: "API、模型和密钥" },
+        { id: "users", icon: <KeyIcon />, primary: "用户账号", secondary: "用户 Key 与权限" }
+      ]
+    },
+    {
+      label: "系统",
+      pages: [
+        { id: "invitations", icon: <VpnKeyIcon />, primary: "邀请码", secondary: "创建与管理邀请码" },
+        { id: "smtp", icon: <SettingsIcon />, primary: "SMTP 设置", secondary: "邮件服务配置" }
+      ]
+    }
   ];
 
   return (
@@ -1130,22 +1409,26 @@ function Sidebar({
       ) : null}
 
       {route === "admin" && admin ? (
-        <Stack spacing={1.25}>
-          <Typography variant="caption" sx={{ px: 1, color: "#7f91a4", fontWeight: 800, textTransform: "uppercase" }}>
-            管理后台
-          </Typography>
-          <List disablePadding sx={{ display: "grid", gap: 1 }}>
-            {adminPages.map((item) => (
-              <NavItem
-                key={item.id}
-                active={adminPage === item.id}
-                icon={item.icon}
-                primary={item.primary}
-                secondary={item.secondary}
-                onClick={() => onAdminPageChange(item.id)}
-              />
-            ))}
-          </List>
+        <Stack spacing={2}>
+          {adminNavGroups.map((group) => (
+            <Stack key={group.label} spacing={1.25}>
+              <Typography variant="caption" sx={{ px: 1, color: "#7f91a4", fontWeight: 800, textTransform: "uppercase" }}>
+                {group.label}
+              </Typography>
+              <List disablePadding sx={{ display: "grid", gap: 1 }}>
+                {group.pages.map((item) => (
+                  <NavItem
+                    key={item.id}
+                    active={adminPage === item.id}
+                    icon={item.icon}
+                    primary={item.primary}
+                    secondary={item.secondary}
+                    onClick={() => onAdminPageChange(item.id)}
+                  />
+                ))}
+              </List>
+            </Stack>
+          ))}
         </Stack>
       ) : null}
 
@@ -2503,12 +2786,16 @@ function ProviderRow({ provider, afterChange, onConfirm, onEdit, onToast }) {
 }
 
 function UserRow({ user, usage, afterChange, onConfirm, onCopy, onToast }) {
+  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [passwordLoading, setPasswordLoading] = useState(false);
+
   const toggle = async () => {
     await request(`/api/admin/users/${user.id}`, {
       method: "PUT",
       body: { enabled: !user.enabled }
     });
-    await afterChange(user.enabled ? "用户 Key 已停用" : "用户 Key 已启用");
+    await afterChange(user.enabled ? "用户已封禁" : "用户已解封");
   };
 
   const remove = () => {
@@ -2519,15 +2806,37 @@ function UserRow({ user, usage, afterChange, onConfirm, onCopy, onToast }) {
       danger: true,
       action: async () => {
         await request(`/api/admin/users/${user.id}`, { method: "DELETE" });
-        await afterChange("用户 Key 已删除");
+        await afterChange("用户已删除");
       }
     });
+  };
+
+  const resetPassword = async () => {
+    if (newPassword.length < 8) {
+      onToast("密码至少 8 个字符", "warning");
+      return;
+    }
+    setPasswordLoading(true);
+    try {
+      await request(`/api/admin/users/${user.id}/password`, {
+        method: "PUT",
+        body: { password: newPassword }
+      });
+      setPasswordDialogOpen(false);
+      setNewPassword("");
+      onToast("密码已重置", "success");
+    } catch (error) {
+      onToast(error.message, "error");
+    } finally {
+      setPasswordLoading(false);
+    }
   };
 
   const apiKeys = getUserApiKeys(user);
   const meta = [
     ["API Key", apiKeys.length ? `${apiKeys.length} 个` : "未创建"],
     ["账号", user.username || "-"],
+    ["邮箱", user.email || "-"],
     ["创建时间", formatDate(user.createdAt)]
   ];
 
@@ -2536,31 +2845,73 @@ function UserRow({ user, usage, afterChange, onConfirm, onCopy, onToast }) {
   }
 
   return (
-    <EntityRow
-      title={user.name}
-      enabled={user.enabled}
-      icon={<KeyIcon />}
-      meta={meta}
-      actions={
-        <>
-          {apiKeys[0]?.key ? (
-            <Tooltip title="复制首个 Key">
-              <IconButton onClick={() => onCopy(apiKeys[0].key)}>
-                <ContentCopyIcon />
+    <>
+      <EntityRow
+        title={user.name}
+        enabled={user.enabled}
+        icon={<KeyIcon />}
+        meta={meta}
+        actions={
+          <>
+            {apiKeys[0]?.key ? (
+              <Tooltip title="复制首个 Key">
+                <IconButton size="small" onClick={() => onCopy(apiKeys[0].key)}>
+                  <ContentCopyIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            ) : null}
+            <Tooltip title="重置密码">
+              <IconButton size="small" onClick={() => setPasswordDialogOpen(true)}>
+                <VpnKeyIcon fontSize="small" />
               </IconButton>
             </Tooltip>
-          ) : null}
-          <Button size="small" variant="outlined" onClick={() => toggle().catch((error) => onToast(error.message, "error"))}>
-            {user.enabled ? "停用" : "启用"}
+            <Button
+              size="small"
+              variant="outlined"
+              color={user.enabled ? "warning" : "success"}
+              onClick={() => toggle().catch((error) => onToast(error.message, "error"))}
+            >
+              {user.enabled ? "封禁" : "解封"}
+            </Button>
+            <Tooltip title="删除">
+              <IconButton size="small" color="error" onClick={remove}>
+                <DeleteOutlineIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          </>
+        }
+      />
+      <Dialog open={passwordDialogOpen} onClose={() => setPasswordDialogOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>重置用户密码</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <Typography variant="body2" color="text.secondary">
+              为用户 {user.name}（{user.username}）设置新密码。
+            </Typography>
+            <TextField
+              label="新密码"
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              placeholder="至少 8 个字符"
+              autoFocus
+              fullWidth
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPasswordDialogOpen(false)} color="inherit">取消</Button>
+          <Button
+            variant="contained"
+            onClick={resetPassword}
+            disabled={passwordLoading}
+            startIcon={passwordLoading ? <CircularProgress size={16} /> : null}
+          >
+            确认重置
           </Button>
-          <Tooltip title="删除">
-            <IconButton color="error" onClick={remove}>
-              <DeleteOutlineIcon />
-            </IconButton>
-          </Tooltip>
-        </>
-      }
-    />
+        </DialogActions>
+      </Dialog>
+    </>
   );
 }
 
@@ -2673,6 +3024,7 @@ function AdminApiKeysSection({ apiKeys, usage, onCopy, onConfirm, afterChange, o
 }
 
 function InvitationCodesSection({ codes, afterChange, onConfirm, onCopy, onToast }) {
+  const [createOpen, setCreateOpen] = useState(false);
   const [codeInput, setCodeInput] = useState("");
   const [noteInput, setNoteInput] = useState("");
   const [expiresAtInput, setExpiresAtInput] = useState("");
@@ -2695,6 +3047,7 @@ function InvitationCodesSection({ codes, afterChange, onConfirm, onCopy, onToast
     setNoteInput("");
     setExpiresAtInput("");
     setMaxUsesInput("");
+    setCreateOpen(false);
     await afterChange("邀请码已创建");
   };
 
@@ -2738,15 +3091,9 @@ function InvitationCodesSection({ codes, afterChange, onConfirm, onCopy, onToast
         title="邀请码"
         icon={<VpnKeyIcon />}
         action={
-          <Stack direction="row" spacing={1}>
-            <TextField size="small" placeholder="自定义邀请码（可选）" value={codeInput} onChange={(e) => setCodeInput(e.target.value)} sx={{ width: 180 }} />
-            <TextField size="small" placeholder="备注" value={noteInput} onChange={(e) => setNoteInput(e.target.value)} sx={{ width: 140 }} />
-            <TextField size="small" type="datetime-local" label="过期时间" InputLabelProps={{ shrink: true }} value={expiresAtInput} onChange={(e) => setExpiresAtInput(e.target.value)} sx={{ width: 180 }} />
-            <TextField size="small" type="number" placeholder="最大使用次数" value={maxUsesInput} onChange={(e) => setMaxUsesInput(e.target.value)} sx={{ width: 140 }} />
-            <Button startIcon={<AddIcon />} variant="contained" size="small" onClick={() => createCode().catch((error) => onToast(error.message, "error"))}>
-              创建
-            </Button>
-          </Stack>
+          <Button startIcon={<AddIcon />} variant="contained" size="small" onClick={() => setCreateOpen(true)}>
+            新建邀请码
+          </Button>
         }
       >
         {codes.length ? (
@@ -2754,40 +3101,84 @@ function InvitationCodesSection({ codes, afterChange, onConfirm, onCopy, onToast
             {codes.map((code) => {
               const isExpired = code.expiresAt && new Date(code.expiresAt) < new Date();
               const isMaxed = code.maxUses > 0 && code.usedCount >= code.maxUses;
-              const meta = [
-                ["创建时间", formatDate(code.createdAt)],
-                ["已使用", `${code.usedCount || 0} 次`]
-              ];
-              if (code.maxUses > 0) meta.push(["最大次数", String(code.maxUses)]);
-              if (code.expiresAt) meta.push(["过期时间", formatDate(code.expiresAt)]);
-              if (code.note) meta.push(["备注", code.note]);
+              const isActive = !isExpired && !isMaxed;
+              const usageText = code.maxUses > 0 ? `${code.usedCount || 0} / ${code.maxUses}` : `${code.usedCount || 0} 次`;
               return (
-                <EntityRow
+                <Paper
                   key={code.id}
-                  title={code.code}
-                  enabled={!isExpired && !isMaxed}
-                  icon={<VpnKeyIcon />}
-                  meta={meta}
-                  actions={
-                    <>
-                      <Tooltip title="复制邀请码">
-                        <IconButton onClick={() => onCopy(code.code)}>
-                          <ContentCopyIcon />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="发送邀请邮件">
-                        <IconButton onClick={() => openSendEmail(code.id, code.code)}>
-                          <MailIcon />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="删除">
-                        <IconButton color="error" onClick={() => deleteCode(code.id, code.code)}>
-                          <DeleteOutlineIcon />
-                        </IconButton>
-                      </Tooltip>
-                    </>
-                  }
-                />
+                  variant="outlined"
+                  sx={{
+                    p: { xs: 1.5, sm: 2 },
+                    display: "grid",
+                    gridTemplateColumns: { xs: "1fr", md: "minmax(0, 1fr) auto" },
+                    gap: 1.5,
+                    alignItems: "center",
+                    bgcolor: isActive ? "#fbfcfe" : "action.hover",
+                    opacity: isActive ? 1 : 0.85
+                  }}
+                >
+                  <Stack direction="row" spacing={1.5} alignItems="center" sx={{ minWidth: 0 }}>
+                    <Box
+                      sx={{
+                        width: 38,
+                        height: 38,
+                        borderRadius: 1,
+                        display: "grid",
+                        placeItems: "center",
+                        bgcolor: isActive ? "rgba(15,118,110,0.1)" : "rgba(120,120,120,0.1)",
+                        color: isActive ? "primary.main" : "text.disabled",
+                        flexShrink: 0
+                      }}
+                    >
+                      <VpnKeyIcon />
+                    </Box>
+                    <Box sx={{ minWidth: 0 }}>
+                      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                        <Typography variant="subtitle1" sx={{ fontWeight: 780, fontFamily: 'Consolas, monospace', overflowWrap: "anywhere" }}>
+                          {code.code}
+                        </Typography>
+                        <Chip
+                          size="small"
+                          label={isActive ? "有效" : isExpired ? "已过期" : "已达上限"}
+                          color={isActive ? "success" : "default"}
+                          variant="outlined"
+                        />
+                        {code.note ? (
+                          <Typography variant="caption" color="text.secondary" noWrap sx={{ maxWidth: 200 }}>
+                            {code.note}
+                          </Typography>
+                        ) : null}
+                      </Stack>
+                      <Stack direction="row" spacing={2} sx={{ mt: 0.5 }}>
+                        <Typography variant="caption" color="text.secondary">
+                          已使用 {usageText}
+                        </Typography>
+                        {code.expiresAt ? (
+                          <Typography variant="caption" color={isExpired ? "error" : "text.secondary"}>
+                            {isExpired ? "已于 " : ""}{formatDate(code.expiresAt)}{isExpired ? " 过期" : " 过期"}
+                          </Typography>
+                        ) : null}
+                      </Stack>
+                    </Box>
+                  </Stack>
+                  <Stack direction="row" spacing={0.5} alignItems="center" justifyContent={{ xs: "flex-start", md: "flex-end" }}>
+                    <Tooltip title="复制邀请码">
+                      <IconButton size="small" onClick={() => onCopy(code.code)}>
+                        <ContentCopyIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                    <Tooltip title="发送邀请邮件">
+                      <IconButton size="small" onClick={() => openSendEmail(code.id, code.code)}>
+                        <MailIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                    <Tooltip title="删除">
+                      <IconButton size="small" color="error" onClick={() => deleteCode(code.id, code.code)}>
+                        <DeleteOutlineIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </Stack>
+                </Paper>
               );
             })}
           </Stack>
@@ -2796,29 +3187,75 @@ function InvitationCodesSection({ codes, afterChange, onConfirm, onCopy, onToast
         )}
       </Section>
 
-      <Dialog open={sendEmailOpen} onClose={() => setSendEmailOpen(false)} maxWidth="sm" fullWidth>
+      <Dialog open={createOpen} onClose={() => setCreateOpen(false)} maxWidth="sm" fullWidth PaperProps={{ component: "form", onSubmit: (e) => { e.preventDefault(); createCode().catch((err) => onToast(err.message, "error")); } }}>
+        <DialogTitle>新建邀请码</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <TextField
+              label="自定义邀请码"
+              value={codeInput}
+              onChange={(e) => setCodeInput(e.target.value)}
+              placeholder="留空则自动生成"
+              helperText="4-64 个字符，仅允许字母、数字、下划线和短横线。"
+            />
+            <TextField
+              label="备注"
+              value={noteInput}
+              onChange={(e) => setNoteInput(e.target.value)}
+              placeholder="例如：团队 A 专用"
+            />
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+              <TextField
+                type="datetime-local"
+                label="过期时间"
+                InputLabelProps={{ shrink: true }}
+                value={expiresAtInput}
+                onChange={(e) => setExpiresAtInput(e.target.value)}
+                sx={{ flex: 1 }}
+              />
+              <TextField
+                type="number"
+                label="最大使用次数"
+                value={maxUsesInput}
+                onChange={(e) => setMaxUsesInput(e.target.value)}
+                placeholder="0 表示无限制"
+                sx={{ flex: 1 }}
+              />
+            </Stack>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setCreateOpen(false)} color="inherit">取消</Button>
+          <Button type="submit" variant="contained" startIcon={<AddIcon />}>创建</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={sendEmailOpen} onClose={() => setSendEmailOpen(false)} maxWidth="sm" fullWidth PaperProps={{ component: "form", onSubmit: (e) => { e.preventDefault(); sendEmail().catch((err) => onToast(err.message, "error")); } }}>
         <DialogTitle>发送邀请邮件</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
+            <Paper variant="outlined" sx={{ p: 1.5, bgcolor: 'rgba(15,118,110,0.04)', display: 'flex', alignItems: 'center', gap: 1 }}>
+              <VpnKeyIcon fontSize="small" color="action" />
+              <Typography variant="body2" sx={{ fontFamily: 'Consolas, monospace', fontWeight: 700 }}>
+                {sendForm.customCode}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                将使用此邀请码发送
+              </Typography>
+            </Paper>
             <TextField
               label="收件人邮箱"
               value={sendForm.email}
               onChange={(e) => setSendForm((f) => ({ ...f, email: e.target.value }))}
               placeholder="user@example.com"
               required
-            />
-            <TextField
-              label="邀请码"
-              value={sendForm.customCode}
-              onChange={(e) => setSendForm((f) => ({ ...f, customCode: e.target.value }))}
-              placeholder="留空则使用选中的邀请码"
-              helperText="可以输入自定义邀请码，或留空使用列表中的邀请码。"
+              autoFocus
             />
           </Stack>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setSendEmailOpen(false)} color="inherit">取消</Button>
-          <Button onClick={sendEmail} variant="contained" disabled={sendLoading} startIcon={sendLoading ? <CircularProgress size={16} /> : <SendIcon />}>
+          <Button type="submit" variant="contained" disabled={sendLoading} startIcon={sendLoading ? <CircularProgress size={16} /> : <SendIcon />}>
             发送
           </Button>
         </DialogActions>
@@ -2893,28 +3330,82 @@ function SmtpConfigSection({ config, afterChange, onToast }) {
   };
 
   return (
-    <Section title="SMTP 配置" icon={<SettingsIcon />}>
-      <Stack spacing={2}>
-        <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
-          <TextField label="SMTP 服务器" value={form.host} onChange={update("host")} placeholder="smtp.example.com" sx={{ flex: 1 }} />
-          <TextField label="端口" type="number" value={form.port} onChange={update("port")} sx={{ width: 120 }} />
-        </Stack>
-        <FormControlLabel control={<Switch checked={form.secure} onChange={update("secure")} />} label="使用 SSL/TLS（端口 465 通常需要启用）" />
-        <TextField label="用户名" value={form.user} onChange={update("user")} placeholder="your-email@example.com" />
-        <TextField label="密码" type="password" value={form.pass} onChange={update("pass")} placeholder={config.hasPass ? "已设置，留空保持不变" : "SMTP 密码"} />
-        <TextField label="发件人地址" value={form.from} onChange={update("from")} placeholder="noreply@example.com" helperText="留空则使用用户名作为发件人。" />
+    <Stack spacing={2.5}>
+      <Section title="SMTP 配置" icon={<SettingsIcon />}>
+        <Stack spacing={2.5}>
+          <Paper variant="outlined" sx={{ p: 2, bgcolor: 'background.default' }}>
+            <Stack spacing={2}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 780, color: 'text.secondary' }}>
+                服务器设置
+              </Typography>
+              <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+                <TextField label="SMTP 服务器" value={form.host} onChange={update("host")} placeholder="smtp.example.com" sx={{ flex: 1 }} />
+                <TextField label="端口" type="number" value={form.port} onChange={update("port")} sx={{ width: 140 }} />
+              </Stack>
+              <FormControlLabel
+                control={<Switch checked={form.secure} onChange={update("secure")} />}
+                label="使用 SSL/TLS（端口 465 通常需要启用）"
+              />
+            </Stack>
+          </Paper>
 
-        <Stack direction="row" spacing={1} alignItems="center">
-          <Button variant="contained" onClick={() => save().catch((e) => onToast(e.message, "error"))} disabled={loading} startIcon={loading ? <CircularProgress size={16} /> : null}>
-            保存配置
-          </Button>
-          <TextField size="small" placeholder="测试邮箱" value={testEmail} onChange={(e) => setTestEmail(e.target.value)} sx={{ width: 220 }} />
-          <Button variant="outlined" onClick={() => test().catch((e) => onToast(e.message, "error"))} disabled={testLoading} startIcon={testLoading ? <CircularProgress size={16} /> : <MailIcon />}>
-            发送测试
+          <Paper variant="outlined" sx={{ p: 2, bgcolor: 'background.default' }}>
+            <Stack spacing={2}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 780, color: 'text.secondary' }}>
+                认证信息
+              </Typography>
+              <TextField label="用户名" value={form.user} onChange={update("user")} placeholder="your-email@example.com" />
+              <TextField
+                label="密码"
+                type="password"
+                value={form.pass}
+                onChange={update("pass")}
+                placeholder={config.hasPass ? "已设置，留空保持不变" : "SMTP 密码"}
+              />
+              <TextField
+                label="发件人地址"
+                value={form.from}
+                onChange={update("from")}
+                placeholder="noreply@example.com"
+                helperText="留空则使用用户名作为发件人。"
+              />
+            </Stack>
+          </Paper>
+
+          <Stack direction="row" spacing={1.5} justifyContent="flex-end">
+            <Button
+              variant="contained"
+              onClick={() => save().catch((e) => onToast(e.message, "error"))}
+              disabled={loading}
+              startIcon={loading ? <CircularProgress size={16} /> : null}
+            >
+              保存配置
+            </Button>
+          </Stack>
+        </Stack>
+      </Section>
+
+      <Section title="连接测试" icon={<MailIcon />}>
+        <Stack spacing={2} direction={{ xs: "column", sm: "row" }} alignItems={{ xs: "stretch", sm: "flex-start" }}>
+          <TextField
+            label="测试邮箱地址"
+            value={testEmail}
+            onChange={(e) => setTestEmail(e.target.value)}
+            placeholder="your-email@example.com"
+            sx={{ flex: 1 }}
+          />
+          <Button
+            variant="outlined"
+            onClick={() => test().catch((e) => onToast(e.message, "error"))}
+            disabled={testLoading}
+            startIcon={testLoading ? <CircularProgress size={16} /> : <MailIcon />}
+            sx={{ height: 56, mt: { sm: 0 }, flexShrink: 0 }}
+          >
+            发送测试邮件
           </Button>
         </Stack>
-      </Stack>
-    </Section>
+      </Section>
+    </Stack>
   );
 }
 
