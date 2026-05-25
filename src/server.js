@@ -2658,6 +2658,28 @@ function getUsageStats(db, { userId = null, days = 30 } = {}) {
 
   const recentRequests = records.slice(-100).reverse();
 
+  const hourSince = new Date();
+  hourSince.setHours(hourSince.getHours() - 24);
+  const hourSinceIso = hourSince.toISOString();
+  const byHour = {};
+  for (const item of records) {
+    if (item.timestamp < hourSinceIso) continue;
+    const hour = item.timestamp.slice(0, 13) + ":00";
+    if (!byHour[hour]) {
+      byHour[hour] = {
+        hour,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        requests: 0
+      };
+    }
+    byHour[hour].promptTokens += item.promptTokens || 0;
+    byHour[hour].completionTokens += item.completionTokens || 0;
+    byHour[hour].totalTokens += item.totalTokens || 0;
+    byHour[hour].requests += 1;
+  }
+
   return {
     totalPromptTokens: totalPrompt,
     totalCompletionTokens: totalCompletion,
@@ -2672,6 +2694,7 @@ function getUsageStats(db, { userId = null, days = 30 } = {}) {
     byApiKey: Object.values(byApiKey).sort((a, b) => b.totalTokens - a.totalTokens),
     byModel: Object.values(byModel).sort((a, b) => b.totalTokens - a.totalTokens),
     byDay: Object.values(byDay).sort((a, b) => a.day.localeCompare(b.day)),
+    byHour: Object.values(byHour).sort((a, b) => a.hour.localeCompare(b.hour)),
     recent: recentRequests,
     recentRequests
   };
