@@ -1651,6 +1651,7 @@ async function handleResponsesProxy(req, res) {
       const headers = filterForwardHeaders(req.headers);
       headers.authorization = `Bearer ${provider.apiKey}`;
       headers["content-type"] = "application/json";
+      headers["accept-encoding"] = "identity";
       if (req.headers.accept) headers.accept = req.headers.accept;
 
       appendDebugLog("responses.request", {
@@ -2159,6 +2160,7 @@ async function handleAnthropicMessagesProxy(req, res) {
       const headers = filterForwardHeaders(req.headers);
       headers.authorization = `Bearer ${provider.apiKey}`;
       headers["content-type"] = "application/json";
+      headers["accept-encoding"] = "identity";
 
       appendDebugLog("anthropic.request", {
         url: upstreamUrl,
@@ -2551,6 +2553,7 @@ async function proxyToProvider(req, res) {
       if (req.body !== undefined && !headers["content-type"]) {
         headers["content-type"] = "application/json";
       }
+      headers["accept-encoding"] = "identity";
 
       appendDebugLog("proxy.request", {
         url: upstreamUrl,
