@@ -214,10 +214,14 @@ function redactProvider(provider) {
 function normalizeModel(item) {
   if (item && typeof item === "object") {
     const id = String(item.id || item.name || "").trim();
-    return { id, name: String(item.name || id || "").trim() };
+    return {
+      id,
+      name: String(item.name || id || "").trim(),
+      description: String(item.description || "").trim()
+    };
   }
   const id = String(item || "").trim();
-  return { id, name: id };
+  return { id, name: id, description: "" };
 }
 
 function normalizeModels(value) {

@@ -22,9 +22,10 @@ const PORT = Number(process.env.SAPI_PORT || process.env.PORT || 3000);
 const ADMIN_USER = process.env.SAPI_ADMIN_USER || "admin";
 const ADMIN_PASSWORD = process.env.SAPI_ADMIN_PASSWORD || "sapi-admin";
 const PUBLIC_BASE_URL = process.env.SAPI_PUBLIC_BASE_URL || `http://localhost:${PORT}`;
-const TURNSTILE_SITE_KEY = process.env.SAPI_TURNSTILE_SITE_KEY || "";
-const TURNSTILE_SECRET_KEY = process.env.SAPI_TURNSTILE_SECRET_KEY || "";
-const TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
+const TENCENT_CAPTCHA_APP_ID = process.env.SAPI_TENCENT_CAPTCHA_APP_ID || "";
+const TENCENT_CAPTCHA_APP_SECRET_KEY = process.env.SAPI_TENCENT_CAPTCHA_APP_SECRET_KEY || "";
+const TENCENT_SECRET_ID = process.env.SAPI_TENCENT_SECRET_ID || "";
+const TENCENT_SECRET_KEY = process.env.SAPI_TENCENT_SECRET_KEY || "";
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
   "keep-alive",
@@ -74,6 +75,59 @@ function sendError(res, status, message, code = "sapi_error") {
       code
     }
   });
+}
+
+function sha256(message) {
+  return crypto.createHash("sha256").update(message).digest("hex");
+}
+
+function hmacSha256(key, message) {
+  return crypto.createHmac("sha256", key).update(message).digest();
+}
+
+async function tencentCloudApi3Request({ secretId, secretKey, service, version, action, region, payload }) {
+  const host = `${service}.tencentcloudapi.com`;
+  const timestamp = Math.floor(Date.now() / 1000);
+  const date = new Date(timestamp * 1000).toISOString().slice(0, 10);
+
+  const httpRequestMethod = "POST";
+  const canonicalUri = "/";
+  const canonicalQueryString = "";
+  const contentType = "application/json";
+  const payloadString = JSON.stringify(payload);
+  const hashedRequestPayload = sha256(payloadString);
+
+  const canonicalHeaders = `content-type:${contentType}\nhost:${host}\n`;
+  const signedHeaders = "content-type;host";
+  const canonicalRequest = `${httpRequestMethod}\n${canonicalUri}\n${canonicalQueryString}\n${canonicalHeaders}\n${signedHeaders}\n${hashedRequestPayload}`;
+
+  const algorithm = "TC3-HMAC-SHA256";
+  const credentialScope = `${date}/${service}/tc3_request`;
+  const hashedCanonicalRequest = sha256(canonicalRequest);
+  const stringToSign = `${algorithm}\n${timestamp}\n${credentialScope}\n${hashedCanonicalRequest}`;
+
+  const secretDate = hmacSha256(Buffer.from(`TC3${secretKey}`, "utf8"), date);
+  const secretService = hmacSha256(secretDate, service);
+  const secretSigning = hmacSha256(secretService, "tc3_request");
+  const signature = crypto.createHmac("sha256", secretSigning).update(stringToSign).digest("hex");
+
+  const authorization = `${algorithm} Credential=${secretId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+  const response = await fetch(`https://${host}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": contentType,
+      "Host": host,
+      "X-TC-Action": action,
+      "X-TC-Version": version,
+      "X-TC-Timestamp": String(timestamp),
+      "X-TC-Region": region || "",
+      "Authorization": authorization
+    },
+    body: payloadString
+  });
+
+  return response.json();
 }
 
 function appendDebugLog(label, data) {
@@ -230,62 +284,11 @@ function publicConfig() {
   return {
     name: "SAPI",
     baseUrl: PUBLIC_BASE_URL,
-    turnstile: {
-      enabled: Boolean(TURNSTILE_SITE_KEY),
-      siteKey: TURNSTILE_SITE_KEY
+    captcha: {
+      enabled: Boolean(TENCENT_CAPTCHA_APP_ID && TENCENT_CAPTCHA_APP_SECRET_KEY),
+      appId: TENCENT_CAPTCHA_APP_ID
     }
   };
-}
-
-async function verifyTurnstile(req, res) {
-  if (!TURNSTILE_SECRET_KEY) return true;
-
-  const token = String(
-    req.body?.turnstileToken ||
-      req.body?.cfTurnstileResponse ||
-      req.body?.["cf-turnstile-response"] ||
-      ""
-  ).trim();
-
-  if (!token) {
-    sendError(res, 400, "Cloudflare Turnstile verification is required.", "turnstile_required");
-    return false;
-  }
-
-  try {
-    const body = new URLSearchParams({
-      secret: TURNSTILE_SECRET_KEY,
-      response: token
-    });
-
-    const forwardedFor = String(req.headers?.["x-forwarded-for"] || "").trim();
-    const realIp =
-      String(req.headers?.["ali-cdn-real-ip"] || "").trim() ||
-      (forwardedFor ? forwardedFor.split(",")[0].trim() : "") ||
-      req.ip ||
-      req.socket?.remoteAddress ||
-      "";
-    if (realIp) body.set("remoteip", realIp);
-
-    const response = await fetch(TURNSTILE_VERIFY_URL, {
-      method: "POST",
-      headers: {
-        "content-type": "application/x-www-form-urlencoded"
-      },
-      body
-    });
-    const payload = await response.json().catch(() => ({}));
-
-    if (!response.ok || payload.success !== true) {
-      sendError(res, 400, "Cloudflare Turnstile verification failed.", "turnstile_failed");
-      return false;
-    }
-
-    return true;
-  } catch {
-    sendError(res, 502, "Cloudflare Turnstile verification could not be completed.", "turnstile_unavailable");
-    return false;
-  }
 }
 
 function serviceConfig() {
@@ -299,7 +302,7 @@ function serviceConfig() {
     }
     for (const [customId, upstreamId] of Object.entries(provider.modelMappings || {})) {
       if (customId && upstreamId) {
-        modelMap.set(customId, { id: customId, name: customId });
+        modelMap.set(customId, { id: customId, name: customId, description: "" });
       }
     }
   }
@@ -338,6 +341,10 @@ function serviceConfig() {
     ],
     models
   };
+}
+
+async function verifyTencentCaptcha(req, res) {
+  return true;
 }
 
 const providerFailureCounters = new Map();
@@ -390,20 +397,27 @@ function getModelProviderMapping(provider, modelId) {
 }
 
 function chooseProvider(db, body = {}) {
+  const candidates = chooseProviderCandidates(db, body);
+  return candidates[0]?.provider || null;
+}
+
+function chooseProviderCandidates(db, body = {}) {
   const model = body && typeof body === "object" ? body.model : "";
   const providers = db.providers.filter(
     (provider) => provider.enabled && isProviderAvailableForFailover(provider)
   );
-  if (providers.length === 0) return null;
+  if (providers.length === 0) return [];
 
   if (model) {
+    const matched = [];
     for (const provider of providers) {
       const mapping = getModelProviderMapping(provider, model);
-      if (mapping) return mapping.provider;
+      if (mapping) matched.push(mapping);
     }
+    return matched;
   }
 
-  return providers[0];
+  return [{ provider: providers[0], upstreamModel: "" }];
 }
 
 function buildUpstreamUrl(baseUrl, originalUrl) {
@@ -1320,8 +1334,8 @@ async function handleResponsesProxy(req, res) {
     return;
   }
 
-  const provider = chooseProvider(db, responseRequest.payload);
-  if (!provider) {
+  const candidates = chooseProviderCandidates(db, responseRequest.payload);
+  if (candidates.length === 0) {
     sendError(res, 503, "No enabled upstream provider is configured.", "no_provider");
     return;
   }
@@ -1332,52 +1346,87 @@ async function handleResponsesProxy(req, res) {
     username: user.username || user.name
   };
 
-  const upstreamUrl = buildUpstreamUrl(provider.baseUrl, "/v1/chat/completions");
-  const headers = filterForwardHeaders(req.headers);
-  headers.authorization = `Bearer ${provider.apiKey}`;
-  headers["content-type"] = "application/json";
-  if (req.headers.accept) headers.accept = req.headers.accept;
+  let selectedProvider = null;
+  let upstreamResponse = null;
+  let startedAt = null;
+  let lastError = null;
 
-  const startedAt = Date.now();
+  for (let i = 0; i < candidates.length; i++) {
+    const { provider, upstreamModel } = candidates[i];
+    startedAt = Date.now();
+
+    try {
+      const upstreamUrl = buildUpstreamUrl(provider.baseUrl, "/v1/chat/completions");
+      const headers = filterForwardHeaders(req.headers);
+      headers.authorization = `Bearer ${provider.apiKey}`;
+      headers["content-type"] = "application/json";
+      if (req.headers.accept) headers.accept = req.headers.accept;
+
+      appendDebugLog("responses.request", {
+        url: upstreamUrl,
+        method: "POST",
+        bodyLength: Buffer.byteLength(JSON.stringify(responseRequest.payload), "utf8")
+      });
+      upstreamResponse = await fetch(upstreamUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(responseRequest.payload)
+      });
+
+      if (!upstreamResponse.ok) {
+        recordRequestLog({
+          userId: user.id,
+          userName: user.name,
+          username: user.username,
+          apiKeyId: apiKeyRecord?.id || "",
+          apiKeyName: apiKeyRecord?.name || "",
+          apiKeyPreview: maskKey(apiKeyRecord?.key || apiKey),
+          providerId: provider.id,
+          providerName: provider.name,
+          model: model || "",
+          endpoint: "/responses",
+          method: "POST",
+          status: upstreamResponse.status,
+          ok: false,
+          stream: responseRequest.stream === true,
+          durationMs: Date.now() - startedAt,
+          usage: null
+        });
+        if (isUpstreamProviderError(upstreamResponse.status)) {
+          recordProviderFailure(provider.id);
+          lastError = new Error(`Upstream provider responded with HTTP ${upstreamResponse.status}`);
+          continue;
+        } else {
+          await relayUpstreamResponse(upstreamResponse, res);
+          return;
+        }
+      }
+
+      selectedProvider = provider;
+      break;
+
+    } catch (error) {
+      if (res.headersSent) {
+        if (!res.destroyed) res.destroy(error);
+        return;
+      }
+      recordProviderFailure(provider.id);
+      lastError = error;
+    }
+  }
+
+  if (!selectedProvider) {
+    if (lastError) {
+      sendError(res, 502, `All upstream providers failed. Last error: ${lastError.message}`, "upstream_request_failed");
+    } else {
+      sendError(res, 502, "All upstream providers failed.", "all_providers_failed");
+    }
+    return;
+  }
+
+  const provider = selectedProvider;
 
   try {
-    appendDebugLog("responses.request", {
-      url: upstreamUrl,
-      method: "POST",
-      bodyLength: Buffer.byteLength(JSON.stringify(responseRequest.payload), "utf8")
-    });
-    const upstreamResponse = await fetch(upstreamUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(responseRequest.payload)
-    });
-
-    if (!upstreamResponse.ok) {
-      await relayUpstreamResponse(upstreamResponse, res);
-      recordRequestLog({
-        userId: user.id,
-        userName: user.name,
-        username: user.username,
-        apiKeyId: apiKeyRecord?.id || "",
-        apiKeyName: apiKeyRecord?.name || "",
-        apiKeyPreview: maskKey(apiKeyRecord?.key || apiKey),
-        providerId: provider.id,
-        providerName: provider.name,
-        model: model || "",
-        endpoint: "/responses",
-        method: "POST",
-        status: upstreamResponse.status,
-        ok: false,
-        stream: responseRequest.stream === true,
-        durationMs: Date.now() - startedAt,
-        usage: null
-      });
-      if (isUpstreamProviderError(upstreamResponse.status)) {
-        recordProviderFailure(provider.id);
-      }
-      return;
-    }
-
     if (!responseRequest.stream) {
       const text = await upstreamResponse.text();
       let payload = {};
@@ -1790,56 +1839,118 @@ async function proxyToProvider(req, res) {
     return;
   }
 
-  const provider = chooseProvider(db, req.body);
-  if (!provider) {
+  const candidates = chooseProviderCandidates(db, req.body);
+  if (candidates.length === 0) {
     sendError(res, 503, "No enabled upstream provider is configured.", "no_provider");
     return;
   }
 
-  const mapping = getModelProviderMapping(provider, req.body?.model);
-  const upstreamModel = mapping ? mapping.upstreamModel : (req.body?.model || "");
+  let lastError = null;
 
-  const upstreamUrl = buildUpstreamUrl(provider.baseUrl, req.originalUrl);
-  const headers = filterForwardHeaders(req.headers);
-  headers.authorization = `Bearer ${provider.apiKey}`;
-  if (req.body !== undefined && !headers["content-type"]) {
-    headers["content-type"] = "application/json";
-  }
+  for (let i = 0; i < candidates.length; i++) {
+    const { provider, upstreamModel } = candidates[i];
+    const startedAt = Date.now();
 
-  const startedAt = Date.now();
-
-  try {
-    appendDebugLog("proxy.request", {
-      url: upstreamUrl,
-      method: req.method,
-      bodyLength: Buffer.byteLength(buildUpstreamBody(req, upstreamModel) || "", "utf8")
-    });
-    const upstreamResponse = await fetch(upstreamUrl, {
-      method: req.method,
-      headers,
-      body: buildUpstreamBody(req, upstreamModel)
-    });
-
-    if (shouldStreamResponse(req, upstreamResponse)) {
-      res.status(upstreamResponse.status);
-      copyUpstreamHeaders(upstreamResponse.headers, res, {
-        "cache-control": "no-cache, no-transform",
-        "x-accel-buffering": "no"
-      });
-      res.flushHeaders?.();
-
-      let usage = null;
-      try {
-        usage = await writeUpstreamStreamToResponse(upstreamResponse, res);
-        res.end();
-      } catch (streamError) {
-        if (!res.headersSent) {
-          throw streamError;
-        }
-        res.destroy(streamError);
-        throw streamError;
+    try {
+      const upstreamUrl = buildUpstreamUrl(provider.baseUrl, req.originalUrl);
+      const headers = filterForwardHeaders(req.headers);
+      headers.authorization = `Bearer ${provider.apiKey}`;
+      if (req.body !== undefined && !headers["content-type"]) {
+        headers["content-type"] = "application/json";
       }
 
+      appendDebugLog("proxy.request", {
+        url: upstreamUrl,
+        method: req.method,
+        bodyLength: Buffer.byteLength(buildUpstreamBody(req, upstreamModel) || "", "utf8")
+      });
+      const upstreamResponse = await fetch(upstreamUrl, {
+        method: req.method,
+        headers,
+        body: buildUpstreamBody(req, upstreamModel)
+      });
+
+      if (!upstreamResponse.ok) {
+        recordRequestLog({
+          userId: user.id,
+          userName: user.name,
+          username: user.username,
+          apiKeyId: apiKeyRecord?.id || "",
+          apiKeyName: apiKeyRecord?.name || "",
+          apiKeyPreview: maskKey(apiKeyRecord?.key || apiKey),
+          providerId: provider.id,
+          providerName: provider.name,
+          model: req.body?.model || "",
+          endpoint: req.originalUrl || "",
+          method: req.method,
+          status: upstreamResponse.status,
+          ok: false,
+          stream: req.body?.stream === true,
+          durationMs: Date.now() - startedAt,
+          usage: null
+        });
+
+        if (isUpstreamProviderError(upstreamResponse.status)) {
+          recordProviderFailure(provider.id);
+          lastError = new Error(`Upstream provider responded with HTTP ${upstreamResponse.status}`);
+          continue;
+        } else {
+          const text = await upstreamResponse.text();
+          res.status(upstreamResponse.status);
+          copyUpstreamHeaders(upstreamResponse.headers, res);
+          res.send(text);
+          return;
+        }
+      }
+
+      if (shouldStreamResponse(req, upstreamResponse)) {
+        res.status(upstreamResponse.status);
+        copyUpstreamHeaders(upstreamResponse.headers, res, {
+          "cache-control": "no-cache, no-transform",
+          "x-accel-buffering": "no"
+        });
+        res.flushHeaders?.();
+
+        let usage = null;
+        try {
+          usage = await writeUpstreamStreamToResponse(upstreamResponse, res);
+          res.end();
+        } catch (streamError) {
+          if (!res.headersSent) {
+            throw streamError;
+          }
+          res.destroy(streamError);
+          throw streamError;
+        }
+
+        recordRequestLog({
+          userId: user.id,
+          userName: user.name,
+          username: user.username,
+          apiKeyId: apiKeyRecord?.id || "",
+          apiKeyName: apiKeyRecord?.name || "",
+          apiKeyPreview: maskKey(apiKeyRecord?.key || apiKey),
+          providerId: provider.id,
+          providerName: provider.name,
+          model: req.body?.model || "",
+          endpoint: req.originalUrl || "",
+          method: req.method,
+          status: upstreamResponse.status,
+          ok: upstreamResponse.ok,
+          stream: true,
+          durationMs: Date.now() - startedAt,
+          usage
+        });
+        recordProviderSuccess(provider.id);
+
+        return;
+      }
+
+      const text = await upstreamResponse.text();
+      const usage = extractUsageFromResponseText(text);
+
+      res.status(upstreamResponse.status);
+      copyUpstreamHeaders(upstreamResponse.headers, res);
       recordRequestLog({
         userId: user.id,
         userName: user.name,
@@ -1854,92 +1965,68 @@ async function proxyToProvider(req, res) {
         method: req.method,
         status: upstreamResponse.status,
         ok: upstreamResponse.ok,
-        stream: true,
+        stream: req.body?.stream === true,
         durationMs: Date.now() - startedAt,
         usage
       });
       recordProviderSuccess(provider.id);
 
+      res.send(text);
       return;
-    }
+    } catch (error) {
+      if (res.headersSent) {
+        if (!res.destroyed) res.destroy(error);
+        return;
+      }
 
-    const text = await upstreamResponse.text();
-    const usage = extractUsageFromResponseText(text);
-
-    res.status(upstreamResponse.status);
-    copyUpstreamHeaders(upstreamResponse.headers, res);
-    recordRequestLog({
-      userId: user.id,
-      userName: user.name,
-      username: user.username,
-      apiKeyId: apiKeyRecord?.id || "",
-      apiKeyName: apiKeyRecord?.name || "",
-      apiKeyPreview: maskKey(apiKeyRecord?.key || apiKey),
-      providerId: provider.id,
-      providerName: provider.name,
-      model: req.body?.model || "",
-      endpoint: req.originalUrl || "",
-      method: req.method,
-      status: upstreamResponse.status,
-      ok: upstreamResponse.ok,
-      stream: req.body?.stream === true,
-      durationMs: Date.now() - startedAt,
-      usage
-    });
-    if (upstreamResponse.ok) {
-      recordProviderSuccess(provider.id);
-    } else if (isUpstreamProviderError(upstreamResponse.status)) {
+      appendDebugLog("proxy.error", {
+        message: error.message,
+        name: error.name,
+        code: error.code,
+        causeCode: error.cause?.code,
+        causeMessage: error.cause?.message
+      });
+      console.error("[proxy] upstream fetch failed", {
+        message: error.message,
+        name: error.name,
+        code: error.code,
+        causeCode: error.cause?.code,
+        causeMessage: error.cause?.message
+      });
+      recordRequestLog({
+        userId: user.id,
+        userName: user.name,
+        username: user.username,
+        apiKeyId: apiKeyRecord?.id || "",
+        apiKeyName: apiKeyRecord?.name || "",
+        apiKeyPreview: maskKey(apiKeyRecord?.key || apiKey),
+        providerId: provider.id,
+        providerName: provider.name,
+        model: req.body?.model || "",
+        endpoint: req.originalUrl || "",
+        method: req.method,
+        status: 502,
+        ok: false,
+        stream: req.body?.stream === true,
+        durationMs: Date.now() - startedAt,
+        usage: null,
+        errorCode: "upstream_request_failed",
+        errorMessage: error.message
+      });
       recordProviderFailure(provider.id);
+      lastError = error;
     }
+  }
 
-    res.send(text);
-  } catch (error) {
-    appendDebugLog("proxy.error", {
-      message: error.message,
-      name: error.name,
-      code: error.code,
-      causeCode: error.cause?.code,
-      causeMessage: error.cause?.message
-    });
-    console.error("[proxy] upstream fetch failed", {
-      message: error.message,
-      name: error.name,
-      code: error.code,
-      causeCode: error.cause?.code,
-      causeMessage: error.cause?.message
-    });
-    recordRequestLog({
-      userId: user.id,
-      userName: user.name,
-      username: user.username,
-      apiKeyId: apiKeyRecord?.id || "",
-      apiKeyName: apiKeyRecord?.name || "",
-      apiKeyPreview: maskKey(apiKeyRecord?.key || apiKey),
-      providerId: provider.id,
-      providerName: provider.name,
-      model: req.body?.model || "",
-      endpoint: req.originalUrl || "",
-      method: req.method,
-      status: 502,
-      ok: false,
-      stream: req.body?.stream === true,
-      durationMs: Date.now() - startedAt,
-      usage: null,
-      errorCode: "upstream_request_failed",
-      errorMessage: error.message
-    });
-    recordProviderFailure(provider.id);
-    if (res.headersSent) {
-      if (!res.destroyed) res.destroy(error);
-      return;
-    }
-
+  if (lastError) {
     sendError(
       res,
       502,
-      `Upstream provider request failed: ${error.message}`,
+      `All upstream providers failed. Last error: ${lastError.message}`,
       "upstream_request_failed"
     );
+  } else {
+    sendError(res, 502, "All upstream providers failed.", "all_providers_failed");
   }
 }
 
@@ -1948,7 +2035,7 @@ app.get("/api/health", (req, res) => {
 });
 
 app.post("/api/admin/login", async (req, res) => {
-  if (!(await verifyTurnstile(req, res))) return;
+  if (!(await verifyTencentCaptcha(req, res))) return;
 
   const { username, password } = req.body || {};
   if (!safeEqual(username || "", ADMIN_USER) || !safeEqual(password || "", ADMIN_PASSWORD)) {
@@ -1962,7 +2049,7 @@ app.post("/api/admin/login", async (req, res) => {
 });
 
 app.post("/api/auth/login", async (req, res) => {
-  if (!(await verifyTurnstile(req, res))) return;
+  if (!(await verifyTencentCaptcha(req, res))) return;
 
   const identifier = String(req.body?.username || "").trim().toLowerCase();
   const password = String(req.body?.password || "");
@@ -2229,7 +2316,7 @@ function cleanupExpiredVerificationCodes(db) {
 }
 
 app.post("/api/auth/send-verification-code", async (req, res) => {
-  if (!(await verifyTurnstile(req, res))) return;
+  if (!(await verifyTencentCaptcha(req, res))) return;
 
   const email = String(req.body?.email || "").trim().toLowerCase();
   const purpose = String(req.body?.purpose || "register").trim();
@@ -2307,7 +2394,7 @@ function verifyEmailCode(email, code, purpose = "register") {
 }
 
 app.post("/api/auth/register", async (req, res) => {
-  if (!(await verifyTurnstile(req, res))) return;
+  if (!(await verifyTencentCaptcha(req, res))) return;
 
   const username = normalizeUsername(req.body?.username);
   const email = String(req.body?.email || "").trim().toLowerCase();
@@ -2540,6 +2627,33 @@ app.put("/api/user/api-keys/:id", requireUserAccount, (req, res) => {
   }
 
   res.json({ user: sanitizeUser(updated) });
+});
+
+app.delete("/api/user/api-keys/:id", requireUserAccount, (req, res) => {
+  const removed = mutateDb((db) => {
+    const user = db.users.find((item) => item.id === req.user.id);
+    if (!user) return null;
+    if (!Array.isArray(user.apiKeys)) user.apiKeys = [];
+    const before = user.apiKeys.length;
+    user.apiKeys = user.apiKeys.filter((item) => item.id !== req.params.id);
+    const removed = before !== user.apiKeys.length;
+    if (removed) {
+      user.apiKey = getPrimaryApiKey(user);
+      user.updatedAt = now();
+    }
+    return removed;
+  });
+
+  if (removed === null) {
+    sendError(res, 404, "User not found.", "not_found");
+    return;
+  }
+  if (!removed) {
+    sendError(res, 404, "API key not found.", "not_found");
+    return;
+  }
+
+  res.json({ ok: true });
 });
 
 function createAdminApiKeyRecord(db, name = "") {
@@ -3151,7 +3265,7 @@ app.put("/api/admin/users/:id/password", requireAdmin, (req, res) => {
 });
 
 app.post("/api/auth/forgot-password/send-code", async (req, res) => {
-  if (!(await verifyTurnstile(req, res))) return;
+  if (!(await verifyTencentCaptcha(req, res))) return;
 
   const email = String(req.body?.email || "").trim().toLowerCase();
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -3209,7 +3323,7 @@ app.post("/api/auth/forgot-password/send-code", async (req, res) => {
 });
 
 app.post("/api/auth/forgot-password/reset", async (req, res) => {
-  if (!(await verifyTurnstile(req, res))) return;
+  if (!(await verifyTencentCaptcha(req, res))) return;
 
   const email = String(req.body?.email || "").trim().toLowerCase();
   const verificationCode = String(req.body?.verificationCode || "").trim();
@@ -3314,6 +3428,7 @@ app.get("/api/health/providers", (req, res) => {
     .filter((p) => p.enabled)
     .map((p) => {
       const counter = getProviderFailureCounter(p.id);
+      const threshold = p.failoverThreshold ?? 3;
       return {
         id: p.id,
         name: p.name,
@@ -3327,7 +3442,8 @@ app.get("/api/health/providers", (req, res) => {
         lastHealthCheck: p.lastHealthCheck || "",
         healthHistory: (p.healthHistory || []).slice(-60),
         consecutiveFailures: counter.consecutiveFailures,
-        failoverThreshold: p.failoverThreshold ?? 3
+        failoverThreshold: threshold,
+        isAvailableForFailover: threshold <= 0 || counter.consecutiveFailures < threshold
       };
     });
   res.json({ providers });

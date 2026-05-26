@@ -84,7 +84,6 @@ import SettingsIcon from "@mui/icons-material/Settings";
 import SchoolIcon from "@mui/icons-material/School";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 
-const TURNSTILE_SCRIPT_SRC = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
 const DRAWER_WIDTH = 276;
 const ADMIN_TOKEN_KEY = "sapiAdminToken";
 const USER_TOKEN_KEY = "sapiUserToken";
@@ -191,95 +190,11 @@ async function request(path, options = {}) {
   }
 
   return data;
+} // 结束 dividerLineSx 块
+
+function useTencentCaptcha() {
+  return { ticket: "", randstr: "", error: "", loading: false, show: () => {}, reset: () => {} };
 }
-
-function loadTurnstileScript() {
-  if (window.turnstile) return Promise.resolve(window.turnstile);
-  if (window.__sapiTurnstilePromise) return window.__sapiTurnstilePromise;
-
-  window.__sapiTurnstilePromise = new Promise((resolve, reject) => {
-    const existing = document.querySelector(`script[src="${TURNSTILE_SCRIPT_SRC}"]`);
-    if (existing) {
-      existing.addEventListener("load", () => resolve(window.turnstile), { once: true });
-      existing.addEventListener("error", reject, { once: true });
-      return;
-    }
-
-    const script = document.createElement("script");
-    script.src = TURNSTILE_SCRIPT_SRC;
-    script.async = true;
-    script.defer = true;
-    script.onload = () => resolve(window.turnstile);
-    script.onerror = reject;
-    document.head.appendChild(script);
-  });
-
-  return window.__sapiTurnstilePromise;
-}
-
-const TurnstileWidget = React.forwardRef(function TurnstileWidget({ siteKey, action }, ref) {
-  const containerRef = useRef(null);
-  const widgetRef = useRef(null);
-  const [token, setToken] = useState("");
-  const [error, setError] = useState("");
-
-  const reset = useCallback(() => {
-    setToken("");
-    if (window.turnstile && widgetRef.current !== null) {
-      window.turnstile.reset(widgetRef.current);
-    }
-  }, []);
-
-  useImperativeHandle(ref, () => ({
-    getToken: () => token,
-    reset
-  }), [reset, token]);
-
-  useEffect(() => {
-    if (!siteKey || !containerRef.current) return;
-    let cancelled = false;
-
-    loadTurnstileScript()
-      .then((turnstile) => {
-        if (cancelled || !turnstile || !containerRef.current || widgetRef.current !== null) return;
-        widgetRef.current = turnstile.render(containerRef.current, {
-          sitekey: siteKey,
-          action,
-          callback: (value) => {
-            setToken(value || "");
-            setError("");
-          },
-          "expired-callback": () => setToken(""),
-          "error-callback": () => {
-            setToken("");
-            setError("Turnstile verification failed. Please retry.");
-          }
-        });
-      })
-      .catch(() => setError("Turnstile could not be loaded."));
-
-    return () => {
-      cancelled = true;
-      if (window.turnstile && widgetRef.current !== null) {
-        window.turnstile.remove(widgetRef.current);
-        widgetRef.current = null;
-      }
-    };
-  }, [action, siteKey]);
-
-  if (!siteKey) return null;
-
-  return (
-    <Box>
-      <Box ref={containerRef} sx={{ minHeight: 65 }} />
-      {error ? (
-        <Typography variant="caption" color="error">
-          {error}
-        </Typography>
-      ) : null}
-    </Box>
-  );
-});
 
 function App() {
   const [route, setRoute] = useState(getInitialRoute);
@@ -436,11 +351,11 @@ function App() {
     setMobileOpen(false);
   };
 
-  const login = async ({ username, password, turnstileToken }) => {
+  const login = async ({ username, password, captchaTicket, captchaRandstr }) => {
     const data = await request("/api/auth/login", {
       method: "POST",
       admin: false,
-      body: { username, password, turnstileToken }
+      body: { username, password, captchaTicket, captchaRandstr }
     });
 
     if (data.role === "admin") {
@@ -471,35 +386,35 @@ function App() {
     navigate("portal");
   };
 
-  const sendVerificationCode = async (email, purpose = "register", turnstileToken = "") => {
+  const sendVerificationCode = async (email, purpose = "register", captchaTicket = "", captchaRandstr = "") => {
     await request("/api/auth/send-verification-code", {
       method: "POST",
       admin: false,
-      body: { email, purpose, turnstileToken }
+      body: { email, purpose, captchaTicket, captchaRandstr }
     });
   };
 
-  const sendForgotPasswordCode = async (email, turnstileToken = "") => {
+  const sendForgotPasswordCode = async (email, captchaTicket = "", captchaRandstr = "") => {
     await request("/api/auth/forgot-password/send-code", {
       method: "POST",
       admin: false,
-      body: { email, turnstileToken }
+      body: { email, captchaTicket, captchaRandstr }
     });
   };
 
-  const resetPassword = async (email, verificationCode, password, turnstileToken = "") => {
+  const resetPassword = async (email, verificationCode, password, captchaTicket = "", captchaRandstr = "") => {
     await request("/api/auth/forgot-password/reset", {
       method: "POST",
       admin: false,
-      body: { email, verificationCode, password, turnstileToken }
+      body: { email, verificationCode, password, captchaTicket, captchaRandstr }
     });
   };
 
-  const userRegister = async ({ username, email, password, verificationCode, invitationCode, turnstileToken }) => {
+  const userRegister = async ({ username, email, password, verificationCode, invitationCode, captchaTicket, captchaRandstr }) => {
     const data = await request("/api/auth/register", {
       method: "POST",
       admin: false,
-      body: { username, email, password, verificationCode, invitationCode, turnstileToken }
+      body: { username, email, password, verificationCode, invitationCode, captchaTicket, captchaRandstr }
     });
     localStorage.setItem(USER_TOKEN_KEY, data.token);
     localStorage.removeItem(ADMIN_TOKEN_KEY);
@@ -558,6 +473,21 @@ function App() {
     setUserSession((current) => ({ ...(current || {}), user: data.user }));
     setSelectedKey(data.user.apiKey || "");
     showToast("API Key 已更新");
+  };
+
+  const deleteUserApiKey = async (keyId) => {
+    await request(`/api/user/api-keys/${keyId}`, {
+      method: "DELETE",
+      admin: false,
+      token: userToken
+    });
+    const session = await request("/api/user/me", {
+      admin: false,
+      token: userToken
+    });
+    setUserSession(session);
+    setSelectedKey(session.user.apiKey || "");
+    showToast("API Key 已删除");
   };
 
   const copyText = async (text) => {
@@ -662,7 +592,6 @@ function App() {
           onResetPassword={resetPassword}
           onNavigate={navigate}
           onToast={showToast}
-          turnstileSiteKey={publicConfig?.turnstile?.siteKey || ""}
         />
         {snackbar}
       </ThemeProvider>
@@ -768,6 +697,15 @@ function App() {
                 }
                 onUpdateApiKey={(keyId, body) =>
                   updateUserApiKey(keyId, body).catch((error) => showToast(error.message, "error"))
+                }
+                onDeleteApiKey={(key) =>
+                  setConfirm({
+                    title: "删除 API Key",
+                    message: `确认删除 ${key?.name || "该 Key"}？删除后无法恢复。`,
+                    confirmText: "删除",
+                    danger: true,
+                    action: () => deleteUserApiKey(key?.id)
+                  })
                 }
                 onRefresh={() =>
                   Promise.all([loadUserSession(), loadUserUsage(), loadProviderHealth()])
@@ -1222,8 +1160,7 @@ function LoadingPage({ text }) {
   );
 }
 
-function ForgotPasswordDialog({ open, onClose, onSendCode, onReset, onToast, turnstileSiteKey }) {
-  const turnstileRef = useRef(null);
+function ForgotPasswordDialog({ open, onClose, onSendCode, onReset, onToast }) {
   const [step, setStep] = useState(1);
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -1241,7 +1178,6 @@ function ForgotPasswordDialog({ open, onClose, onSendCode, onReset, onToast, tur
       setPassword("");
       setConfirmPassword("");
       setCountdown(0);
-      turnstileRef.current?.reset();
     }
   }, [open]);
 
@@ -1256,21 +1192,15 @@ function ForgotPasswordDialog({ open, onClose, onSendCode, onReset, onToast, tur
       onToast("请输入有效的邮箱地址", "warning");
       return;
     }
-    const turnstileToken = turnstileRef.current?.getToken() || "";
-    if (turnstileSiteKey && !turnstileToken) {
-      onToast("请完成人机验证", "warning");
-      return;
-    }
     setCodeLoading(true);
     try {
-      await onSendCode(email, turnstileToken);
+      await onSendCode(email);
       setCountdown(60);
       onToast("验证码已发送", "success");
     } catch (error) {
       onToast(error.message, "error");
     } finally {
       setCodeLoading(false);
-      turnstileRef.current?.reset();
     }
   };
 
@@ -1283,22 +1213,16 @@ function ForgotPasswordDialog({ open, onClose, onSendCode, onReset, onToast, tur
       onToast("密码至少 8 个字符", "warning");
       return;
     }
-    const turnstileToken = turnstileRef.current?.getToken() || "";
-    if (turnstileSiteKey && !turnstileToken) {
-      onToast("请完成人机验证", "warning");
-      return;
-    }
 
     setLoading(true);
     try {
-      await onReset(email, code, password, turnstileToken);
+      await onReset(email, code, password);
       onToast("密码重置成功，请登录", "success");
       onClose();
     } catch (error) {
       onToast(error.message, "error");
     } finally {
       setLoading(false);
-      turnstileRef.current?.reset();
     }
   };
 
@@ -1386,11 +1310,7 @@ function ForgotPasswordDialog({ open, onClose, onSendCode, onReset, onToast, tur
               </Stack>
             </>
           )}
-          <TurnstileWidget
-            ref={turnstileRef}
-            siteKey={turnstileSiteKey}
-            action={step === 1 ? "forgot-password-code" : "forgot-password-reset"}
-          />
+
         </Stack>
       </DialogContent>
       <DialogActions>
@@ -1408,11 +1328,9 @@ function AuthPage({
   onSendForgotCode,
   onResetPassword,
   onNavigate,
-  onToast,
-  turnstileSiteKey
+  onToast
 }) {
   const isRegister = mode === "register";
-  const turnstileRef = useRef(null);
   const [form, setForm] = useState({
     username: "",
     email: "",
@@ -1442,21 +1360,15 @@ function AuthPage({
       onToast("请输入有效的邮箱地址", "warning");
       return;
     }
-    const turnstileToken = turnstileRef.current?.getToken() || "";
-    if (turnstileSiteKey && !turnstileToken) {
-      onToast("请完成人机验证", "warning");
-      return;
-    }
     setCodeLoading(true);
     try {
-      await onSendCode(form.email, "register", turnstileToken);
+      await onSendCode(form.email, "register");
       setCountdown(60);
       onToast("验证码已发送", "success");
     } catch (error) {
       onToast(error.message, "error");
     } finally {
       setCodeLoading(false);
-      turnstileRef.current?.reset();
     }
   };
 
@@ -1486,12 +1398,6 @@ function AuthPage({
       }
     }
 
-    const turnstileToken = turnstileRef.current?.getToken() || "";
-    if (turnstileSiteKey && !turnstileToken) {
-      onToast("请完成人机验证", "warning");
-      return;
-    }
-
     setLoading(true);
     try {
       if (isRegister) {
@@ -1500,21 +1406,18 @@ function AuthPage({
           email: form.email,
           password: form.password,
           verificationCode: form.verificationCode,
-          invitationCode: form.invitationCode,
-          turnstileToken
+          invitationCode: form.invitationCode
         });
       } else {
         await onLogin({
           username: form.username,
-          password: form.password,
-          turnstileToken
+          password: form.password
         });
       }
     } catch (error) {
       onToast(error.message, "error");
     } finally {
       setLoading(false);
-      turnstileRef.current?.reset();
     }
   };
 
@@ -1661,11 +1564,6 @@ function AuthPage({
                     )}
                   </>
                 ) : null}
-                <TurnstileWidget
-                  ref={turnstileRef}
-                  siteKey={turnstileSiteKey}
-                  action={isRegister ? "register" : "login"}
-                />
                 <Button
                   type="submit"
                   variant="contained"
@@ -1706,7 +1604,6 @@ function AuthPage({
         onSendCode={onSendForgotCode}
         onReset={onResetPassword}
         onToast={onToast}
-        turnstileSiteKey={turnstileSiteKey}
       />
     </>
   );
@@ -1968,6 +1865,7 @@ function PortalView({
   onCreateApiKey,
   onRotateApiKey,
   onUpdateApiKey,
+  onDeleteApiKey,
   onRefresh,
   onCopy
 }) {
@@ -2094,6 +1992,7 @@ function PortalView({
                       onCopy={onCopy}
                       onRotate={() => onRotateApiKey(key)}
                       onToggle={() => onUpdateApiKey?.(key.id, { enabled: !key.enabled })}
+                      onDelete={() => onDeleteApiKey?.(key)}
                     />
                   ))}
                 </Stack>
@@ -2132,7 +2031,15 @@ function PortalView({
               {effectiveConfig.models.map((item) => {
                 const id = item?.id || item;
                 const name = item?.name || id;
-                return <Chip key={id} label={name} color="primary" variant="outlined" />;
+                const description = item?.description || "";
+                const chip = <Chip key={id} label={name} color="primary" variant="outlined" />;
+                return description ? (
+                  <Tooltip key={id} title={description} arrow>
+                    <span>{chip}</span>
+                  </Tooltip>
+                ) : (
+                  chip
+                );
               })}
             </Stack>
           ) : (
@@ -2205,7 +2112,7 @@ function PortalView({
   );
 }
 
-function ApiKeyCard({ apiKey, usage, onCopy, onRotate, onToggle }) {
+function ApiKeyCard({ apiKey, usage, onCopy, onRotate, onToggle, onDelete }) {
   return (
     <Paper
       variant="outlined"
@@ -2270,6 +2177,13 @@ function ApiKeyCard({ apiKey, usage, onCopy, onRotate, onToggle }) {
             <RotateRightIcon />
           </IconButton>
         </Tooltip>
+        {onDelete ? (
+          <Tooltip title="删除 Key">
+            <IconButton color="error" onClick={onDelete}>
+              <DeleteOutlineIcon />
+            </IconButton>
+          </Tooltip>
+        ) : null}
         <FormControlLabel
           control={<Switch checked={apiKey.enabled} onChange={onToggle} />}
           label=""
@@ -2885,8 +2799,8 @@ function ProviderDialog({ open, onClose, provider, afterChange, onToast }) {
         failoverThreshold: typeof provider.failoverThreshold === "number" ? provider.failoverThreshold : 3
       });
       const normalized = (provider.models || []).map((m) => {
-        if (m && typeof m === "object") return { id: m.id || "", name: m.name || m.id || "" };
-        return { id: String(m), name: String(m) };
+        if (m && typeof m === "object") return { id: m.id || "", name: m.name || m.id || "", description: m.description || "" };
+        return { id: String(m), name: String(m), description: "" };
       }).filter((m) => m.id);
       setSelectedModels(normalized);
       setModelSelectionTouched(false);
@@ -2919,13 +2833,19 @@ function ProviderDialog({ open, onClose, provider, afterChange, onToast }) {
       if (exists) {
         return current.filter((m) => m.id !== modelId);
       }
-      return [...current, { id: modelId, name: modelId }];
+      return [...current, { id: modelId, name: modelId, description: "" }];
     });
   };
 
   const updateModelName = (modelId, name) => {
     setSelectedModels((current) =>
       current.map((m) => (m.id === modelId ? { ...m, name: name || m.id } : m))
+    );
+  };
+
+  const updateModelDescription = (modelId, description) => {
+    setSelectedModels((current) =>
+      current.map((m) => (m.id === modelId ? { ...m, description: description || "" } : m))
     );
   };
 
@@ -2971,7 +2891,7 @@ function ProviderDialog({ open, onClose, provider, afterChange, onToast }) {
           }
           return models.map((id) => {
             const existing = current.find((m) => m.id === id);
-            return existing || { id, name: id };
+            return existing || { id, name: id, description: "" };
           });
         });
         if (force) setModelSelectionTouched(false);
@@ -3110,7 +3030,7 @@ function ProviderDialog({ open, onClose, provider, afterChange, onToast }) {
                     variant="outlined"
                     onClick={() => {
                       setModelSelectionTouched(true);
-                      setSelectedModels(lookup.models.map((id) => ({ id, name: id })));
+                      setSelectedModels(lookup.models.map((id) => ({ id, name: id, description: "" })));
                     }}
                   >
                     全选
@@ -3173,18 +3093,32 @@ function ProviderDialog({ open, onClose, provider, afterChange, onToast }) {
                           {modelId}
                         </Typography>
                         {checked ? (
-                          <TextField
-                            size="small"
-                            placeholder="显示名称"
-                            value={selected.name}
-                            onChange={(e) => updateModelName(modelId, e.target.value)}
-                            sx={{
-                              "& .MuiInputBase-root": {
-                                height: 28,
-                                fontSize: "0.8rem"
-                              }
-                            }}
-                          />
+                          <>
+                            <TextField
+                              size="small"
+                              placeholder="显示名称"
+                              value={selected.name}
+                              onChange={(e) => updateModelName(modelId, e.target.value)}
+                              sx={{
+                                "& .MuiInputBase-root": {
+                                  height: 28,
+                                  fontSize: "0.8rem"
+                                }
+                              }}
+                            />
+                            <TextField
+                              size="small"
+                              placeholder="模型说明（给用户看的描述）"
+                              value={selected.description}
+                              onChange={(e) => updateModelDescription(modelId, e.target.value)}
+                              sx={{
+                                "& .MuiInputBase-root": {
+                                  height: 28,
+                                  fontSize: "0.8rem"
+                                }
+                              }}
+                            />
+                          </>
                         ) : null}
                       </Stack>
                       <Switch
@@ -3347,10 +3281,20 @@ function ProviderRow({ provider, afterChange, onConfirm, onEdit, onToast }) {
     ? `连续失败 ${failures}/${threshold} 次`
     : null;
 
+  let failoverChip = null;
+  if (!provider.isAvailableForFailover && threshold > 0) {
+    failoverChip = { label: "已排除", color: "error" };
+  } else if (failures > 0 && threshold > 0) {
+    failoverChip = { label: "备用中", color: "warning" };
+  } else if (threshold > 0) {
+    failoverChip = { label: "正常", color: "success" };
+  }
+
   return (
     <EntityRow
       title={provider.name}
       enabled={provider.enabled}
+      failoverChip={failoverChip}
       icon={<ApiIcon />}
       meta={[
         ["Base URL", provider.baseUrl],
@@ -4004,7 +3948,7 @@ function SmtpConfigSection({ config, afterChange, onToast }) {
   );
 }
 
-function EntityRow({ title, enabled, icon, meta, actions }) {
+function EntityRow({ title, enabled, icon, meta, actions, failoverChip }) {
   return (
     <Paper
       variant="outlined"
@@ -4043,6 +3987,14 @@ function EntityRow({ title, enabled, icon, meta, actions }) {
               color={enabled ? "success" : "warning"}
               variant="outlined"
             />
+            {failoverChip ? (
+              <Chip
+                size="small"
+                label={failoverChip.label}
+                color={failoverChip.color}
+                variant="outlined"
+              />
+            ) : null}
           </Stack>
           <Stack spacing={0.3} sx={{ mt: 0.75 }}>
             {meta.map(([label, value]) => (
@@ -4229,6 +4181,12 @@ function ProviderHealthCard({ provider }) {
         <Chip label={label} size="small" color={statusChipColor} variant="outlined" sx={{ fontWeight: 700, flexShrink: 0 }} />
       </Stack>
 
+      {provider.isAvailableForFailover === false ? (
+        <Chip label="已排除" size="small" color="error" sx={{ fontWeight: 700, alignSelf: "flex-start" }} />
+      ) : (provider.consecutiveFailures || 0) > 0 ? (
+        <Chip label="备用中" size="small" color="warning" variant="outlined" sx={{ fontWeight: 700, alignSelf: "flex-start" }} />
+      ) : null}
+
       {modelName ? (
         <Typography
           variant="caption"
@@ -4284,16 +4242,18 @@ function ProviderHealthCard({ provider }) {
         </Stack>
       </Stack>
 
-      {(provider.consecutiveFailures || 0) > 0 ? (
-        <Stack direction="row" alignItems="center" justifyContent="space-between">
-          <Typography variant="body2" color="text.secondary">
-            连续失败
-          </Typography>
-          <Typography variant="subtitle1" sx={{ fontWeight: 800, color: "error.main" }}>
-            {provider.consecutiveFailures}/{provider.failoverThreshold ?? 3}
-          </Typography>
-        </Stack>
-      ) : null}
+      <Stack direction="row" alignItems="center" justifyContent="space-between">
+        <Typography variant="body2" color="text.secondary">
+          故障转移
+        </Typography>
+        <Typography variant="subtitle1" sx={{ fontWeight: 800, color: provider.isAvailableForFailover === false ? "error.main" : (provider.consecutiveFailures || 0) > 0 ? "warning.main" : "success.main" }}>
+          {provider.isAvailableForFailover === false
+            ? `已排除 (${provider.consecutiveFailures}/${provider.failoverThreshold ?? 3})`
+            : (provider.consecutiveFailures || 0) > 0
+              ? `备用中 (${provider.consecutiveFailures}/${provider.failoverThreshold ?? 3})`
+              : "正常"}
+        </Typography>
+      </Stack>
 
       <Box>
         <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 0.5 }}>
@@ -4506,8 +4466,8 @@ function CreatedKeyDialog({ info, onClose, onCopy }) {
       <DialogTitle>API Key 已创建</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 0.5 }}>
-          <Alert severity="warning">
-            请立即复制并妥善保存 Key，关闭后无法再次查看完整 Key。
+          <Alert severity="success">
+            Key 已创建并保存，可随时在列表中查看和复制。
           </Alert>
           <TextField
             label="API Key"
