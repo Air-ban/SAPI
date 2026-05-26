@@ -284,13 +284,20 @@ async function verifyTurnstile(req, res) {
 function serviceConfig() {
   const db = readDb();
   const providers = db.providers.filter((provider) => provider.enabled);
-  const models = [
-    ...new Map(
-      providers
-        .flatMap((provider) => (provider.models || []).map(normalizeModel))
-        .map((m) => [m.id, m])
-    ).values()
-  ];
+  const modelMap = new Map();
+
+  for (const provider of providers) {
+    for (const m of (provider.models || []).map(normalizeModel)) {
+      if (m.id) modelMap.set(m.id, m);
+    }
+    for (const [customId, upstreamId] of Object.entries(provider.modelMappings || {})) {
+      if (customId && upstreamId) {
+        modelMap.set(customId, { id: customId, name: customId });
+      }
+    }
+  }
+
+  const models = Array.from(modelMap.values());
 
   return {
     name: "SAPI",
@@ -364,6 +371,17 @@ function isProviderAvailableForFailover(provider) {
   return counter.consecutiveFailures < threshold;
 }
 
+function getModelProviderMapping(provider, modelId) {
+  if (!modelId) return null;
+  for (const candidate of provider.models || []) {
+    const id = typeof candidate === "object" ? candidate.id : candidate;
+    if (id === modelId) return { provider, upstreamModel: modelId };
+  }
+  const mappings = provider.modelMappings || {};
+  if (mappings[modelId]) return { provider, upstreamModel: mappings[modelId] };
+  return null;
+}
+
 function chooseProvider(db, body = {}) {
   const model = body && typeof body === "object" ? body.model : "";
   const providers = db.providers.filter(
@@ -372,13 +390,10 @@ function chooseProvider(db, body = {}) {
   if (providers.length === 0) return null;
 
   if (model) {
-    const exactMatch = providers.find((provider) =>
-      (provider.models || []).some((candidate) => {
-        const id = typeof candidate === "object" ? candidate.id : candidate;
-        return id === model;
-      })
-    );
-    if (exactMatch) return exactMatch;
+    for (const provider of providers) {
+      const mapping = getModelProviderMapping(provider, model);
+      if (mapping) return mapping.provider;
+    }
   }
 
   return providers[0];
@@ -654,7 +669,7 @@ async function writeUpstreamStreamToResponse(upstreamResponse, res) {
   return usageCollector.finish();
 }
 
-function buildUpstreamBody(req) {
+function buildUpstreamBody(req, upstreamModel) {
   if (req.method === "GET" || req.method === "HEAD" || req.body === undefined) {
     return undefined;
   }
@@ -664,15 +679,20 @@ function buildUpstreamBody(req) {
       ? { ...req.body }
       : req.body;
 
-  if (body && typeof body === "object" && !Array.isArray(body) && body.stream === true) {
-    const streamOptions =
-      body.stream_options && typeof body.stream_options === "object"
-        ? body.stream_options
-        : {};
-    body.stream_options = {
-      ...streamOptions,
-      include_usage: true
-    };
+  if (body && typeof body === "object" && !Array.isArray(body)) {
+    if (body.stream === true) {
+      const streamOptions =
+        body.stream_options && typeof body.stream_options === "object"
+          ? body.stream_options
+          : {};
+      body.stream_options = {
+        ...streamOptions,
+        include_usage: true
+      };
+    }
+    if (upstreamModel && body.model !== undefined) {
+      body.model = upstreamModel;
+    }
   }
 
   return JSON.stringify(body);
@@ -1769,6 +1789,9 @@ async function proxyToProvider(req, res) {
     return;
   }
 
+  const mapping = getModelProviderMapping(provider, req.body?.model);
+  const upstreamModel = mapping ? mapping.upstreamModel : (req.body?.model || "");
+
   const upstreamUrl = buildUpstreamUrl(provider.baseUrl, req.originalUrl);
   const headers = filterForwardHeaders(req.headers);
   headers.authorization = `Bearer ${provider.apiKey}`;
@@ -1782,12 +1805,12 @@ async function proxyToProvider(req, res) {
     appendDebugLog("proxy.request", {
       url: upstreamUrl,
       method: req.method,
-      bodyLength: Buffer.byteLength(buildUpstreamBody(req) || "", "utf8")
+      bodyLength: Buffer.byteLength(buildUpstreamBody(req, upstreamModel) || "", "utf8")
     });
     const upstreamResponse = await fetch(upstreamUrl, {
       method: req.method,
       headers,
-      body: buildUpstreamBody(req)
+      body: buildUpstreamBody(req, upstreamModel)
     });
 
     if (shouldStreamResponse(req, upstreamResponse)) {
@@ -3247,14 +3270,18 @@ app.get("/v1/models", (req, res) => {
     return;
   }
 
-  let models = [
-    ...new Map(
-      db.providers
-        .filter((provider) => provider.enabled)
-        .flatMap((provider) => (provider.models || []).map(normalizeModel))
-        .map((m) => [m.id, m])
-    ).values()
-  ];
+  const modelMap = new Map();
+  for (const provider of db.providers.filter((p) => p.enabled)) {
+    for (const m of (provider.models || []).map(normalizeModel)) {
+      if (m.id) modelMap.set(m.id, m);
+    }
+    for (const [customId, upstreamId] of Object.entries(provider.modelMappings || {})) {
+      if (customId && upstreamId) {
+        modelMap.set(customId, { id: customId, name: customId });
+      }
+    }
+  }
+  let models = Array.from(modelMap.values());
 
   const allowed = apiKeyRecord?.allowedModels;
   if (Array.isArray(allowed) && allowed.length > 0) {
@@ -3285,6 +3312,7 @@ app.get("/api/health/providers", (req, res) => {
         name: p.name,
         baseUrl: p.baseUrl,
         models: (p.models || []).map(normalizeModel),
+        modelMappings: p.modelMappings || {},
         healthStatus: p.healthStatus || "unknown",
         latency: p.latency || 0,
         ping: p.ping || 0,

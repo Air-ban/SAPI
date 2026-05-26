@@ -102,6 +102,10 @@ function readDb() {
       provider.failoverThreshold = 3;
       changed = true;
     }
+    if (!provider.modelMappings || typeof provider.modelMappings !== "object" || Array.isArray(provider.modelMappings)) {
+      provider.modelMappings = {};
+      changed = true;
+    }
   }
 
   for (const user of db.users) {
@@ -227,6 +231,26 @@ function normalizeModels(value) {
   return arr.map(normalizeModel).filter((m) => m.id);
 }
 
+function normalizeModelMappings(value) {
+  if (!value || typeof value !== "object") return {};
+  const result = {};
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      if (!item || typeof item !== "object") continue;
+      const customId = String(item.customId || item.alias || item.key || "").trim();
+      const upstreamId = String(item.upstreamId || item.target || item.value || "").trim();
+      if (customId && upstreamId) result[customId] = upstreamId;
+    }
+  } else {
+    for (const [key, val] of Object.entries(value)) {
+      const customId = String(key || "").trim();
+      const upstreamId = String(val || "").trim();
+      if (customId && upstreamId) result[customId] = upstreamId;
+    }
+  }
+  return result;
+}
+
 function normalizeProviderInput(input, existing = null) {
   const name = String(input.name || existing?.name || "").trim();
   const baseUrl = String(input.baseUrl || existing?.baseUrl || "").trim();
@@ -256,6 +280,7 @@ function normalizeProviderInput(input, existing = null) {
     baseUrl: baseUrl.replace(/\/+$/, ""),
     apiKey,
     models: normalizeModels(input.models ?? existing?.models ?? ""),
+    modelMappings: normalizeModelMappings(input.modelMappings ?? existing?.modelMappings ?? {}),
     enabled: Boolean(input.enabled ?? existing?.enabled ?? true),
     failoverThreshold
   };

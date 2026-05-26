@@ -13,6 +13,7 @@ import {
 import {
   Alert,
   AppBar,
+  Autocomplete,
   Box,
   Button,
   Checkbox,
@@ -80,6 +81,8 @@ import MailIcon from "@mui/icons-material/Mail";
 import SendIcon from "@mui/icons-material/Send";
 import VpnKeyIcon from "@mui/icons-material/VpnKey";
 import SettingsIcon from "@mui/icons-material/Settings";
+import SchoolIcon from "@mui/icons-material/School";
+import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 
 const TURNSTILE_SCRIPT_SRC = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
 const DRAWER_WIDTH = 276;
@@ -903,54 +906,247 @@ function HomePage({ health, user, admin, onNavigate, onLogout }) {
       </Box>
 
       <Box
-        component="main"
         sx={{
-          maxWidth: 980,
-          mx: "auto",
-          px: { xs: 2, sm: 3 },
-          py: { xs: 6, md: 9 }
+          background: "linear-gradient(135deg, #0f766e 0%, #0d9488 50%, #14b8a6 100%)",
+          color: "#fff",
+          py: { xs: 8, md: 12 },
+          px: { xs: 2, sm: 3, lg: 5 },
+          textAlign: "center",
+          position: "relative",
+          overflow: "hidden"
         }}
       >
-        <Stack spacing={3.5}>
-          <Stack spacing={1.4} sx={{ maxWidth: 720 }}>
-            <Chip
-              label={statusText}
-              color={health === "ok" ? "success" : health === "fail" ? "error" : "warning"}
-              variant="outlined"
-              sx={{ width: "fit-content", fontWeight: 760 }}
-            />
-            <Typography variant="h3" component="h1" sx={{ fontWeight: 820, letterSpacing: 0 }}>
-              SAPI 是一个 LLM API 中转站
+        <Box sx={{ position: "relative", zIndex: 1, maxWidth: 900, mx: "auto" }}>
+          <Chip
+            label={statusText}
+            sx={{
+              mb: 3,
+              bgcolor: "rgba(255,255,255,0.15)",
+              color: "#fff",
+              borderColor: "rgba(255,255,255,0.3)",
+              fontWeight: 760,
+              backdropFilter: "blur(4px)"
+            }}
+            variant="outlined"
+          />
+          <Typography
+            variant="h2"
+            component="h1"
+            sx={{
+              fontWeight: 900,
+              letterSpacing: "-0.02em",
+              lineHeight: 1.15,
+              mb: 2,
+              fontSize: { xs: "2.2rem", sm: "3rem", md: "3.6rem" }
+            }}
+          >
+            大学生免费 AI API 中转站
+          </Typography>
+          <Typography
+            variant="h5"
+            sx={{
+              fontWeight: 400,
+              opacity: 0.92,
+              lineHeight: 1.6,
+              mb: 1,
+              maxWidth: 720,
+              mx: "auto",
+              fontSize: { xs: "1.1rem", md: "1.4rem" }
+            }}
+          >
+            对在校大学生完全免费开放，Token 用量无限制
+          </Typography>
+          <Typography
+            variant="body1"
+            sx={{
+              opacity: 0.75,
+              maxWidth: 640,
+              mx: "auto",
+              mb: 4,
+              lineHeight: 1.7
+            }}
+          >
+            使用 .edu.cn 教育邮箱注册，即刻获得无限 Token 额度，
+            完美适配 Codex、Claude Code、OpenClaw 等多种 Agent 工具。
+          </Typography>
+
+          {!user && !admin ? (
+            <Stack
+              direction={{ xs: "column", sm: "row" }}
+              spacing={2}
+              justifyContent="center"
+              alignItems="center"
+            >
+              <Button
+                size="large"
+                variant="contained"
+                startIcon={<PersonAddIcon />}
+                onClick={() => onNavigate("register")}
+                sx={{
+                  bgcolor: "#fff",
+                  color: "#0f766e",
+                  fontWeight: 780,
+                  px: 4,
+                  py: 1.2,
+                  fontSize: "1.05rem",
+                  "&:hover": { bgcolor: "#f0fdfa" }
+                }}
+              >
+                教育邮箱注册
+              </Button>
+              <Button
+                size="large"
+                variant="outlined"
+                startIcon={<LoginIcon />}
+                onClick={() => onNavigate("login")}
+                sx={{
+                  color: "#fff",
+                  borderColor: "rgba(255,255,255,0.5)",
+                  fontWeight: 720,
+                  px: 4,
+                  py: 1.2,
+                  fontSize: "1.05rem",
+                  "&:hover": { borderColor: "#fff", bgcolor: "rgba(255,255,255,0.08)" }
+                }}
+              >
+                登录使用
+              </Button>
+            </Stack>
+          ) : (
+            <Button
+              size="large"
+              variant="contained"
+              onClick={() => onNavigate(user ? "portal" : "admin")}
+              sx={{
+                bgcolor: "#fff",
+                color: "#0f766e",
+                fontWeight: 780,
+                px: 4,
+                py: 1.2,
+                fontSize: "1.05rem",
+                "&:hover": { bgcolor: "#f0fdfa" }
+              }}
+            >
+              进入控制台
+            </Button>
+          )}
+        </Box>
+      </Box>
+
+      <Box
+        component="main"
+        sx={{
+          maxWidth: 1100,
+          mx: "auto",
+          px: { xs: 2, sm: 3 },
+          py: { xs: 6, md: 8 }
+        }}
+      >
+        <Stack spacing={5}>
+          <Box sx={{ textAlign: "center" }}>
+            <Typography variant="h4" sx={{ fontWeight: 820, mb: 1 }}>
+              为什么选择 SAPI
             </Typography>
-            <Typography variant="h6" color="text.secondary" sx={{ lineHeight: 1.7, fontWeight: 420 }}>
-              管理员统一配置上游模型供应商，注册用户登录后自行创建 API Key，
-              再通过 SAPI 调用 OpenAI 兼容接口。
+            <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 560, mx: "auto" }}>
+              专为高校师生打造的 LLM API 聚合平台，开箱即用
             </Typography>
-          </Stack>
+          </Box>
 
           <Box
             sx={{
               display: "grid",
-              gridTemplateColumns: { xs: "1fr", md: "repeat(3, minmax(0, 1fr))" },
-              gap: 2
+              gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)", md: "repeat(4, 1fr)" },
+              gap: 2.5
             }}
           >
-            <IntroItem icon={<AdminPanelSettingsIcon />} title="后台集中管理" text="管理员维护上游供应商、密钥和开放模型。" />
-            <IntroItem icon={<KeyIcon />} title="用户自助密钥" text="用户注册登录后，在控制台创建和轮换自己的 API Key。" />
-            <IntroItem icon={<ApiIcon />} title="兼容调用方式" text="面向用户提供统一的 OpenAI 兼容转发入口。" />
+            <IntroItem
+              icon={<SchoolIcon sx={{ fontSize: 32 }} />}
+              title="大学生免费"
+              text="凭 .edu.cn 教育邮箱注册，完全免费，无任何隐藏费用。"
+            />
+            <IntroItem
+              icon={<AutoAwesomeIcon sx={{ fontSize: 32 }} />}
+              title="Token 自由"
+              text="不设 Token 上限，不用担心额度用完，尽情探索 AI 能力。"
+            />
+            <IntroItem
+              icon={<ApiIcon sx={{ fontSize: 32 }} />}
+              title="Agent 生态适配"
+              text="标准 OpenAI 兼容接口，一行配置即可接入 Codex、Claude Code、OpenClaw 等多种 Agent。"
+            />
+            <IntroItem
+              icon={<KeyIcon sx={{ fontSize: 32 }} />}
+              title="自助密钥"
+              text="登录后在控制台自助创建、轮换 API Key，安全可控。"
+            />
           </Box>
 
-          {!user && !admin ? (
-            <Stack direction={{ xs: "column", sm: "row" }} spacing={1.4}>
-              <Button size="large" variant="contained" startIcon={<LoginIcon />} onClick={() => onNavigate("login")}>
-                登录使用
+          <Paper
+            variant="outlined"
+            sx={{
+              p: { xs: 3, md: 4 },
+              textAlign: "center",
+              bgcolor: "primary.main",
+              color: "primary.contrastText",
+              border: 0,
+              borderRadius: 3
+            }}
+          >
+            <Typography variant="h5" sx={{ fontWeight: 780, mb: 1.5 }}>
+              准备好开始了吗？
+            </Typography>
+            <Typography variant="body1" sx={{ opacity: 0.9, mb: 3, maxWidth: 560, mx: "auto" }}>
+              已经有教育邮箱？立即注册，30 秒即可获得专属 API Key。
+            </Typography>
+            {!user && !admin ? (
+              <Button
+                variant="contained"
+                size="large"
+                startIcon={<RocketLaunchIcon />}
+                onClick={() => onNavigate("register")}
+                sx={{
+                  bgcolor: "#fff",
+                  color: "#0f766e",
+                  fontWeight: 780,
+                  px: 4,
+                  "&:hover": { bgcolor: "#f0fdfa" }
+                }}
+              >
+                免费注册
               </Button>
-              <Button size="large" variant="outlined" startIcon={<PersonAddIcon />} onClick={() => onNavigate("register")}>
-                注册账号
+            ) : (
+              <Button
+                variant="contained"
+                size="large"
+                onClick={() => onNavigate(user ? "portal" : "admin")}
+                sx={{
+                  bgcolor: "#fff",
+                  color: "#0f766e",
+                  fontWeight: 780,
+                  px: 4,
+                  "&:hover": { bgcolor: "#f0fdfa" }
+                }}
+              >
+                进入控制台
               </Button>
-            </Stack>
-          ) : null}
+            )}
+          </Paper>
         </Stack>
+      </Box>
+
+      <Box
+        component="footer"
+        sx={{
+          py: 4,
+          textAlign: "center",
+          borderTop: "1px solid",
+          borderColor: "divider",
+          color: "text.secondary"
+        }}
+      >
+        <Typography variant="body2">
+          SAPI - LLM API Relay · 对大学生免费开放
+        </Typography>
       </Box>
     </Box>
   );
@@ -2667,6 +2863,7 @@ function ProviderDialog({ open, onClose, provider, afterChange, onToast }) {
   const [selectedModels, setSelectedModels] = useState([]);
   const [modelSelectionTouched, setModelSelectionTouched] = useState(false);
   const [lookup, setLookup] = useState({ loading: false, error: "", models: [] });
+  const [modelMappings, setModelMappings] = useState([]);
   const [loading, setLoading] = useState(false);
 
   const reset = useCallback(() => {
@@ -2674,6 +2871,7 @@ function ProviderDialog({ open, onClose, provider, afterChange, onToast }) {
     setSelectedModels([]);
     setModelSelectionTouched(false);
     setLookup({ loading: false, error: "", models: [] });
+    setModelMappings([]);
   }, []);
 
   useEffect(() => {
@@ -2693,6 +2891,12 @@ function ProviderDialog({ open, onClose, provider, afterChange, onToast }) {
       setSelectedModels(normalized);
       setModelSelectionTouched(false);
       setLookup({ loading: false, error: "", models: normalized.map((m) => m.id) });
+      const mappings = [];
+      const rawMappings = provider.modelMappings || {};
+      for (const [customId, upstreamId] of Object.entries(rawMappings)) {
+        if (customId && upstreamId) mappings.push({ customId, upstreamId });
+      }
+      setModelMappings(mappings);
     } else {
       reset();
     }
@@ -2804,7 +3008,11 @@ function ProviderDialog({ open, onClose, provider, afterChange, onToast }) {
     event.preventDefault();
     setLoading(true);
     try {
-      const body = { ...form, models: selectedModels };
+      const mappingsObj = {};
+      for (const { customId, upstreamId } of modelMappings) {
+        if (customId.trim() && upstreamId.trim()) mappingsObj[customId.trim()] = upstreamId.trim();
+      }
+      const body = { ...form, models: selectedModels, modelMappings: mappingsObj };
       if (isEdit) {
         await request(`/api/admin/providers/${provider.id}`, {
           method: "PUT",
@@ -2992,6 +3200,77 @@ function ProviderDialog({ open, onClose, provider, afterChange, onToast }) {
           ) : (
             <Alert severity="info">填写 Base URL 和 Key 后，系统会自动获取模型 ID 并在这里分栏展示。</Alert>
           )}
+
+          <Stack spacing={1.5}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 780 }}>
+              模型映射（自定义模型 ID）
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              允许为上游模型设置自定义调用 ID。用户通过自定义 ID 调用时，系统会自动替换为对应的真实模型 ID 转发给上游。
+            </Typography>
+            {modelMappings.length > 0 ? (
+              <Stack spacing={1}>
+                {modelMappings.map((mapping, index) => (
+                  <Stack key={index} direction="row" spacing={1} alignItems="center">
+                    <TextField
+                      size="small"
+                      label="自定义 ID"
+                      placeholder="my-model"
+                      value={mapping.customId}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setModelMappings((current) =>
+                          current.map((m, i) => (i === index ? { ...m, customId: value } : m))
+                        );
+                      }}
+                      sx={{ flex: 1 }}
+                    />
+                    <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: "nowrap" }}>
+                      →
+                    </Typography>
+                    <Autocomplete
+                      size="small"
+                      freeSolo
+                      options={selectedModels.map((m) => m.id)}
+                      value={mapping.upstreamId}
+                      onChange={(_, value) => {
+                        setModelMappings((current) =>
+                          current.map((m, i) => (i === index ? { ...m, upstreamId: value || "" } : m))
+                        );
+                      }}
+                      onInputChange={(_, value) => {
+                        setModelMappings((current) =>
+                          current.map((m, i) => (i === index ? { ...m, upstreamId: value || "" } : m))
+                        );
+                      }}
+                      renderInput={(params) => (
+                        <TextField {...params} label="上游模型 ID" placeholder="选择或输入" sx={{ flex: 1 }} />
+                      )}
+                    />
+                    <IconButton
+                      size="small"
+                      color="error"
+                      onClick={() => {
+                        setModelMappings((current) => current.filter((_, i) => i !== index));
+                      }}
+                    >
+                      <DeleteOutlineIcon fontSize="small" />
+                    </IconButton>
+                  </Stack>
+                ))}
+              </Stack>
+            ) : null}
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<AddIcon />}
+              onClick={() => setModelMappings((current) => [...current, { customId: "", upstreamId: "" }])}
+              sx={{ width: "fit-content" }}
+            >
+              添加映射
+            </Button>
+          </Stack>
+
           <TextField
             label="故障切换阈值"
             type="number"
@@ -3059,6 +3338,9 @@ function ProviderRow({ provider, afterChange, onConfirm, onEdit, onToast }) {
     return String(m);
   }).filter(Boolean);
 
+  const mappingLabels = Object.entries(provider.modelMappings || {})
+    .map(([customId, upstreamId]) => `${customId}→${upstreamId}`);
+
   const failures = provider.consecutiveFailures || 0;
   const threshold = typeof provider.failoverThreshold === "number" ? provider.failoverThreshold : 3;
   const failureLabel = failures > 0 && threshold > 0
@@ -3074,6 +3356,7 @@ function ProviderRow({ provider, afterChange, onConfirm, onEdit, onToast }) {
         ["Base URL", provider.baseUrl],
         ["API Key", provider.apiKey || "-"],
         ["模型", modelLabels.join(", ") || "-"],
+        ...(mappingLabels.length ? [["映射", mappingLabels.join(", ")]] : []),
         ...(failureLabel ? [["故障切换", failureLabel]] : [])
       ]}
       actions={
