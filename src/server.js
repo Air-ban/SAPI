@@ -1638,6 +1638,7 @@ async function handleResponsesProxy(req, res) {
   };
 
   let selectedProvider = null;
+  let selectedUpstreamModel = null;
   let upstreamResponse = null;
   let startedAt = null;
   let lastError = null;
@@ -1696,6 +1697,7 @@ async function handleResponsesProxy(req, res) {
       }
 
       selectedProvider = provider;
+      selectedUpstreamModel = upstreamModel;
       break;
 
     } catch (error) {
@@ -1771,7 +1773,7 @@ async function handleResponsesProxy(req, res) {
         providerId: provider.id,
         providerName: provider.name,
         model: model || "",
-        upstreamModel: upstreamModel || "",
+        upstreamModel: selectedUpstreamModel || "",
         endpoint: "/responses",
         method: "POST",
         status: 200,
@@ -2060,7 +2062,7 @@ async function handleResponsesProxy(req, res) {
       providerId: provider.id,
       providerName: provider.name,
       model: model || "",
-      upstreamModel: upstreamModel || "",
+      upstreamModel: selectedUpstreamModel || "",
       endpoint: "/responses",
       method: "POST",
       status: 200,
@@ -2100,7 +2102,7 @@ async function handleResponsesProxy(req, res) {
       providerId: provider.id,
       providerName: provider.name,
       model: model || "",
-      upstreamModel: upstreamModel || "",
+      upstreamModel: selectedUpstreamModel || "",
       endpoint: "/responses",
       method: "POST",
       status: 502,
