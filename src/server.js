@@ -258,6 +258,15 @@ async function verifyTurnstile(req, res) {
       response: token
     });
 
+    const forwardedFor = String(req.headers?.["x-forwarded-for"] || "").trim();
+    const realIp =
+      String(req.headers?.["ali-cdn-real-ip"] || "").trim() ||
+      (forwardedFor ? forwardedFor.split(",")[0].trim() : "") ||
+      req.ip ||
+      req.socket?.remoteAddress ||
+      "";
+    if (realIp) body.set("remoteip", realIp);
+
     const response = await fetch(TURNSTILE_VERIFY_URL, {
       method: "POST",
       headers: {
