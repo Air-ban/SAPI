@@ -257,8 +257,6 @@ async function verifyTurnstile(req, res) {
       secret: TURNSTILE_SECRET_KEY,
       response: token
     });
-    const remoteIp = req.ip || req.socket?.remoteAddress || "";
-    if (remoteIp) body.set("remoteip", remoteIp);
 
     const response = await fetch(TURNSTILE_VERIFY_URL, {
       method: "POST",
