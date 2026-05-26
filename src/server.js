@@ -893,6 +893,7 @@ function convertAnthropicMessagesToOpenAI(messages) {
 
     if (Array.isArray(content)) {
       const textParts = [];
+      const reasoningParts = [];
       const toolUseBlocks = [];
       const toolResultMessages = [];
 
@@ -923,16 +924,18 @@ function convertAnthropicMessagesToOpenAI(messages) {
         } else if (blockType === "image") {
           textParts.push("[image]");
         } else if (blockType === "thinking") {
-          if (block.thinking) textParts.push(block.thinking);
+          if (block.thinking) reasoningParts.push(block.thinking);
         }
       }
 
       if (role === "assistant") {
         const assistantMsg = { role: "assistant" };
         const joinedText = textParts.join("\n");
+        const joinedReasoning = reasoningParts.join("\n");
+        if (joinedReasoning) assistantMsg.reasoning_content = joinedReasoning;
         if (joinedText) assistantMsg.content = joinedText;
         if (toolUseBlocks.length > 0) assistantMsg.tool_calls = toolUseBlocks;
-        if (assistantMsg.content || assistantMsg.tool_calls) result.push(assistantMsg);
+        if (assistantMsg.content || assistantMsg.tool_calls || assistantMsg.reasoning_content) result.push(assistantMsg);
       } else {
         if (textParts.length > 0) {
           result.push({ role, content: textParts.join("\n") });
@@ -1016,7 +1019,18 @@ function anthropicToOpenAI(body = {}) {
   const tools = convertAnthropicToolsToOpenAI(body.tools);
   if (tools.length > 0) {
     payload.tools = tools;
-    payload.tool_choice = "auto";
+    if (body.tool_choice && typeof body.tool_choice === "object") {
+      const tcType = body.tool_choice.type || "auto";
+      if (tcType === "any") {
+        payload.tool_choice = "required";
+      } else if (tcType === "tool" && body.tool_choice.name) {
+        payload.tool_choice = { type: "function", function: { name: body.tool_choice.name } };
+      } else {
+        payload.tool_choice = "auto";
+      }
+    } else {
+      payload.tool_choice = "auto";
+    }
   }
 
   if (body.stop_sequences && Array.isArray(body.stop_sequences) && body.stop_sequences.length > 0) {
@@ -1031,10 +1045,17 @@ function openAIToAnthropicNonStreaming(payload, model) {
   const choice = choices[0] || {};
   const messageContent = choice.message?.content || "";
   const text = extractTextFromContent(messageContent);
+  const reasoningContent = choice.message?.reasoning_content || choice.message?.reasoningContent || "";
   const finishReason = String(choice.finish_reason || choice.finishReason || "end_turn").trim();
   const usage = findUsagePayload(payload);
 
   const content = [];
+  if (reasoningContent) {
+    content.push({
+      type: "thinking",
+      thinking: typeof reasoningContent === "string" ? reasoningContent : extractTextFromContent(reasoningContent)
+    });
+  }
   if (text) {
     content.push({ type: "text", text });
   }
@@ -1090,6 +1111,19 @@ function openAIToAnthropicDeltaStreaming(payload) {
   const choice = choices[0] || {};
   const delta = choice.delta || {};
   const events = [];
+
+  if (delta.reasoning_content || delta.reasoningContent) {
+    const reasoningText = typeof (delta.reasoning_content || delta.reasoningContent) === "string"
+      ? (delta.reasoning_content || delta.reasoningContent)
+      : extractTextFromContent(delta.reasoning_content || delta.reasoningContent);
+    if (reasoningText) {
+      events.push({
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "thinking_delta", thinking: reasoningText }
+      });
+    }
+  }
 
   if (delta.content) {
     const text = typeof delta.content === "string" ? delta.content : extractTextFromContent(delta.content);
@@ -2298,14 +2332,13 @@ async function handleAnthropicMessagesProxy(req, res) {
       }
     });
 
-    writeEvent("content_block_start", {
-      type: "content_block_start",
-      index: 0,
-      content_block: { type: "text", text: "" }
-    });
-
     const reader = upstreamResponse.body?.getReader();
     if (!reader) {
+      writeEvent("content_block_start", {
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "text", text: "" }
+      });
       writeEvent("content_block_stop", { type: "content_block_stop", index: 0 });
       writeEvent("message_delta", {
         type: "message_delta",
@@ -2322,22 +2355,24 @@ async function handleAnthropicMessagesProxy(req, res) {
     let outputText = "";
     let finishReason = "";
     let usagePayload = null;
-    let textBlockClosed = false;
+    let nextContentIndex = 0;
+    let thinkingBlockIndex = -1;
+    let textBlockIndex = -1;
     let openToolIndex = -1;
     const toolArgBuffers = {};
 
     const closeOpenBlock = () => {
       if (openToolIndex >= 0) {
-        const toolIdx = openToolIndex;
-        const fullArgs = toolArgBuffers[toolIdx] || "{}";
-        let parsedArgs = {};
-        try { parsedArgs = JSON.parse(fullArgs); } catch {}
-        writeEvent("content_block_stop", { type: "content_block_stop", index: toolIdx });
+        writeEvent("content_block_stop", { type: "content_block_stop", index: openToolIndex });
         openToolIndex = -1;
       }
-      if (!textBlockClosed) {
-        writeEvent("content_block_stop", { type: "content_block_stop", index: 0 });
-        textBlockClosed = true;
+      if (textBlockIndex >= 0) {
+        writeEvent("content_block_stop", { type: "content_block_stop", index: textBlockIndex });
+        textBlockIndex = -1;
+      }
+      if (thinkingBlockIndex >= 0) {
+        writeEvent("content_block_stop", { type: "content_block_stop", index: thinkingBlockIndex });
+        thinkingBlockIndex = -1;
       }
     };
 
@@ -2355,8 +2390,11 @@ async function handleAnthropicMessagesProxy(req, res) {
       const events = openAIToAnthropicDeltaStreaming(payload);
       for (const ev of events) {
         if (ev._toolStart) {
-          closeOpenBlock();
-          const toolIdx = ev.index;
+          if (openToolIndex >= 0) {
+            writeEvent("content_block_stop", { type: "content_block_stop", index: openToolIndex });
+            openToolIndex = -1;
+          }
+          const toolIdx = nextContentIndex++;
           toolArgBuffers[toolIdx] = "";
           openToolIndex = toolIdx;
           writeEvent("content_block_start", {
@@ -2365,12 +2403,42 @@ async function handleAnthropicMessagesProxy(req, res) {
             content_block: ev.content_block
           });
         } else if (ev.delta?.type === "input_json_delta") {
-          const toolIdx = ev.index;
+          const toolIdx = openToolIndex >= 0 ? openToolIndex : 0;
           if (!toolArgBuffers[toolIdx]) toolArgBuffers[toolIdx] = "";
           toolArgBuffers[toolIdx] += ev.delta.partial_json || "";
+        } else if (ev.delta?.type === "thinking_delta") {
+          if (thinkingBlockIndex < 0) {
+            thinkingBlockIndex = nextContentIndex++;
+            writeEvent("content_block_start", {
+              type: "content_block_start",
+              index: thinkingBlockIndex,
+              content_block: { type: "thinking", thinking: "" }
+            });
+          }
+          writeEvent("content_block_delta", {
+            type: "content_block_delta",
+            index: thinkingBlockIndex,
+            delta: { type: "thinking_delta", thinking: ev.delta.thinking }
+          });
         } else if (ev.delta?.type === "text_delta") {
+          if (thinkingBlockIndex >= 0) {
+            writeEvent("content_block_stop", { type: "content_block_stop", index: thinkingBlockIndex });
+            thinkingBlockIndex = -1;
+          }
+          if (textBlockIndex < 0) {
+            textBlockIndex = nextContentIndex++;
+            writeEvent("content_block_start", {
+              type: "content_block_start",
+              index: textBlockIndex,
+              content_block: { type: "text", text: "" }
+            });
+          }
           outputText += ev.delta.text;
-          writeEvent("content_block_delta", ev);
+          writeEvent("content_block_delta", {
+            type: "content_block_delta",
+            index: textBlockIndex,
+            delta: { type: "text_delta", text: ev.delta.text }
+          });
         }
       }
     };
@@ -2419,17 +2487,23 @@ async function handleAnthropicMessagesProxy(req, res) {
     }
 
     if (openToolIndex >= 0) {
-      const toolIdx = openToolIndex;
-      const fullArgs = toolArgBuffers[toolIdx] || "{}";
-      let parsedArgs = {};
-      try { parsedArgs = JSON.parse(fullArgs); } catch {}
-      writeEvent("content_block_stop", { type: "content_block_stop", index: toolIdx });
+      writeEvent("content_block_stop", { type: "content_block_stop", index: openToolIndex });
       openToolIndex = -1;
     }
 
-    if (!textBlockClosed) {
+    if (textBlockIndex >= 0) {
+      writeEvent("content_block_stop", { type: "content_block_stop", index: textBlockIndex });
+      textBlockIndex = -1;
+    } else if (thinkingBlockIndex >= 0) {
+      writeEvent("content_block_stop", { type: "content_block_stop", index: thinkingBlockIndex });
+      thinkingBlockIndex = -1;
+    } else if (nextContentIndex === 0) {
+      writeEvent("content_block_start", {
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "text", text: "" }
+      });
       writeEvent("content_block_stop", { type: "content_block_stop", index: 0 });
-      textBlockClosed = true;
     }
 
     const stopReason = finishReason === "tool_calls" ? "tool_use"
