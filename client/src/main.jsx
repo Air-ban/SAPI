@@ -2456,8 +2456,13 @@ function UsageSection({ usage }) {
                           />
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2" sx={{ fontFamily: 'Consolas, monospace' }} noWrap title={request.model}>
+                          <Typography variant="body2" sx={{ fontFamily: 'Consolas, monospace' }} noWrap title={request.upstreamModel ? `${request.model} → ${request.upstreamModel}` : request.model}>
                             {request.model || "unknown"}
+                            {request.upstreamModel && request.upstreamModel !== request.model ? (
+                              <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 0.5 }}>
+                                → {request.upstreamModel}
+                              </Typography>
+                            ) : null}
                           </Typography>
                         </TableCell>
                         <TableCell>
@@ -2547,12 +2552,21 @@ function ProxySettingsSection({ state, usage, providers, onCopy, onAddProvider, 
   const publicBaseUrl = state?.publicConfig?.baseUrl || window.location.origin;
   const baseUrl = `${publicBaseUrl}/v1`;
   const responseUrl = `${publicBaseUrl}/responses`;
+  const anthropicUrl = `${publicBaseUrl}/v1/messages`;
   const responsesExample = [
     "curl " + responseUrl,
     '  -H "Authorization: Bearer YOUR_API_KEY"',
     '  -H "Content-Type: application/json"',
     '  -d \'{"model":"gpt-4o","input":[{"role":"user","content":"hello"}]}\''
   ].join(" \\\n");
+  const claudeCodeExample = [
+    "# Claude Code 配置（~/.claude/settings.json 或环境变量）",
+    "export ANTHROPIC_BASE_URL=" + anthropicUrl,
+    "export ANTHROPIC_API_KEY=YOUR_API_KEY",
+    "",
+    "# 或在 settings.json 中：",
+    '# { "env": { "ANTHROPIC_BASE_URL": "' + anthropicUrl + '" } }'
+  ].join("\n");
 
   return (
     <Stack spacing={2}>
@@ -2572,6 +2586,7 @@ function ProxySettingsSection({ state, usage, providers, onCopy, onAddProvider, 
         <Stack spacing={1.5}>
           <TextField label="对外 `/v1` 地址" value={baseUrl} fullWidth size="small" InputProps={{ readOnly: true }} />
           <TextField label="`/responses` 地址" value={responseUrl} fullWidth size="small" InputProps={{ readOnly: true }} />
+          <TextField label="Anthropic `/v1/messages` 地址" value={anthropicUrl} fullWidth size="small" InputProps={{ readOnly: true }} />
           <TextField
             label="调用示例（/responses）"
             value={responsesExample}
@@ -2592,8 +2607,28 @@ function ProxySettingsSection({ state, usage, providers, onCopy, onAddProvider, 
               )
             }}
           />
+          <TextField
+            label="Claude Code 配置示例"
+            value={claudeCodeExample}
+            fullWidth
+            size="small"
+            multiline
+            rows={5}
+            InputProps={{
+              readOnly: true,
+              endAdornment: (
+                <InputAdornment position="end" sx={{ alignSelf: "flex-start", mt: 0.5 }}>
+                  <Tooltip title="复制示例">
+                    <IconButton onClick={() => onCopy(claudeCodeExample)} edge="end" size="small">
+                      <ContentCopyIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </InputAdornment>
+              )
+            }}
+          />
           <Alert severity="info">
-            /responses 与普通 /v1 端点一样，使用用户的 API Key 进行认证，用量会正常统计到对应 Key 下。
+            /responses 和 /v1/messages 与普通 /v1 端点一样，使用用户的 API Key 进行认证，用量会正常统计到对应 Key 下。
           </Alert>
         </Stack>
       </Section>

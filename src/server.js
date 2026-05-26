@@ -46,7 +46,7 @@ app.use(express.static(path.join(__dirname, "..", "public")));
 
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-API-Key");
+  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-API-Key, anthropic-version, anthropic-beta");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
 
   if (req.method === "OPTIONS") {
@@ -337,6 +337,11 @@ function serviceConfig() {
         method: "POST",
         path: "/responses",
         description: "OpenAI 兼容 Responses API"
+      },
+      {
+        method: "POST",
+        path: "/v1/messages",
+        description: "Anthropic 兼容 Messages API"
       }
     ],
     models
@@ -418,6 +423,29 @@ function chooseProviderCandidates(db, body = {}) {
   }
 
   return [{ provider: providers[0], upstreamModel: "" }];
+}
+
+function chooseAnthropicProviderCandidates(db, model) {
+  const providers = db.providers.filter(
+    (provider) => provider.enabled && isProviderAvailableForFailover(provider)
+  );
+  if (providers.length === 0) return [];
+
+  if (model) {
+    const matched = [];
+    for (const provider of providers) {
+      const mapping = getModelProviderMapping(provider, model);
+      if (mapping) matched.push(mapping);
+    }
+    if (matched.length > 0) return matched;
+  }
+
+  const first = providers[0];
+  const firstModel = first.models?.length > 0
+    ? (typeof first.models[0] === "object" ? first.models[0].id : first.models[0])
+    : "";
+  const mappedFirst = first.modelMappings && Object.values(first.modelMappings)[0];
+  return [{ provider: first, upstreamModel: mappedFirst || firstModel || model || "" }];
 }
 
 function buildUpstreamUrl(baseUrl, originalUrl) {
@@ -735,6 +763,7 @@ function recordRequestLog({
   providerId,
   providerName,
   model,
+  upstreamModel,
   endpoint,
   method,
   status,
@@ -777,6 +806,7 @@ function recordRequestLog({
       providerId,
       providerName: String(providerName || "").trim(),
       model: String(model || "").trim() || "unknown",
+      upstreamModel: String(upstreamModel || "").trim(),
       endpoint: String(endpoint || "").trim(),
       method: String(method || "").trim().toUpperCase(),
       status: Number(status) || 0,
@@ -841,6 +871,267 @@ function filterForwardHeaders(headers = {}) {
     result[key] = Array.isArray(value) ? value.join(", ") : String(value);
   }
   return result;
+}
+
+function convertAnthropicMessagesToOpenAI(messages) {
+  if (!Array.isArray(messages)) return [];
+  const result = [];
+
+  for (const msg of messages) {
+    const role = msg.role || "user";
+    const content = msg.content;
+
+    if (role === "tool") {
+      const toolContent = typeof content === "string" ? content : extractTextFromContent(content);
+      result.push({
+        role: "tool",
+        tool_call_id: msg.tool_use_id || "",
+        content: toolContent
+      });
+      continue;
+    }
+
+    if (Array.isArray(content)) {
+      const textParts = [];
+      const toolUseBlocks = [];
+      const toolResultMessages = [];
+
+      for (const block of content) {
+        if (!block || typeof block !== "object") continue;
+        const blockType = block.type || "";
+
+        if (blockType === "text" || blockType === "input_text") {
+          if (block.text) textParts.push(block.text);
+        } else if (blockType === "tool_use") {
+          toolUseBlocks.push({
+            id: block.id || "",
+            type: "function",
+            function: {
+              name: block.name || "",
+              arguments: typeof block.input === "string" ? block.input : JSON.stringify(block.input || {})
+            }
+          });
+        } else if (blockType === "tool_result") {
+          const resultText = typeof block.content === "string"
+            ? block.content
+            : extractTextFromContent(block.content);
+          toolResultMessages.push({
+            role: "tool",
+            tool_call_id: block.tool_use_id || "",
+            content: resultText
+          });
+        } else if (blockType === "image") {
+          textParts.push("[image]");
+        } else if (blockType === "thinking") {
+          if (block.thinking) textParts.push(block.thinking);
+        }
+      }
+
+      if (role === "assistant") {
+        const assistantMsg = { role: "assistant" };
+        const joinedText = textParts.join("\n");
+        if (joinedText) assistantMsg.content = joinedText;
+        if (toolUseBlocks.length > 0) assistantMsg.tool_calls = toolUseBlocks;
+        if (assistantMsg.content || assistantMsg.tool_calls) result.push(assistantMsg);
+      } else {
+        if (textParts.length > 0) {
+          result.push({ role, content: textParts.join("\n") });
+        }
+      }
+
+      for (const tr of toolResultMessages) {
+        result.push(tr);
+      }
+    } else if (typeof content === "string") {
+      result.push({ role, content });
+    }
+  }
+
+  return result;
+}
+
+function convertAnthropicToolsToOpenAI(tools) {
+  if (!Array.isArray(tools)) return [];
+  return tools
+    .map((tool) => {
+      if (!tool || typeof tool !== "object") return null;
+      const name = tool.name || "";
+      if (!name) return null;
+      return {
+        type: "function",
+        function: {
+          name,
+          description: tool.description || "",
+          parameters: tool.input_schema && typeof tool.input_schema === "object"
+            ? tool.input_schema
+            : { type: "object", properties: {} }
+        }
+      };
+    })
+    .filter(Boolean);
+}
+
+function anthropicToOpenAI(body = {}) {
+  const messages = [];
+  if (body.system) {
+    if (typeof body.system === "string") {
+      messages.push({ role: "system", content: body.system });
+    } else if (Array.isArray(body.system)) {
+      const text = body.system
+        .filter((b) => b && b.type === "text")
+        .map((b) => b.text || "")
+        .filter(Boolean)
+        .join("\n");
+      if (text) messages.push({ role: "system", content: text });
+    }
+  }
+
+  const converted = convertAnthropicMessagesToOpenAI(body.messages || []);
+  for (const msg of converted) {
+    messages.push(msg);
+  }
+
+  const payload = {
+    model: body.model || "",
+    messages,
+    stream: body.stream === true
+  };
+
+  if (payload.stream) {
+    payload.stream_options = { include_usage: true };
+  }
+  if (body.max_tokens !== undefined && body.max_tokens !== null) {
+    payload.max_tokens = body.max_tokens;
+  }
+  if (body.temperature !== undefined && body.temperature !== null) {
+    payload.temperature = body.temperature;
+  }
+  if (body.top_p !== undefined && body.top_p !== null) {
+    payload.top_p = body.top_p;
+  }
+  if (body.top_k !== undefined && body.top_k !== null) {
+    payload.top_k = body.top_k;
+  }
+
+  const tools = convertAnthropicToolsToOpenAI(body.tools);
+  if (tools.length > 0) {
+    payload.tools = tools;
+    payload.tool_choice = "auto";
+  }
+
+  if (body.stop_sequences && Array.isArray(body.stop_sequences) && body.stop_sequences.length > 0) {
+    payload.stop = body.stop_sequences;
+  }
+
+  return payload;
+}
+
+function openAIToAnthropicNonStreaming(payload, model) {
+  const choices = Array.isArray(payload.choices) ? payload.choices : [];
+  const choice = choices[0] || {};
+  const messageContent = choice.message?.content || "";
+  const text = extractTextFromContent(messageContent);
+  const finishReason = String(choice.finish_reason || choice.finishReason || "end_turn").trim();
+  const usage = findUsagePayload(payload);
+
+  const content = [];
+  if (text) {
+    content.push({ type: "text", text });
+  }
+
+  const toolCalls = choice.message?.tool_calls;
+  if (Array.isArray(toolCalls)) {
+    for (const tc of toolCalls) {
+      const func = tc?.function;
+      if (!func?.name) continue;
+      let inputObj = {};
+      try {
+        inputObj = typeof func.arguments === "string" ? JSON.parse(func.arguments) : (func.arguments || {});
+      } catch { inputObj = {}; }
+      content.push({
+        type: "tool_use",
+        id: tc.id || generateId("toolu"),
+        name: func.name,
+        input: inputObj
+      });
+    }
+  }
+
+  const stopReason = finishReason === "tool_calls" ? "tool_use"
+    : finishReason === "length" ? "max_tokens"
+    : finishReason === "content_filter" ? "end_turn"
+    : "end_turn";
+
+  return {
+    id: generateId("msg"),
+    type: "message",
+    role: "assistant",
+    content: content.length > 0 ? content : [{ type: "text", text: "" }],
+    model: String(model || payload.model || ""),
+    stop_reason: stopReason,
+    stop_sequence: null,
+    usage: buildAnthropicUsage(usage)
+  };
+}
+
+function buildAnthropicUsage(usage) {
+  const normalized = normalizeUsage(usage);
+  const source = usage && typeof usage === "object" ? usage : {};
+  return {
+    input_tokens: normalized?.promptTokens || finiteTokenCount(source.input_tokens, source.prompt_tokens) || 0,
+    output_tokens: normalized?.completionTokens || finiteTokenCount(source.output_tokens, source.completion_tokens) || 0,
+    cache_creation_input_tokens: normalized?.cacheCreationTokens || finiteTokenCount(source.cache_creation_input_tokens) || 0,
+    cache_read_input_tokens: normalized?.cachedTokens || finiteTokenCount(source.cache_read_input_tokens, source.cached_tokens) || 0
+  };
+}
+
+function openAIToAnthropicDeltaStreaming(payload) {
+  const choices = Array.isArray(payload.choices) ? payload.choices : [];
+  const choice = choices[0] || {};
+  const delta = choice.delta || {};
+  const events = [];
+
+  if (delta.content) {
+    const text = typeof delta.content === "string" ? delta.content : extractTextFromContent(delta.content);
+    if (text) {
+      events.push({
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text }
+      });
+    }
+  }
+
+  if (Array.isArray(delta.tool_calls)) {
+    for (const tc of delta.tool_calls) {
+      const idx = (tc.index || 0) + 1;
+      if (tc.function?.name) {
+        events.push({
+          _toolStart: true,
+          type: "content_block_start",
+          index: idx,
+          content_block: {
+            type: "tool_use",
+            id: tc.id || generateId("toolu"),
+            name: tc.function.name,
+            input: {}
+          }
+        });
+      }
+      if (tc.function?.arguments) {
+        events.push({
+          type: "content_block_delta",
+          index: idx,
+          delta: {
+            type: "input_json_delta",
+            partial_json: tc.function.arguments
+          }
+        });
+      }
+    }
+  }
+
+  return events;
 }
 
 function copyUpstreamHeaders(sourceHeaders, res, overrides = {}) {
@@ -1384,6 +1675,7 @@ async function handleResponsesProxy(req, res) {
           providerId: provider.id,
           providerName: provider.name,
           model: model || "",
+          upstreamModel: upstreamModel || "",
           endpoint: "/responses",
           method: "POST",
           status: upstreamResponse.status,
@@ -1478,6 +1770,7 @@ async function handleResponsesProxy(req, res) {
         providerId: provider.id,
         providerName: provider.name,
         model: model || "",
+        upstreamModel: upstreamModel || "",
         endpoint: "/responses",
         method: "POST",
         status: 200,
@@ -1766,6 +2059,7 @@ async function handleResponsesProxy(req, res) {
       providerId: provider.id,
       providerName: provider.name,
       model: model || "",
+      upstreamModel: upstreamModel || "",
       endpoint: "/responses",
       method: "POST",
       status: 200,
@@ -1805,6 +2099,7 @@ async function handleResponsesProxy(req, res) {
       providerId: provider.id,
       providerName: provider.name,
       model: model || "",
+      upstreamModel: upstreamModel || "",
       endpoint: "/responses",
       method: "POST",
       status: 502,
@@ -1818,6 +2113,404 @@ async function handleResponsesProxy(req, res) {
     recordProviderFailure(provider.id);
     sendError(res, 502, `Upstream provider request failed: ${error.message}`, "upstream_request_failed");
   }
+}
+
+async function handleAnthropicMessagesProxy(req, res) {
+  const apiKey = getUserApiKey(req);
+  if (!apiKey) {
+    sendAnthropicError(res, 401, "invalid_request_error", "SAPI API key is required.");
+    return;
+  }
+
+  const { db, user, apiKeyRecord } = findUserByKey(apiKey);
+  if (!user) {
+    sendAnthropicError(res, 401, "authentication_error", "Invalid or disabled SAPI API key.");
+    return;
+  }
+
+  const model = req.body?.model || "";
+  if (model && !isModelAllowed(apiKeyRecord, model)) {
+    sendAnthropicError(res, 403, "permission_error", `Model "${model}" is not allowed for this API key.`);
+    return;
+  }
+
+  const openAIBody = anthropicToOpenAI(req.body || {});
+  openAIBody.model = model || openAIBody.model;
+  const wantStream = openAIBody.stream === true;
+
+  const candidates = chooseAnthropicProviderCandidates(db, model);
+  if (candidates.length === 0) {
+    sendAnthropicError(res, 503, "api_error", "No enabled upstream provider is configured.");
+    return;
+  }
+
+  let selectedProvider = null;
+  let upstreamResponse = null;
+  let startedAt = null;
+  let lastError = null;
+
+  for (let i = 0; i < candidates.length; i++) {
+    const { provider, upstreamModel } = candidates[i];
+    startedAt = Date.now();
+
+    try {
+      if (upstreamModel && openAIBody.model) openAIBody.model = upstreamModel;
+      const upstreamUrl = buildUpstreamUrl(provider.baseUrl, "/v1/chat/completions");
+      const headers = filterForwardHeaders(req.headers);
+      headers.authorization = `Bearer ${provider.apiKey}`;
+      headers["content-type"] = "application/json";
+
+      appendDebugLog("anthropic.request", {
+        url: upstreamUrl,
+        method: "POST",
+        bodyLength: Buffer.byteLength(JSON.stringify(openAIBody), "utf8")
+      });
+      upstreamResponse = await fetch(upstreamUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(openAIBody)
+      });
+
+      if (!upstreamResponse.ok) {
+        recordRequestLog({
+          userId: user.id,
+          userName: user.name,
+          username: user.username,
+          apiKeyId: apiKeyRecord?.id || "",
+          apiKeyName: apiKeyRecord?.name || "",
+          apiKeyPreview: maskKey(apiKeyRecord?.key || apiKey),
+          providerId: provider.id,
+          providerName: provider.name,
+          model: model || "",
+          upstreamModel: openAIBody.model || "",
+          endpoint: "/v1/messages",
+          method: "POST",
+          status: upstreamResponse.status,
+          ok: false,
+          stream: wantStream,
+          durationMs: Date.now() - startedAt,
+          usage: null
+        });
+        if (isUpstreamProviderError(upstreamResponse.status)) {
+          recordProviderFailure(provider.id);
+          lastError = new Error(`Upstream provider responded with HTTP ${upstreamResponse.status}`);
+          continue;
+        } else {
+          const text = await upstreamResponse.text();
+          let errMessage = "Upstream provider error.";
+          try {
+            const parsed = JSON.parse(text);
+            errMessage = parsed.error?.message || errMessage;
+          } catch {}
+          sendAnthropicError(res, upstreamResponse.status, "api_error", errMessage);
+          return;
+        }
+      }
+
+      selectedProvider = provider;
+      break;
+    } catch (error) {
+      if (res.headersSent) {
+        if (!res.destroyed) res.destroy(error);
+        return;
+      }
+      recordProviderFailure(provider.id);
+      lastError = error;
+    }
+  }
+
+  if (!selectedProvider) {
+    const msg = lastError
+      ? `All upstream providers failed. Last error: ${lastError.message}`
+      : "All upstream providers failed.";
+    sendAnthropicError(res, 502, "api_error", msg);
+    return;
+  }
+
+  const provider = selectedProvider;
+
+  try {
+    if (!wantStream) {
+      const text = await upstreamResponse.text();
+      let payload = {};
+      try { payload = text ? JSON.parse(text) : {}; } catch {
+        sendAnthropicError(res, 502, "api_error", "Upstream response was not valid JSON.");
+        return;
+      }
+
+      const anthropicResp = openAIToAnthropicNonStreaming(payload, model);
+      const usage = findUsagePayload(payload);
+      res.status(200);
+      res.setHeader("anthropic-version", "2023-06-01");
+      res.json(anthropicResp);
+      recordRequestLog({
+        userId: user.id,
+        userName: user.name,
+        username: user.username,
+        apiKeyId: apiKeyRecord?.id || "",
+        apiKeyName: apiKeyRecord?.name || "",
+        apiKeyPreview: maskKey(apiKeyRecord?.key || apiKey),
+        providerId: provider.id,
+        providerName: provider.name,
+        model: model || "",
+        upstreamModel: openAIBody.model || "",
+        endpoint: "/v1/messages",
+        method: "POST",
+        status: 200,
+        ok: true,
+        stream: false,
+        durationMs: Date.now() - startedAt,
+        usage
+      });
+      recordProviderSuccess(provider.id);
+      return;
+    }
+
+    res.status(200);
+    res.setHeader("content-type", "text/event-stream; charset=utf-8");
+    res.setHeader("cache-control", "no-cache, no-transform");
+    res.setHeader("x-accel-buffering", "no");
+    res.setHeader("anthropic-version", "2023-06-01");
+    res.flushHeaders?.();
+
+    const writeEvent = (eventType, data) => {
+      res.write(`event: ${eventType}\n`);
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    const responseId = generateId("msg");
+    const inputTokens = 0;
+    writeEvent("message_start", {
+      type: "message_start",
+      message: {
+        id: responseId,
+        type: "message",
+        role: "assistant",
+        content: [],
+        model: model || openAIBody.model || "",
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { input_tokens: inputTokens, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }
+      }
+    });
+
+    writeEvent("content_block_start", {
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "text", text: "" }
+    });
+
+    const reader = upstreamResponse.body?.getReader();
+    if (!reader) {
+      writeEvent("content_block_stop", { type: "content_block_stop", index: 0 });
+      writeEvent("message_delta", {
+        type: "message_delta",
+        delta: { stop_reason: "end_turn", stop_sequence: null },
+        usage: { output_tokens: 0 }
+      });
+      writeEvent("message_stop", { type: "message_stop" });
+      res.end();
+      return;
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let outputText = "";
+    let finishReason = "";
+    let usagePayload = null;
+    let textBlockClosed = false;
+    let openToolIndex = -1;
+    const toolArgBuffers = {};
+
+    const closeOpenBlock = () => {
+      if (openToolIndex >= 0) {
+        const toolIdx = openToolIndex;
+        const fullArgs = toolArgBuffers[toolIdx] || "{}";
+        let parsedArgs = {};
+        try { parsedArgs = JSON.parse(fullArgs); } catch {}
+        writeEvent("content_block_stop", { type: "content_block_stop", index: toolIdx });
+        openToolIndex = -1;
+      }
+      if (!textBlockClosed) {
+        writeEvent("content_block_stop", { type: "content_block_stop", index: 0 });
+        textBlockClosed = true;
+      }
+    };
+
+    const processData = (data) => {
+      const trimmed = String(data || "").trim();
+      if (!trimmed || trimmed === "[DONE]") return;
+
+      let payload;
+      try { payload = JSON.parse(trimmed); } catch { return; }
+
+      const extracted = extractChatCompletionText(payload);
+      if (extracted.finishReason) finishReason = extracted.finishReason;
+      if (extracted.usage) usagePayload = extracted.usage;
+
+      const events = openAIToAnthropicDeltaStreaming(payload);
+      for (const ev of events) {
+        if (ev._toolStart) {
+          closeOpenBlock();
+          const toolIdx = ev.index;
+          toolArgBuffers[toolIdx] = "";
+          openToolIndex = toolIdx;
+          writeEvent("content_block_start", {
+            type: "content_block_start",
+            index: toolIdx,
+            content_block: ev.content_block
+          });
+        } else if (ev.delta?.type === "input_json_delta") {
+          const toolIdx = ev.index;
+          if (!toolArgBuffers[toolIdx]) toolArgBuffers[toolIdx] = "";
+          toolArgBuffers[toolIdx] += ev.delta.partial_json || "";
+        } else if (ev.delta?.type === "text_delta") {
+          outputText += ev.delta.text;
+          writeEvent("content_block_delta", ev);
+        }
+      }
+    };
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() || "";
+        let current = [];
+        const flush = () => {
+          if (current.length === 0) return;
+          processData(current.join("\n"));
+          current = [];
+        };
+        for (const line of lines) {
+          if (line === "") { flush(); continue; }
+          if (line.startsWith(":")) continue;
+          if (line.startsWith("data:")) current.push(line.slice(5).replace(/^ /, ""));
+        }
+        flush();
+      }
+
+      buffer += decoder.decode();
+      if (buffer) {
+        const lines = buffer.split(/\r?\n/);
+        let current = [];
+        const flush = () => {
+          if (current.length === 0) return;
+          processData(current.join("\n"));
+          current = [];
+        };
+        for (const line of lines) {
+          if (line === "") { flush(); continue; }
+          if (line.startsWith(":")) continue;
+          if (line.startsWith("data:")) current.push(line.slice(5).replace(/^ /, ""));
+        }
+        flush();
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    if (openToolIndex >= 0) {
+      const toolIdx = openToolIndex;
+      const fullArgs = toolArgBuffers[toolIdx] || "{}";
+      let parsedArgs = {};
+      try { parsedArgs = JSON.parse(fullArgs); } catch {}
+      writeEvent("content_block_stop", { type: "content_block_stop", index: toolIdx });
+      openToolIndex = -1;
+    }
+
+    if (!textBlockClosed) {
+      writeEvent("content_block_stop", { type: "content_block_stop", index: 0 });
+      textBlockClosed = true;
+    }
+
+    const stopReason = finishReason === "tool_calls" ? "tool_use"
+      : finishReason === "length" ? "max_tokens"
+      : "end_turn";
+    const normalized = normalizeUsage(usagePayload);
+    writeEvent("message_delta", {
+      type: "message_delta",
+      delta: { stop_reason: stopReason, stop_sequence: null },
+      usage: { output_tokens: normalized?.completionTokens || 0 }
+    });
+    writeEvent("message_stop", { type: "message_stop" });
+
+    recordRequestLog({
+      userId: user.id,
+      userName: user.name,
+      username: user.username,
+      apiKeyId: apiKeyRecord?.id || "",
+      apiKeyName: apiKeyRecord?.name || "",
+      apiKeyPreview: maskKey(apiKeyRecord?.key || apiKey),
+      providerId: provider.id,
+      providerName: provider.name,
+      model: model || "",
+      upstreamModel: openAIBody.model || "",
+      endpoint: "/v1/messages",
+      method: "POST",
+      status: 200,
+      ok: true,
+      stream: true,
+      durationMs: Date.now() - startedAt,
+      usage: usagePayload
+    });
+    recordProviderSuccess(provider.id);
+    res.end();
+  } catch (error) {
+    appendDebugLog("anthropic.error", {
+      message: error.message,
+      name: error.name,
+      code: error.code,
+      causeCode: error.cause?.code,
+      causeMessage: error.cause?.message
+    });
+    console.error("[anthropic] upstream fetch failed", {
+      message: error.message,
+      name: error.name,
+      code: error.code
+    });
+    if (res.headersSent) {
+      if (!res.destroyed) res.destroy(error);
+      return;
+    }
+    recordRequestLog({
+      userId: user.id,
+      userName: user.name,
+      username: user.username,
+      apiKeyId: apiKeyRecord?.id || "",
+      apiKeyName: apiKeyRecord?.name || "",
+      apiKeyPreview: maskKey(apiKeyRecord?.key || apiKey),
+      providerId: provider.id,
+      providerName: provider.name,
+      model: model || "",
+      upstreamModel: openAIBody.model || "",
+      endpoint: "/v1/messages",
+      method: "POST",
+      status: 502,
+      ok: false,
+      stream: wantStream,
+      durationMs: Date.now() - startedAt,
+      usage: null,
+      errorCode: "upstream_request_failed",
+      errorMessage: error.message
+    });
+    recordProviderFailure(provider.id);
+    sendAnthropicError(res, 502, "api_error", `Upstream provider request failed: ${error.message}`);
+  }
+}
+
+function sendAnthropicError(res, status, errorType, message) {
+  res.status(status).json({
+    type: "error",
+    error: {
+      type: errorType,
+      message
+    }
+  });
 }
 
 async function proxyToProvider(req, res) {
@@ -1881,6 +2574,7 @@ async function proxyToProvider(req, res) {
           providerId: provider.id,
           providerName: provider.name,
           model: req.body?.model || "",
+          upstreamModel: upstreamModel || "",
           endpoint: req.originalUrl || "",
           method: req.method,
           status: upstreamResponse.status,
@@ -1933,6 +2627,7 @@ async function proxyToProvider(req, res) {
           providerId: provider.id,
           providerName: provider.name,
           model: req.body?.model || "",
+          upstreamModel: upstreamModel || "",
           endpoint: req.originalUrl || "",
           method: req.method,
           status: upstreamResponse.status,
@@ -1961,6 +2656,7 @@ async function proxyToProvider(req, res) {
         providerId: provider.id,
         providerName: provider.name,
         model: req.body?.model || "",
+        upstreamModel: upstreamModel || "",
         endpoint: req.originalUrl || "",
         method: req.method,
         status: upstreamResponse.status,
@@ -2003,6 +2699,7 @@ async function proxyToProvider(req, res) {
         providerId: provider.id,
         providerName: provider.name,
         model: req.body?.model || "",
+        upstreamModel: upstreamModel || "",
         endpoint: req.originalUrl || "",
         method: req.method,
         status: 502,
@@ -2774,6 +3471,7 @@ function getUsageStats(db, { userId = null, days = 30 } = {}) {
       providerId: item.providerId || "",
       providerName: item.providerName || "",
       model: item.model || "unknown",
+      upstreamModel: item.upstreamModel || "",
       endpoint: item.endpoint || "",
       method: item.method || "",
       status: Number(item.status || (legacy ? 200 : 0)),
@@ -3450,6 +4148,7 @@ app.get("/api/health/providers", (req, res) => {
 });
 
 app.post("/responses", handleResponsesProxy);
+app.post("/v1/messages", handleAnthropicMessagesProxy);
 app.all("/v1/*", proxyToProvider);
 
 app.use((req, res) => {
