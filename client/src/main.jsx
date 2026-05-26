@@ -2588,7 +2588,8 @@ function ProviderDialog({ open, onClose, provider, afterChange, onToast }) {
     name: "",
     baseUrl: "",
     apiKey: "",
-    enabled: true
+    enabled: true,
+    failoverThreshold: 3
   });
   const [selectedModels, setSelectedModels] = useState([]);
   const [modelSelectionTouched, setModelSelectionTouched] = useState(false);
@@ -2596,7 +2597,7 @@ function ProviderDialog({ open, onClose, provider, afterChange, onToast }) {
   const [loading, setLoading] = useState(false);
 
   const reset = useCallback(() => {
-    setForm({ name: "", baseUrl: "", apiKey: "", enabled: true });
+    setForm({ name: "", baseUrl: "", apiKey: "", enabled: true, failoverThreshold: 3 });
     setSelectedModels([]);
     setModelSelectionTouched(false);
     setLookup({ loading: false, error: "", models: [] });
@@ -2609,7 +2610,8 @@ function ProviderDialog({ open, onClose, provider, afterChange, onToast }) {
         name: provider.name || "",
         baseUrl: provider.baseUrl || "",
         apiKey: "",
-        enabled: provider.enabled !== false
+        enabled: provider.enabled !== false,
+        failoverThreshold: typeof provider.failoverThreshold === "number" ? provider.failoverThreshold : 3
       });
       const normalized = (provider.models || []).map((m) => {
         if (m && typeof m === "object") return { id: m.id || "", name: m.name || m.id || "" };
@@ -2917,6 +2919,15 @@ function ProviderDialog({ open, onClose, provider, afterChange, onToast }) {
           ) : (
             <Alert severity="info">填写 Base URL 和 Key 后，系统会自动获取模型 ID 并在这里分栏展示。</Alert>
           )}
+          <TextField
+            label="故障切换阈值"
+            type="number"
+            value={form.failoverThreshold}
+            onChange={update("failoverThreshold")}
+            helperText="连续失败达到该次数后自动切换到下一个供应商（0 表示不启用）"
+            inputProps={{ min: 0 }}
+            sx={{ maxWidth: 200 }}
+          />
           <FormControlLabel
             control={<Switch checked={form.enabled} onChange={update("enabled")} />}
             label="启用"
@@ -2975,6 +2986,12 @@ function ProviderRow({ provider, afterChange, onConfirm, onEdit, onToast }) {
     return String(m);
   }).filter(Boolean);
 
+  const failures = provider.consecutiveFailures || 0;
+  const threshold = typeof provider.failoverThreshold === "number" ? provider.failoverThreshold : 3;
+  const failureLabel = failures > 0 && threshold > 0
+    ? `连续失败 ${failures}/${threshold} 次`
+    : null;
+
   return (
     <EntityRow
       title={provider.name}
@@ -2983,7 +3000,8 @@ function ProviderRow({ provider, afterChange, onConfirm, onEdit, onToast }) {
       meta={[
         ["Base URL", provider.baseUrl],
         ["API Key", provider.apiKey || "-"],
-        ["模型", modelLabels.join(", ") || "-"]
+        ["模型", modelLabels.join(", ") || "-"],
+        ...(failureLabel ? [["故障切换", failureLabel]] : [])
       ]}
       actions={
         <>
@@ -3909,6 +3927,17 @@ function ProviderHealthCard({ provider }) {
           </Typography>
         </Stack>
       </Stack>
+
+      {(provider.consecutiveFailures || 0) > 0 ? (
+        <Stack direction="row" alignItems="center" justifyContent="space-between">
+          <Typography variant="body2" color="text.secondary">
+            连续失败
+          </Typography>
+          <Typography variant="subtitle1" sx={{ fontWeight: 800, color: "error.main" }}>
+            {provider.consecutiveFailures}/{provider.failoverThreshold ?? 3}
+          </Typography>
+        </Stack>
+      ) : null}
 
       <Box>
         <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 0.5 }}>

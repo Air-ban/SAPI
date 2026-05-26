@@ -315,15 +315,60 @@ function serviceConfig() {
         method: "POST",
         path: "/v1/embeddings",
         description: "OpenAI 兼容向量接口"
+      },
+      {
+        method: "POST",
+        path: "/responses",
+        description: "OpenAI 兼容 Responses API"
       }
     ],
     models
   };
 }
 
+const providerFailureCounters = new Map();
+
+function getProviderFailureCounter(providerId) {
+  return providerFailureCounters.get(providerId) || { consecutiveFailures: 0, lastFailureAt: "" };
+}
+
+function recordProviderSuccess(providerId) {
+  const counter = providerFailureCounters.get(providerId);
+  if (counter && counter.consecutiveFailures > 0) {
+    counter.consecutiveFailures = 0;
+    counter.lastFailureAt = "";
+  }
+}
+
+function recordProviderFailure(providerId) {
+  const counter = providerFailureCounters.get(providerId);
+  if (counter) {
+    counter.consecutiveFailures += 1;
+    counter.lastFailureAt = new Date().toISOString();
+  } else {
+    providerFailureCounters.set(providerId, {
+      consecutiveFailures: 1,
+      lastFailureAt: new Date().toISOString()
+    });
+  }
+}
+
+function isUpstreamProviderError(status) {
+  return status >= 500 || status === 429;
+}
+
+function isProviderAvailableForFailover(provider) {
+  const threshold = typeof provider.failoverThreshold === "number" ? provider.failoverThreshold : 3;
+  if (threshold <= 0) return true;
+  const counter = getProviderFailureCounter(provider.id);
+  return counter.consecutiveFailures < threshold;
+}
+
 function chooseProvider(db, body = {}) {
   const model = body && typeof body === "object" ? body.model : "";
-  const providers = db.providers.filter((provider) => provider.enabled);
+  const providers = db.providers.filter(
+    (provider) => provider.enabled && isProviderAvailableForFailover(provider)
+  );
   if (providers.length === 0) return null;
 
   if (model) {
@@ -1300,6 +1345,9 @@ async function handleResponsesProxy(req, res) {
         durationMs: Date.now() - startedAt,
         usage: null
       });
+      if (isUpstreamProviderError(upstreamResponse.status)) {
+        recordProviderFailure(provider.id);
+      }
       return;
     }
 
@@ -1362,6 +1410,7 @@ async function handleResponsesProxy(req, res) {
         durationMs: Date.now() - startedAt,
         usage
       });
+      recordProviderSuccess(provider.id);
       return;
     }
 
@@ -1649,6 +1698,7 @@ async function handleResponsesProxy(req, res) {
       durationMs: Date.now() - startedAt,
       usage: buildResponseUsage(usagePayload, outputText)
     });
+    recordProviderSuccess(provider.id);
     res.end();
   } catch (error) {
     appendDebugLog("responses.error", {
@@ -1689,6 +1739,7 @@ async function handleResponsesProxy(req, res) {
       errorCode: "upstream_request_failed",
       errorMessage: error.message
     });
+    recordProviderFailure(provider.id);
     sendError(res, 502, `Upstream provider request failed: ${error.message}`, "upstream_request_failed");
   }
 }
@@ -1777,6 +1828,7 @@ async function proxyToProvider(req, res) {
         durationMs: Date.now() - startedAt,
         usage
       });
+      recordProviderSuccess(provider.id);
 
       return;
     }
@@ -1804,6 +1856,11 @@ async function proxyToProvider(req, res) {
       durationMs: Date.now() - startedAt,
       usage
     });
+    if (upstreamResponse.ok) {
+      recordProviderSuccess(provider.id);
+    } else if (isUpstreamProviderError(upstreamResponse.status)) {
+      recordProviderFailure(provider.id);
+    }
 
     res.send(text);
   } catch (error) {
@@ -1841,6 +1898,7 @@ async function proxyToProvider(req, res) {
       errorCode: "upstream_request_failed",
       errorMessage: error.message
     });
+    recordProviderFailure(provider.id);
     if (res.headersSent) {
       if (!res.destroyed) res.destroy(error);
       return;
@@ -3124,18 +3182,23 @@ app.get("/api/health/providers", (req, res) => {
   const db = readDb();
   const providers = db.providers
     .filter((p) => p.enabled)
-    .map((p) => ({
-      id: p.id,
-      name: p.name,
-      baseUrl: p.baseUrl,
-      models: (p.models || []).map(normalizeModel),
-      healthStatus: p.healthStatus || "unknown",
-      latency: p.latency || 0,
-      ping: p.ping || 0,
-      availability7d: p.availability7d ?? 100,
-      lastHealthCheck: p.lastHealthCheck || "",
-      healthHistory: (p.healthHistory || []).slice(-60)
-    }));
+    .map((p) => {
+      const counter = getProviderFailureCounter(p.id);
+      return {
+        id: p.id,
+        name: p.name,
+        baseUrl: p.baseUrl,
+        models: (p.models || []).map(normalizeModel),
+        healthStatus: p.healthStatus || "unknown",
+        latency: p.latency || 0,
+        ping: p.ping || 0,
+        availability7d: p.availability7d ?? 100,
+        lastHealthCheck: p.lastHealthCheck || "",
+        healthHistory: (p.healthHistory || []).slice(-60),
+        consecutiveFailures: counter.consecutiveFailures,
+        failoverThreshold: p.failoverThreshold ?? 3
+      };
+    });
   res.json({ providers });
 });
 
@@ -3189,6 +3252,7 @@ async function checkProviderHealth(provider) {
     latency = Date.now() - startedAt;
     if (response.ok) {
       status = latency > 5000 ? "slow" : "ok";
+      recordProviderSuccess(provider.id);
     } else {
       status = "fail";
     }

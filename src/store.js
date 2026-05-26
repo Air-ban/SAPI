@@ -94,6 +94,10 @@ function readDb() {
       provider.lastHealthCheck = "";
       changed = true;
     }
+    if (typeof provider.failoverThreshold !== "number" || provider.failoverThreshold < 0) {
+      provider.failoverThreshold = 3;
+      changed = true;
+    }
   }
 
   for (const user of db.users) {
@@ -236,12 +240,20 @@ function normalizeProviderInput(input, existing = null) {
   const apiKey = rawApiKey || existing?.apiKey || "";
   if (!apiKey) throw new Error("Provider API key is required.");
 
+  const failoverThresholdRaw = input.failoverThreshold === undefined
+    ? (existing?.failoverThreshold ?? 3)
+    : Number(input.failoverThreshold);
+  const failoverThreshold = Number.isFinite(failoverThresholdRaw) && failoverThresholdRaw >= 0
+    ? Math.floor(failoverThresholdRaw)
+    : 3;
+
   return {
     name,
     baseUrl: baseUrl.replace(/\/+$/, ""),
     apiKey,
     models: normalizeModels(input.models ?? existing?.models ?? ""),
-    enabled: Boolean(input.enabled ?? existing?.enabled ?? true)
+    enabled: Boolean(input.enabled ?? existing?.enabled ?? true),
+    failoverThreshold
   };
 }
 
