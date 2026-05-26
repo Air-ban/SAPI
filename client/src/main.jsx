@@ -1344,6 +1344,8 @@ function AuthPage({
   const [countdown, setCountdown] = useState(0);
   const [forgotOpen, setForgotOpen] = useState(false);
   const [registerMethod, setRegisterMethod] = useState("edu");
+  const [agreed, setAgreed] = useState(false);
+  const [termsOpen, setTermsOpen] = useState(false);
 
   const update = (field) => (event) => {
     setForm((current) => ({ ...current, [field]: event.target.value }));
@@ -1354,6 +1356,10 @@ function AuthPage({
     const timer = setTimeout(() => setCountdown((c) => c - 1), 1000);
     return () => clearTimeout(timer);
   }, [countdown]);
+
+  useEffect(() => {
+    setAgreed(false);
+  }, [mode]);
 
   const sendCode = async () => {
     if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
@@ -1374,6 +1380,11 @@ function AuthPage({
 
   const submit = async (event) => {
     event.preventDefault();
+
+    if (!agreed) {
+      onToast("请先同意用户协议和隐私政策", "warning");
+      return;
+    }
 
     if (isRegister) {
       if (form.password !== form.confirmPassword) {
@@ -1564,6 +1575,23 @@ function AuthPage({
                     )}
                   </>
                 ) : null}
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={agreed}
+                      onChange={(e) => setAgreed(e.target.checked)}
+                      size="small"
+                    />
+                  }
+                  label={
+                    <Typography variant="body2" color="text.secondary">
+                      我已阅读并同意
+                      <Button size="small" sx={{ p: 0, minWidth: 0, verticalAlign: "baseline" }} onClick={() => setTermsOpen(true)}>
+                        《用户协议与隐私政策》
+                      </Button>
+                    </Typography>
+                  }
+                />
                 <Button
                   type="submit"
                   variant="contained"
@@ -1605,6 +1633,45 @@ function AuthPage({
         onReset={onResetPassword}
         onToast={onToast}
       />
+      <Dialog open={termsOpen} onClose={() => setTermsOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>用户协议与隐私政策</DialogTitle>
+        <DialogContent>
+          <DialogContentText component="div" sx={{ whiteSpace: "pre-line" }}>
+            <Typography variant="subtitle2" gutterBottom>一、用户协议</Typography>
+            <Typography variant="body2" paragraph>
+              1. 服务说明：本服务提供 API 代理转发功能，用户可通过创建 API Key 调用第三方大模型服务。
+            </Typography>
+            <Typography variant="body2" paragraph>
+              2. 使用规范：用户不得利用本服务从事违法违规活动，不得滥用 API 接口。
+            </Typography>
+            <Typography variant="body2" paragraph>
+              3. 数据承诺：我们不会将用户的任何数据（包括但不限于 API 请求内容、响应内容、用量数据）用于训练人工智能模型或任何机器学习目的。
+            </Typography>
+            <Typography variant="subtitle2" gutterBottom sx={{ mt: 2 }}>二、隐私政策</Typography>
+            <Typography variant="body2" paragraph>
+              1. 信息收集：我们仅收集提供服务所必需的最少信息，包括用户名、邮箱地址、密码哈希及 API 用量统计。
+            </Typography>
+            <Typography variant="body2" paragraph>
+              2. 隐私保护：我们不会收集、存储或分析用户的 API 请求内容（Prompt 和 Response）。所有请求仅作为代理转发，不做持久化存储。
+            </Typography>
+            <Typography variant="body2" paragraph>
+              3. 数据安全：用户数据采用加密存储，仅用于身份验证、用量统计和服务运营，不会向任何第三方披露或出售。
+            </Typography>
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setTermsOpen(false)}>关闭</Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              setAgreed(true);
+              setTermsOpen(false);
+            }}
+          >
+            同意
+          </Button>
+        </DialogActions>
+      </Dialog>
     </>
   );
 }
