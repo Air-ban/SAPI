@@ -49,6 +49,8 @@ import {
   TableRow,
   TextField,
   ThemeProvider,
+  ToggleButton,
+  ToggleButtonGroup,
   Toolbar,
   Tooltip,
   Typography,
@@ -1194,6 +1196,7 @@ function AuthPage({
   const [codeLoading, setCodeLoading] = useState(false);
   const [countdown, setCountdown] = useState(0);
   const [forgotOpen, setForgotOpen] = useState(false);
+  const [registerMethod, setRegisterMethod] = useState("edu");
 
   const update = (field) => (event) => {
     setForm((current) => ({ ...current, [field]: event.target.value }));
@@ -1238,6 +1241,14 @@ function AuthPage({
       }
       if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
         onToast("请输入有效的邮箱地址", "warning");
+        return;
+      }
+      if (registerMethod === "edu" && !form.email.endsWith(".edu.cn")) {
+        onToast("教育邮箱注册需要使用 .edu.cn 后缀的邮箱", "warning");
+        return;
+      }
+      if (registerMethod === "invite" && !form.invitationCode.trim()) {
+        onToast("请输入邀请码", "warning");
         return;
       }
       if (!/^\d{6}$/.test(form.verificationCode)) {
@@ -1388,19 +1399,37 @@ function AuthPage({
                 {isRegister ? (
                   <>
                     <DividerLine />
-                    <TextField
-                      label="邀请码"
-                      value={form.invitationCode}
-                      onChange={update("invitationCode")}
-                      placeholder="输入管理员提供的邀请码"
-                      required
-                      helperText="注册需要有效的邀请码。"
-                      sx={{
-                        '& .MuiOutlinedInput-root': {
-                          bgcolor: 'rgba(15,118,110,0.04)'
-                        }
+                    <ToggleButtonGroup
+                      value={registerMethod}
+                      exclusive
+                      fullWidth
+                      size="small"
+                      onChange={(_, value) => {
+                        if (value) setRegisterMethod(value);
                       }}
-                    />
+                    >
+                      <ToggleButton value="edu">教育邮箱注册</ToggleButton>
+                      <ToggleButton value="invite">邀请码注册</ToggleButton>
+                    </ToggleButtonGroup>
+                    {registerMethod === "invite" ? (
+                      <TextField
+                        label="邀请码"
+                        value={form.invitationCode}
+                        onChange={update("invitationCode")}
+                        placeholder="输入管理员提供的邀请码"
+                        required
+                        helperText="使用管理员提供的邀请码进行注册。"
+                        sx={{
+                          '& .MuiOutlinedInput-root': {
+                            bgcolor: 'rgba(15,118,110,0.04)'
+                          }
+                        }}
+                      />
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">
+                        使用 .edu.cn 教育邮箱注册，无需邀请码。
+                      </Typography>
+                    )}
                   </>
                 ) : null}
                 <TurnstileWidget

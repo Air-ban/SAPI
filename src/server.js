@@ -2284,22 +2284,25 @@ app.post("/api/auth/register", async (req, res) => {
   const password = String(req.body?.password || "");
   const verificationCode = String(req.body?.verificationCode || "").trim();
   const invitationCode = String(req.body?.invitationCode || "").trim();
+  const isEduEmail = email.endsWith(".edu.cn");
 
-  if (!invitationCode) {
-    sendError(res, 400, "Invitation code is required.", "invitation_code_required");
+  if (!isEduEmail && !invitationCode) {
+    sendError(res, 400, "Invitation code is required for non-edu emails.", "invitation_code_required");
     return;
   }
 
-  const validation = validateInvitationCode(invitationCode);
-  if (!validation.valid) {
-    const message =
-      validation.reason === "expired_code"
-        ? "Invitation code has expired."
-        : validation.reason === "max_uses_reached"
-          ? "Invitation code has reached its maximum usage limit."
-          : "Invalid invitation code.";
-    sendError(res, 400, message, validation.reason);
-    return;
+  if (invitationCode) {
+    const validation = validateInvitationCode(invitationCode);
+    if (!validation.valid) {
+      const message =
+        validation.reason === "expired_code"
+          ? "Invitation code has expired."
+          : validation.reason === "max_uses_reached"
+            ? "Invitation code has reached its maximum usage limit."
+            : "Invalid invitation code.";
+      sendError(res, 400, message, validation.reason);
+      return;
+    }
   }
 
   if (!/^[a-z0-9._@-]{3,64}$/.test(username)) {
@@ -2369,7 +2372,7 @@ app.post("/api/auth/register", async (req, res) => {
       return;
     }
 
-    consumeInvitationCode(invitationCode, user.id);
+    if (invitationCode) consumeInvitationCode(invitationCode, user.id);
 
     const db = readDb();
     const token = signToken({ role: "user", sub: user.id }, db.appSecret);
