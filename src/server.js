@@ -2820,6 +2820,98 @@ function getUsageStats(db, { userId = null, days = 30 } = {}) {
   };
 }
 
+app.get("/api/announcements", (req, res) => {
+  const db = readDb();
+  const announcements = (db.announcements || [])
+    .filter((item) => item.enabled !== false)
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  res.json({ announcements });
+});
+
+app.get("/api/admin/announcements", requireAdmin, (req, res) => {
+  const db = readDb();
+  res.json({ announcements: db.announcements || [] });
+});
+
+app.post("/api/admin/announcements", requireAdmin, (req, res) => {
+  const title = String(req.body?.title || "").trim();
+  const content = String(req.body?.content || "").trim();
+  const type = ["info", "warning", "success", "error"].includes(req.body?.type) ? req.body.type : "info";
+
+  if (!title) {
+    sendError(res, 400, "Title is required.", "invalid_title");
+    return;
+  }
+  if (!content) {
+    sendError(res, 400, "Content is required.", "invalid_content");
+    return;
+  }
+
+  const record = mutateDb((db) => {
+    if (!Array.isArray(db.announcements)) db.announcements = [];
+    const createdAt = now();
+    const item = {
+      id: randomId("ann"),
+      title,
+      content,
+      type,
+      enabled: true,
+      createdAt,
+      updatedAt: createdAt
+    };
+    db.announcements.push(item);
+    return item;
+  });
+
+  res.status(201).json(record);
+});
+
+app.put("/api/admin/announcements/:id", requireAdmin, (req, res) => {
+  const updated = mutateDb((db) => {
+    if (!Array.isArray(db.announcements)) db.announcements = [];
+    const item = db.announcements.find((a) => a.id === req.params.id);
+    if (!item) return null;
+
+    if (req.body?.title !== undefined) {
+      item.title = String(req.body.title || "").trim() || item.title;
+    }
+    if (req.body?.content !== undefined) {
+      item.content = String(req.body.content || "").trim() || item.content;
+    }
+    if (req.body?.type !== undefined) {
+      item.type = ["info", "warning", "success", "error"].includes(req.body.type) ? req.body.type : item.type;
+    }
+    if (req.body?.enabled !== undefined) {
+      item.enabled = Boolean(req.body.enabled);
+    }
+    item.updatedAt = now();
+    return item;
+  });
+
+  if (!updated) {
+    sendError(res, 404, "Announcement not found.", "not_found");
+    return;
+  }
+
+  res.json(updated);
+});
+
+app.delete("/api/admin/announcements/:id", requireAdmin, (req, res) => {
+  const removed = mutateDb((db) => {
+    if (!Array.isArray(db.announcements)) db.announcements = [];
+    const before = db.announcements.length;
+    db.announcements = db.announcements.filter((a) => a.id !== req.params.id);
+    return before !== db.announcements.length;
+  });
+
+  if (!removed) {
+    sendError(res, 404, "Announcement not found.", "not_found");
+    return;
+  }
+
+  res.status(204).end();
+});
+
 app.get("/api/admin/state", requireAdmin, (req, res) => {
   const db = readDb();
   const smtp = getSmtpConfig(db);
@@ -2830,6 +2922,7 @@ app.get("/api/admin/state", requireAdmin, (req, res) => {
     publicConfig: serviceConfig(),
     usage: getUsageStats(db),
     invitationCodes: db.invitationCodes || [],
+    announcements: db.announcements || [],
     smtpConfig: {
       host: smtp.host,
       port: smtp.port,

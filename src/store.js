@@ -69,6 +69,10 @@ function readDb() {
     db.verificationCodes = [];
     changed = true;
   }
+  if (!Array.isArray(db.announcements)) {
+    db.announcements = [];
+    changed = true;
+  }
   for (const provider of db.providers) {
     if (!provider.healthStatus) {
       provider.healthStatus = "unknown";

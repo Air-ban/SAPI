@@ -62,6 +62,7 @@ import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
 import AnalyticsIcon from "@mui/icons-material/Analytics";
 import ApiIcon from "@mui/icons-material/Api";
 import BarChartIcon from "@mui/icons-material/BarChart";
+import CampaignOutlinedIcon from "@mui/icons-material/CampaignOutlined";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
@@ -297,6 +298,8 @@ function App() {
   const [createdKeyInfo, setCreatedKeyInfo] = useState(null);
   const [providerHealth, setProviderHealth] = useState([]);
   const [publicConfig, setPublicConfig] = useState(null);
+  const [announcements, setAnnouncements] = useState([]);
+  const [activeAnnouncement, setActiveAnnouncement] = useState(null);
   const compact = useMediaQuery(theme.breakpoints.down("md"));
 
   const showToast = useCallback((message, severity = "success") => {
@@ -318,6 +321,19 @@ function App() {
       setPublicConfig(config);
     } catch {
       setPublicConfig(null);
+    }
+  }, []);
+
+  const loadAnnouncements = useCallback(async () => {
+    try {
+      const data = await request("/api/announcements", { admin: false });
+      const list = data.announcements || [];
+      setAnnouncements(list);
+      const dismissed = JSON.parse(localStorage.getItem("sapiDismissedAnnouncements") || "[]");
+      const next = list.find((a) => !dismissed.includes(a.id));
+      if (next) setActiveAnnouncement(next);
+    } catch {
+      setAnnouncements([]);
     }
   }, []);
 
@@ -383,7 +399,8 @@ function App() {
   useEffect(() => {
     checkHealth();
     loadPublicConfig();
-  }, [checkHealth, loadPublicConfig]);
+    loadAnnouncements();
+  }, [checkHealth, loadPublicConfig, loadAnnouncements]);
 
   useEffect(() => {
     loadProviderHealth();
@@ -550,6 +567,14 @@ function App() {
     showToast(message);
   };
 
+  const dismissAnnouncement = (id) => {
+    const dismissed = JSON.parse(localStorage.getItem("sapiDismissedAnnouncements") || "[]");
+    if (!dismissed.includes(id)) dismissed.push(id);
+    localStorage.setItem("sapiDismissedAnnouncements", JSON.stringify(dismissed));
+    const next = announcements.find((a) => a.id !== id && !dismissed.includes(a.id));
+    setActiveAnnouncement(next || null);
+  };
+
   const drawer = (
     <Sidebar
       route={route}
@@ -611,6 +636,10 @@ function App() {
             logout();
             showToast("已退出");
           }}
+        />
+        <AnnouncementDialog
+          announcement={activeAnnouncement}
+          onDismiss={() => dismissAnnouncement(activeAnnouncement?.id)}
         />
         {snackbar}
       </ThemeProvider>
@@ -787,6 +816,10 @@ function App() {
         info={createdKeyInfo}
         onClose={() => setCreatedKeyInfo(null)}
         onCopy={copyText}
+      />
+      <AnnouncementDialog
+        announcement={activeAnnouncement}
+        onDismiss={() => dismissAnnouncement(activeAnnouncement?.id)}
       />
       {snackbar}
     </ThemeProvider>
@@ -1516,7 +1549,8 @@ function Sidebar({
         { id: "overview", icon: <AnalyticsIcon />, primary: "概览", secondary: "用量、供应商、用户摘要" },
         { id: "usage", icon: <BarChartIcon />, primary: "请求与用量", secondary: "全局统计和明细" },
         { id: "providers", icon: <ApiIcon />, primary: "上游供应商", secondary: "API、模型和密钥" },
-        { id: "users", icon: <KeyIcon />, primary: "用户账号", secondary: "用户 Key 与权限" }
+        { id: "users", icon: <KeyIcon />, primary: "用户账号", secondary: "用户 Key 与权限" },
+        { id: "announcements", icon: <CampaignOutlinedIcon />, primary: "公告管理", secondary: "发布和管理系统公告" }
       ]
     },
     {
@@ -2435,7 +2469,7 @@ function AdminView({
   const providers = state?.providers || [];
   const users = state?.users || [];
   const usage = state?.usage;
-  const currentPage = ["overview", "usage", "providers", "responses", "users", "invitations", "smtp"].includes(page)
+  const currentPage = ["overview", "usage", "providers", "responses", "users", "invitations", "smtp", "announcements"].includes(page)
     ? page
     : "overview";
   const pageMeta = {
@@ -2444,7 +2478,8 @@ function AdminView({
     providers: { title: "上游供应商", description: "配置模型来源、密钥和启用状态。" },
     users: { title: "用户账号", description: "管理用户 Key 和访问状态。" },
     invitations: { title: "邀请码管理", description: "创建、发送和管理邀请码。" },
-    smtp: { title: "SMTP 设置", description: "配置邮件发送服务。" }
+    smtp: { title: "SMTP 设置", description: "配置邮件发送服务。" },
+    announcements: { title: "公告管理", description: "发布和管理系统公告。" }
   }[currentPage] || {
     title: "上游 API 与用户 Key",
     description: "供应商、用户和用量摘要。"
@@ -2604,6 +2639,15 @@ function AdminView({
         <SmtpConfigSection
           config={state?.smtpConfig || {}}
           afterChange={afterChange}
+          onToast={onToast}
+        />
+      ) : null}
+
+      {currentPage === "announcements" ? (
+        <AnnouncementsSection
+          announcements={state?.announcements || []}
+          afterChange={afterChange}
+          onConfirm={onConfirm}
           onToast={onToast}
         />
       ) : null}
@@ -4212,6 +4256,271 @@ function CreatedKeyDialog({ info, onClose, onCopy }) {
         >
           复制 Key
         </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+function AnnouncementsSection({ announcements, afterChange, onConfirm, onToast }) {
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState({ title: "", content: "", type: "info" });
+
+  const resetForm = () => setForm({ title: "", content: "", type: "info" });
+
+  const createAnnouncement = async () => {
+    await request("/api/admin/announcements", {
+      method: "POST",
+      body: form
+    });
+    resetForm();
+    setCreateOpen(false);
+    await afterChange("公告已发布");
+  };
+
+  const updateAnnouncement = async () => {
+    if (!editing) return;
+    await request(`/api/admin/announcements/${editing.id}`, {
+      method: "PUT",
+      body: form
+    });
+    setEditOpen(false);
+    setEditing(null);
+    await afterChange("公告已更新");
+  };
+
+  const deleteAnnouncement = (id, title) => {
+    onConfirm({
+      title: "删除公告",
+      message: `确认删除公告 "${title}"？`,
+      confirmText: "删除",
+      danger: true,
+      action: async () => {
+        await request(`/api/admin/announcements/${id}`, { method: "DELETE" });
+        await afterChange("公告已删除");
+      }
+    });
+  };
+
+  const toggleEnabled = async (item) => {
+    try {
+      await request(`/api/admin/announcements/${item.id}`, {
+        method: "PUT",
+        body: { enabled: !item.enabled }
+      });
+      await afterChange(item.enabled ? "公告已停用" : "公告已启用");
+    } catch (error) {
+      onToast(error.message, "error");
+    }
+  };
+
+  const openEdit = (item) => {
+    setEditing(item);
+    setForm({ title: item.title, content: item.content, type: item.type || "info" });
+    setEditOpen(true);
+  };
+
+  const typeColor = (type) => {
+    if (type === "warning") return "warning";
+    if (type === "error") return "error";
+    if (type === "success") return "success";
+    return "info";
+  };
+
+  const typeLabel = (type) => {
+    if (type === "warning") return "警告";
+    if (type === "error") return "错误";
+    if (type === "success") return "成功";
+    return "信息";
+  };
+
+  return (
+    <>
+      <Section
+        title="系统公告"
+        icon={<CampaignOutlinedIcon />}
+        action={
+          <Button startIcon={<AddIcon />} variant="contained" size="small" onClick={() => { resetForm(); setCreateOpen(true); }}>
+            发布公告
+          </Button>
+        }
+      >
+        {announcements.length ? (
+          <Stack spacing={1.5}>
+            {announcements.map((item) => (
+              <Paper
+                key={item.id}
+                variant="outlined"
+                sx={{
+                  p: { xs: 1.5, sm: 2 },
+                  display: "grid",
+                  gridTemplateColumns: { xs: "1fr", md: "minmax(0, 1fr) auto" },
+                  gap: 1.5,
+                  alignItems: "center",
+                  bgcolor: item.enabled !== false ? "#fbfcfe" : "action.hover",
+                  opacity: item.enabled !== false ? 1 : 0.85
+                }}
+              >
+                <Stack spacing={0.5} sx={{ minWidth: 0 }}>
+                  <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                    <Typography variant="subtitle1" sx={{ fontWeight: 780 }}>
+                      {item.title}
+                    </Typography>
+                    <Chip size="small" label={typeLabel(item.type)} color={typeColor(item.type)} variant="outlined" />
+                    <Chip
+                      size="small"
+                      label={item.enabled !== false ? "已启用" : "已停用"}
+                      color={item.enabled !== false ? "success" : "default"}
+                      variant="outlined"
+                    />
+                  </Stack>
+                  <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: "pre-wrap" }}>
+                    {item.content}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    更新于 {formatDate(item.updatedAt || item.createdAt)}
+                  </Typography>
+                </Stack>
+                <Stack direction="row" spacing={0.5} alignItems="center" justifyContent={{ xs: "flex-start", md: "flex-end" }}>
+                  <Tooltip title={item.enabled !== false ? "停用" : "启用"}>
+                    <IconButton size="small" onClick={() => toggleEnabled(item)}>
+                      {item.enabled !== false ? <CheckCircleIcon fontSize="small" color="success" /> : <CheckCircleIcon fontSize="small" color="disabled" />}
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="编辑">
+                    <IconButton size="small" onClick={() => openEdit(item)}>
+                      <EditIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="删除">
+                    <IconButton size="small" color="error" onClick={() => deleteAnnouncement(item.id, item.title)}>
+                      <DeleteOutlineIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </Stack>
+              </Paper>
+            ))}
+          </Stack>
+        ) : (
+          <EmptyState text="还没有发布公告。发布公告后，用户端将以弹窗卡片的形式展示。" />
+        )}
+      </Section>
+
+      <Dialog open={createOpen} onClose={() => setCreateOpen(false)} maxWidth="sm" fullWidth PaperProps={{ component: "form", onSubmit: (e) => { e.preventDefault(); createAnnouncement().catch((err) => onToast(err.message, "error")); } }}>
+        <DialogTitle>发布公告</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <TextField
+              label="标题"
+              value={form.title}
+              onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
+              placeholder="公告标题"
+              required
+              autoFocus
+            />
+            <TextField
+              label="内容"
+              value={form.content}
+              onChange={(e) => setForm((f) => ({ ...f, content: e.target.value }))}
+              placeholder="公告内容"
+              multiline
+              rows={4}
+              required
+            />
+            <FormControl fullWidth>
+              <InputLabel id="ann-type-label">类型</InputLabel>
+              <Select
+                labelId="ann-type-label"
+                value={form.type}
+                label="类型"
+                onChange={(e) => setForm((f) => ({ ...f, type: e.target.value }))}
+              >
+                <MenuItem value="info">信息</MenuItem>
+                <MenuItem value="warning">警告</MenuItem>
+                <MenuItem value="success">成功</MenuItem>
+                <MenuItem value="error">错误</MenuItem>
+              </Select>
+            </FormControl>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setCreateOpen(false)} color="inherit">取消</Button>
+          <Button type="submit" variant="contained" startIcon={<AddIcon />}>发布</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={editOpen} onClose={() => { setEditOpen(false); setEditing(null); }} maxWidth="sm" fullWidth PaperProps={{ component: "form", onSubmit: (e) => { e.preventDefault(); updateAnnouncement().catch((err) => onToast(err.message, "error")); } }}>
+        <DialogTitle>编辑公告</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <TextField
+              label="标题"
+              value={form.title}
+              onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
+              required
+            />
+            <TextField
+              label="内容"
+              value={form.content}
+              onChange={(e) => setForm((f) => ({ ...f, content: e.target.value }))}
+              multiline
+              rows={4}
+              required
+            />
+            <FormControl fullWidth>
+              <InputLabel id="ann-edit-type-label">类型</InputLabel>
+              <Select
+                labelId="ann-edit-type-label"
+                value={form.type}
+                label="类型"
+                onChange={(e) => setForm((f) => ({ ...f, type: e.target.value }))}
+              >
+                <MenuItem value="info">信息</MenuItem>
+                <MenuItem value="warning">警告</MenuItem>
+                <MenuItem value="success">成功</MenuItem>
+                <MenuItem value="error">错误</MenuItem>
+              </Select>
+            </FormControl>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => { setEditOpen(false); setEditing(null); }} color="inherit">取消</Button>
+          <Button type="submit" variant="contained" startIcon={<EditIcon />}>更新</Button>
+        </DialogActions>
+      </Dialog>
+    </>
+  );
+}
+
+function AnnouncementDialog({ announcement, onDismiss }) {
+  if (!announcement) return null;
+
+  const severityMap = {
+    info: "info",
+    warning: "warning",
+    success: "success",
+    error: "error"
+  };
+  const severity = severityMap[announcement.type] || "info";
+
+  return (
+    <Dialog open={Boolean(announcement)} onClose={onDismiss} maxWidth="sm" fullWidth>
+      <DialogTitle sx={{ pb: 1 }}>
+        <Stack direction="row" spacing={1} alignItems="center">
+          <CampaignOutlinedIcon color={severity} />
+          <Typography variant="h6" component="span" sx={{ fontWeight: 780 }}>
+            {announcement.title}
+          </Typography>
+        </Stack>
+      </DialogTitle>
+      <DialogContent>
+        <Alert severity={severity} variant="outlined" sx={{ whiteSpace: "pre-wrap" }}>
+          {announcement.content}
+        </Alert>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onDismiss} variant="contained">知道了</Button>
       </DialogActions>
     </Dialog>
   );
