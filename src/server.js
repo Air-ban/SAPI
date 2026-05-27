@@ -54,6 +54,21 @@ app.use((req, res, next) => {
     return;
   }
 
+  if (req.path.startsWith("/api/")) {
+    const startMs = Date.now();
+    res.on("finish", () => {
+      const duration = Date.now() - startMs;
+      const ok = res.statusCode < 400;
+      const ts = new Date().toLocaleString("zh-CN", { hour12: false });
+      const statusColor = ok ? C_GREEN : C_RED;
+      const statusLabel = ok ? "OK" : "FAIL";
+      console.log(
+        `${C_DIM}[${ts}]${C_RESET} ${C_CYAN}${req.method}${C_RESET} ${C_BOLD}${req.path}${C_RESET} ` +
+        `${statusColor}${C_BOLD}${res.statusCode} ${statusLabel}${C_RESET} ${C_DIM}${duration}ms${C_RESET}`
+      );
+    });
+  }
+
   next();
 });
 
@@ -135,6 +150,25 @@ function appendDebugLog(label, data) {
     fs.appendFileSync(
       path.join(__dirname, "..", "data", "fetch-debug.log"),
       `${new Date().toISOString()} ${label} ${JSON.stringify(data)}\n`
+    );
+  } catch {
+    // Ignore debug logging failures.
+  }
+}
+
+function appendDebugBodyLog(label, body) {
+  try {
+    const sanitized = JSON.parse(JSON.stringify(body || {}));
+    if (sanitized.messages) {
+      for (const msg of sanitized.messages) {
+        if (msg.content && typeof msg.content === "string" && msg.content.length > 200) {
+          msg.content = msg.content.slice(0, 200) + "...[truncated]";
+        }
+      }
+    }
+    fs.appendFileSync(
+      path.join(__dirname, "..", "data", "fetch-debug.log"),
+      `${new Date().toISOString()} ${label}.body ${JSON.stringify(sanitized)}\n`
     );
   } catch {
     // Ignore debug logging failures.
@@ -753,6 +787,53 @@ function trimStoredRecords(db, key, maxRecords = 50000) {
   }
 }
 
+const C_RESET = "\x1b[0m";
+const C_GREEN = "\x1b[32m";
+const C_RED = "\x1b[31m";
+const C_YELLOW = "\x1b[33m";
+const C_CYAN = "\x1b[36m";
+const C_DIM = "\x1b[2m";
+const C_BOLD = "\x1b[1m";
+
+function logRequestToTerminal({ method, endpoint, status, ok, stream, durationMs, userName, model, providerName, errorCode, errorMessage, promptTokens, completionTokens, finishReason }) {
+  const ts = new Date().toLocaleString("zh-CN", { hour12: false });
+  const statusColor = ok ? C_GREEN : C_RED;
+  const statusLabel = ok ? "OK" : "FAIL";
+  const methodStr = `${C_CYAN}${method || "?"}${C_RESET}`;
+  const endpointStr = `${C_BOLD}${endpoint || "?"}${C_RESET}`;
+  const statusStr = `${statusColor}${C_BOLD}${status || "?"} ${statusLabel}${C_RESET}`;
+  const durationStr = `${C_DIM}${durationMs || 0}ms${C_RESET}`;
+  const userStr = userName ? `${C_DIM}${userName}${C_RESET}` : "";
+  const modelStr = model ? `${C_YELLOW}${model}${C_RESET}` : "";
+  const providerStr = providerName ? `${C_DIM}via ${providerName}${C_RESET}` : "";
+  const streamStr = stream ? `${C_DIM}[stream]${C_RESET}` : "";
+  const tokenStr = (promptTokens || completionTokens) ? `${C_DIM}tokens=${promptTokens}+${completionTokens}${C_RESET}` : "";
+  const finishStr = finishReason ? `${C_YELLOW}finish=${finishReason}${C_RESET}` : "";
+
+  let reasonStr = "";
+  if (!ok) {
+    const reason = errorMessage || errorCode || `HTTP ${status}`;
+    reasonStr = ` ${C_RED}reason="${reason}"${C_RESET}`;
+  }
+
+  const parts = [
+    `${C_DIM}[${ts}]${C_RESET}`,
+    methodStr,
+    endpointStr,
+    statusStr,
+    durationStr,
+    userStr,
+    modelStr,
+    providerStr,
+    streamStr,
+    tokenStr,
+    finishStr,
+    reasonStr
+  ].filter(Boolean);
+
+  console.log(parts.join(" "));
+}
+
 function recordRequestLog({
   userId,
   userName,
@@ -772,7 +853,8 @@ function recordRequestLog({
   durationMs,
   usage,
   errorCode,
-  errorMessage
+  errorMessage,
+  finishReason
 }) {
   const normalized = normalizeUsage(usage) || {
     promptTokens: 0,
@@ -783,6 +865,15 @@ function recordRequestLog({
     cacheMissTokens: 0,
     reasoningTokens: 0
   };
+
+  logRequestToTerminal({
+    method, endpoint, status, ok, stream, durationMs,
+    userName: userName || username,
+    model, providerName, errorCode, errorMessage,
+    promptTokens: normalized.promptTokens,
+    completionTokens: normalized.completionTokens,
+    finishReason
+  });
 
   mutateDb((db) => {
     if (!Array.isArray(db.requestLogs)) db.requestLogs = [];
@@ -885,8 +976,8 @@ function convertAnthropicMessagesToOpenAI(messages) {
       const toolContent = typeof content === "string" ? content : extractTextFromContent(content);
       result.push({
         role: "tool",
-        tool_call_id: msg.tool_use_id || "",
-        content: toolContent
+        tool_call_id: msg.tool_use_id || msg.tool_call_id || "",
+        content: toolContent || ""
       });
       continue;
     }
@@ -895,7 +986,7 @@ function convertAnthropicMessagesToOpenAI(messages) {
       const textParts = [];
       const reasoningParts = [];
       const toolUseBlocks = [];
-      const toolResultMessages = [];
+      const toolResultItems = [];
 
       for (const block of content) {
         if (!block || typeof block !== "object") continue;
@@ -913,13 +1004,22 @@ function convertAnthropicMessagesToOpenAI(messages) {
             }
           });
         } else if (blockType === "tool_result") {
-          const resultText = typeof block.content === "string"
-            ? block.content
-            : extractTextFromContent(block.content);
-          toolResultMessages.push({
+          let resultText = "";
+          if (typeof block.content === "string") {
+            resultText = block.content;
+          } else if (Array.isArray(block.content)) {
+            resultText = block.content
+              .filter((b) => b && (b.type === "text" || b.type === "input_text"))
+              .map((b) => b.text || "")
+              .filter(Boolean)
+              .join("\n");
+          } else if (block.content && typeof block.content === "object") {
+            resultText = extractTextFromContent(block.content);
+          }
+          toolResultItems.push({
             role: "tool",
             tool_call_id: block.tool_use_id || "",
-            content: resultText
+            content: resultText || ""
           });
         } else if (blockType === "image") {
           textParts.push("[image]");
@@ -933,23 +1033,64 @@ function convertAnthropicMessagesToOpenAI(messages) {
         const joinedText = textParts.join("\n");
         const joinedReasoning = reasoningParts.join("\n");
         if (joinedReasoning) assistantMsg.reasoning_content = joinedReasoning;
-        if (joinedText) assistantMsg.content = joinedText;
-        if (toolUseBlocks.length > 0) assistantMsg.tool_calls = toolUseBlocks;
-        if (assistantMsg.content || assistantMsg.tool_calls || assistantMsg.reasoning_content) result.push(assistantMsg);
-      } else {
-        if (textParts.length > 0) {
-          result.push({ role, content: textParts.join("\n") });
+        if (toolUseBlocks.length > 0) {
+          assistantMsg.tool_calls = toolUseBlocks;
+          assistantMsg.content = joinedText || null;
+        } else if (joinedText) {
+          assistantMsg.content = joinedText;
         }
-      }
-
-      for (const tr of toolResultMessages) {
-        result.push(tr);
+        if (assistantMsg.content !== undefined || assistantMsg.tool_calls || assistantMsg.reasoning_content) {
+          result.push(assistantMsg);
+        }
+      } else {
+        if (toolResultItems.length > 0) {
+          for (const tr of toolResultItems) {
+            result.push(tr);
+          }
+        }
+        if (textParts.length > 0) {
+          result.push({ role: "user", content: textParts.join("\n") });
+        }
       }
     } else if (typeof content === "string") {
       result.push({ role, content });
     }
   }
 
+  return result;
+}
+
+function sanitizeToolSchema(schema) {
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+    return { type: "object", properties: {} };
+  }
+  const result = {};
+  const allowedRootKeys = new Set(["type", "properties", "required", "description", "enum", "items", "anyOf", "oneOf", "allOf", "default", "nullable", "title"]);
+  const allowedPropertyKeys = new Set(["type", "description", "enum", "items", "anyOf", "oneOf", "allOf", "properties", "required", "default", "nullable", "title"]);
+
+  for (const [key, value] of Object.entries(schema)) {
+    if (!allowedRootKeys.has(key)) continue;
+    if (key === "properties" && value && typeof value === "object") {
+      result.properties = {};
+      for (const [propKey, propValue] of Object.entries(value)) {
+        if (!propValue || typeof propValue !== "object") continue;
+        const cleanProp = {};
+        for (const [pk, pv] of Object.entries(propValue)) {
+          if (allowedPropertyKeys.has(pk)) cleanProp[pk] = pv;
+        }
+        if (Object.keys(cleanProp).length > 0) {
+          result.properties[propKey] = cleanProp;
+        }
+      }
+    } else if (key === "required" && Array.isArray(value)) {
+      result.required = value.filter((r) => typeof r === "string");
+    } else {
+      result[key] = value;
+    }
+  }
+
+  if (!result.type) result.type = "object";
+  if (!result.properties) result.properties = {};
   return result;
 }
 
@@ -960,14 +1101,13 @@ function convertAnthropicToolsToOpenAI(tools) {
       if (!tool || typeof tool !== "object") return null;
       const name = tool.name || "";
       if (!name) return null;
+      const parameters = sanitizeToolSchema(tool.input_schema);
       return {
         type: "function",
         function: {
           name,
           description: tool.description || "",
-          parameters: tool.input_schema && typeof tool.input_schema === "object"
-            ? tool.input_schema
-            : { type: "object", properties: {} }
+          parameters
         }
       };
     })
@@ -1005,6 +1145,7 @@ function anthropicToOpenAI(body = {}) {
   }
   if (body.max_tokens !== undefined && body.max_tokens !== null) {
     payload.max_tokens = body.max_tokens;
+    payload.max_completion_tokens = body.max_tokens;
   }
   if (body.temperature !== undefined && body.temperature !== null) {
     payload.temperature = body.temperature;
@@ -1138,12 +1279,13 @@ function openAIToAnthropicDeltaStreaming(payload) {
 
   if (Array.isArray(delta.tool_calls)) {
     for (const tc of delta.tool_calls) {
-      const idx = (tc.index || 0) + 1;
+      const upstreamIndex = tc.index || 0;
       if (tc.function?.name) {
         events.push({
           _toolStart: true,
+          _upstreamIndex: upstreamIndex,
           type: "content_block_start",
-          index: idx,
+          index: 0,
           content_block: {
             type: "tool_use",
             id: tc.id || generateId("toolu"),
@@ -1154,8 +1296,9 @@ function openAIToAnthropicDeltaStreaming(payload) {
       }
       if (tc.function?.arguments) {
         events.push({
+          _upstreamIndex: upstreamIndex,
           type: "content_block_delta",
-          index: idx,
+          index: 0,
           delta: {
             type: "input_json_delta",
             partial_json: tc.function.arguments
@@ -1694,6 +1837,7 @@ async function handleResponsesProxy(req, res) {
         method: "POST",
         bodyLength: Buffer.byteLength(JSON.stringify(responseRequest.payload), "utf8")
       });
+      appendDebugBodyLog("responses", responseRequest.payload);
       upstreamResponse = await fetch(upstreamUrl, {
         method: "POST",
         headers,
@@ -2201,8 +2345,12 @@ async function handleAnthropicMessagesProxy(req, res) {
       appendDebugLog("anthropic.request", {
         url: upstreamUrl,
         method: "POST",
-        bodyLength: Buffer.byteLength(JSON.stringify(openAIBody), "utf8")
+        bodyLength: Buffer.byteLength(JSON.stringify(openAIBody), "utf8"),
+        tools: openAIBody.tools?.length || 0,
+        toolChoice: openAIBody.tool_choice,
+        hasThinking: openAIBody.messages?.some((m) => m.reasoning_content) || false
       });
+      appendDebugBodyLog("anthropic", openAIBody);
       upstreamResponse = await fetch(upstreamUrl, {
         method: "POST",
         headers,
@@ -2358,23 +2506,8 @@ async function handleAnthropicMessagesProxy(req, res) {
     let nextContentIndex = 0;
     let thinkingBlockIndex = -1;
     let textBlockIndex = -1;
-    let openToolIndex = -1;
+    const toolIndexMap = {};
     const toolArgBuffers = {};
-
-    const closeOpenBlock = () => {
-      if (openToolIndex >= 0) {
-        writeEvent("content_block_stop", { type: "content_block_stop", index: openToolIndex });
-        openToolIndex = -1;
-      }
-      if (textBlockIndex >= 0) {
-        writeEvent("content_block_stop", { type: "content_block_stop", index: textBlockIndex });
-        textBlockIndex = -1;
-      }
-      if (thinkingBlockIndex >= 0) {
-        writeEvent("content_block_stop", { type: "content_block_stop", index: thinkingBlockIndex });
-        thinkingBlockIndex = -1;
-      }
-    };
 
     const processData = (data) => {
       const trimmed = String(data || "").trim();
@@ -2384,28 +2517,47 @@ async function handleAnthropicMessagesProxy(req, res) {
       try { payload = JSON.parse(trimmed); } catch { return; }
 
       const extracted = extractChatCompletionText(payload);
-      if (extracted.finishReason) finishReason = extracted.finishReason;
+      if (extracted.finishReason) {
+        const choice = (Array.isArray(payload.choices) ? payload.choices : [])[0] || {};
+        const delta = choice.delta || {};
+        const hasContentDelta =
+          (delta.content !== undefined && delta.content !== null && delta.content !== "") ||
+          (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0) ||
+          (delta.reasoning_content !== undefined && delta.reasoning_content !== null && delta.reasoning_content !== "");
+        if (!hasContentDelta) {
+          finishReason = extracted.finishReason;
+        }
+      }
       if (extracted.usage) usagePayload = extracted.usage;
 
       const events = openAIToAnthropicDeltaStreaming(payload);
+      if (events.length > 0) {
+        appendDebugLog("anthropic.stream.events", { count: events.length, types: events.map((e) => e._toolStart ? "toolStart" : e.delta?.type || "unknown") });
+      }
       for (const ev of events) {
         if (ev._toolStart) {
-          if (openToolIndex >= 0) {
-            writeEvent("content_block_stop", { type: "content_block_stop", index: openToolIndex });
-            openToolIndex = -1;
+          const upIdx = ev._upstreamIndex;
+          if (toolIndexMap[upIdx] === undefined) {
+            const outIdx = nextContentIndex++;
+            toolIndexMap[upIdx] = outIdx;
+            toolArgBuffers[upIdx] = "";
+            writeEvent("content_block_start", {
+              type: "content_block_start",
+              index: outIdx,
+              content_block: ev.content_block
+            });
           }
-          const toolIdx = nextContentIndex++;
-          toolArgBuffers[toolIdx] = "";
-          openToolIndex = toolIdx;
-          writeEvent("content_block_start", {
-            type: "content_block_start",
-            index: toolIdx,
-            content_block: ev.content_block
-          });
         } else if (ev.delta?.type === "input_json_delta") {
-          const toolIdx = openToolIndex >= 0 ? openToolIndex : 0;
-          if (!toolArgBuffers[toolIdx]) toolArgBuffers[toolIdx] = "";
-          toolArgBuffers[toolIdx] += ev.delta.partial_json || "";
+          const upIdx = ev._upstreamIndex ?? 0;
+          if (toolIndexMap[upIdx] !== undefined) {
+            if (!toolArgBuffers[upIdx]) toolArgBuffers[upIdx] = "";
+            toolArgBuffers[upIdx] += ev.delta.partial_json || "";
+            writeEvent("content_block_delta", {
+              type: "content_block_delta",
+              index: toolIndexMap[upIdx],
+              delta: { type: "input_json_delta", partial_json: ev.delta.partial_json }
+            });
+          }
         } else if (ev.delta?.type === "thinking_delta") {
           if (thinkingBlockIndex < 0) {
             thinkingBlockIndex = nextContentIndex++;
@@ -2443,11 +2595,16 @@ async function handleAnthropicMessagesProxy(req, res) {
       }
     };
 
+    let chunkCount = 0;
     try {
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
-        if (!value) continue;
+        if (done) {
+          appendDebugLog("anthropic.stream.done", { chunks: chunkCount, finishReason, outputTextLength: outputText.length });
+          break;
+        }
+        if (!value || value.length === 0) continue;
+        chunkCount += 1;
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split(/\r?\n/);
@@ -2486,29 +2643,48 @@ async function handleAnthropicMessagesProxy(req, res) {
       reader.releaseLock();
     }
 
-    if (openToolIndex >= 0) {
-      writeEvent("content_block_stop", { type: "content_block_stop", index: openToolIndex });
-      openToolIndex = -1;
+    appendDebugLog("anthropic.stream.cleanup", {
+      toolBlocks: Object.keys(toolIndexMap).length,
+      textBlockOpen: textBlockIndex >= 0,
+      thinkingBlockOpen: thinkingBlockIndex >= 0,
+      finishReason,
+      outputTextLength: outputText.length
+    });
+
+    for (const [upIdx, outIdx] of Object.entries(toolIndexMap)) {
+      writeEvent("content_block_stop", { type: "content_block_stop", index: outIdx });
     }
 
     if (textBlockIndex >= 0) {
       writeEvent("content_block_stop", { type: "content_block_stop", index: textBlockIndex });
-      textBlockIndex = -1;
-    } else if (thinkingBlockIndex >= 0) {
-      writeEvent("content_block_stop", { type: "content_block_stop", index: thinkingBlockIndex });
-      thinkingBlockIndex = -1;
-    } else if (nextContentIndex === 0) {
+    } else {
+      if (thinkingBlockIndex >= 0) {
+        writeEvent("content_block_stop", { type: "content_block_stop", index: thinkingBlockIndex });
+        thinkingBlockIndex = -1;
+      }
+      const textIdx = nextContentIndex++;
       writeEvent("content_block_start", {
         type: "content_block_start",
-        index: 0,
+        index: textIdx,
         content_block: { type: "text", text: "" }
       });
-      writeEvent("content_block_stop", { type: "content_block_stop", index: 0 });
+      writeEvent("content_block_stop", { type: "content_block_stop", index: textIdx });
     }
 
     const stopReason = finishReason === "tool_calls" ? "tool_use"
       : finishReason === "length" ? "max_tokens"
       : "end_turn";
+
+    if (outputText.length < 100 && stopReason === "end_turn" && !finishReason) {
+      appendDebugLog("anthropic.stream.short", {
+        outputTextLength: outputText.length,
+        outputText: outputText.slice(0, 200),
+        chunks: chunkCount,
+        finishReason,
+        stopReason
+      });
+    }
+
     const normalized = normalizeUsage(usagePayload);
     writeEvent("message_delta", {
       type: "message_delta",
@@ -2534,7 +2710,8 @@ async function handleAnthropicMessagesProxy(req, res) {
       ok: true,
       stream: true,
       durationMs: Date.now() - startedAt,
-      usage: usagePayload
+      usage: usagePayload,
+      finishReason
     });
     recordProviderSuccess(provider.id);
     res.end();
@@ -2544,7 +2721,15 @@ async function handleAnthropicMessagesProxy(req, res) {
       name: error.name,
       code: error.code,
       causeCode: error.cause?.code,
-      causeMessage: error.cause?.message
+      causeMessage: error.cause?.message,
+      streamState: {
+        chunksReceived: chunkCount,
+        outputTextLength: outputText.length,
+        finishReason,
+        textBlockOpen: textBlockIndex >= 0,
+        thinkingBlockOpen: thinkingBlockIndex >= 0,
+        toolBlocksOpen: Object.keys(toolIndexMap).length
+      }
     });
     console.error("[anthropic] upstream fetch failed", {
       message: error.message,
@@ -2570,11 +2755,12 @@ async function handleAnthropicMessagesProxy(req, res) {
       method: "POST",
       status: 502,
       ok: false,
-      stream: wantStream,
+      stream: true,
       durationMs: Date.now() - startedAt,
       usage: null,
       errorCode: "upstream_request_failed",
-      errorMessage: error.message
+      errorMessage: error.message,
+      finishReason
     });
     recordProviderFailure(provider.id);
     sendAnthropicError(res, 502, "api_error", `Upstream provider request failed: ${error.message}`);
@@ -2636,10 +2822,12 @@ async function proxyToProvider(req, res) {
         method: req.method,
         bodyLength: Buffer.byteLength(buildUpstreamBody(req, upstreamModel) || "", "utf8")
       });
+      const upstreamBody = buildUpstreamBody(req, upstreamModel);
+      if (upstreamBody) appendDebugBodyLog("proxy", JSON.parse(upstreamBody));
       const upstreamResponse = await fetch(upstreamUrl, {
         method: req.method,
         headers,
-        body: buildUpstreamBody(req, upstreamModel)
+        body: upstreamBody
       });
 
       if (!upstreamResponse.ok) {
