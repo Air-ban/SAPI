@@ -214,14 +214,18 @@ function redactProvider(provider) {
 function normalizeModel(item) {
   if (item && typeof item === "object") {
     const id = String(item.id || item.name || "").trim();
+    const cliSupport = Array.isArray(item.cliSupport)
+      ? item.cliSupport.map((c) => String(c || "").trim()).filter(Boolean)
+      : [];
     return {
       id,
       name: String(item.name || id || "").trim(),
-      description: String(item.description || "").trim()
+      description: String(item.description || "").trim(),
+      cliSupport
     };
   }
   const id = String(item || "").trim();
-  return { id, name: id, description: "" };
+  return { id, name: id, description: "", cliSupport: [] };
 }
 
 function normalizeModels(value) {

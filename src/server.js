@@ -336,7 +336,7 @@ function serviceConfig() {
     }
     for (const [customId, upstreamId] of Object.entries(provider.modelMappings || {})) {
       if (customId && upstreamId) {
-        modelMap.set(customId, { id: customId, name: customId, description: "" });
+        modelMap.set(customId, { id: customId, name: customId, description: "", cliSupport: [] });
       }
     }
   }
@@ -4363,7 +4363,7 @@ app.get("/v1/models", (req, res) => {
     }
     for (const [customId, upstreamId] of Object.entries(provider.modelMappings || {})) {
       if (customId && upstreamId) {
-        modelMap.set(customId, { id: customId, name: customId });
+        modelMap.set(customId, { id: customId, name: customId, cliSupport: [] });
       }
     }
   }
@@ -4382,7 +4382,8 @@ app.get("/v1/models", (req, res) => {
       object: "model",
       created: 0,
       owned_by: "sapi",
-      name: model.name || model.id
+      name: model.name || model.id,
+      cli_support: model.cliSupport || []
     }))
   });
 });
