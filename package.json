@@ -2,7 +2,7 @@
   "name": "sapi",
   "version": "0.1.0",
   "private": true,
-  "description": "SAPI - a lightweight LLM API relay with admin-managed upstream APIs and user-facing API keys.",
+  "description": "HanGuan's SuperAPI - a lightweight LLM API relay with admin-managed upstream APIs and user-facing API keys.",
   "main": "src/server.js",
   "scripts": {
     "build": "vite build",

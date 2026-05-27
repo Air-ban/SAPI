@@ -639,7 +639,7 @@ function App() {
               <MenuIcon />
             </IconButton>
             <Typography variant="h6" sx={{ ml: 1 }}>
-              SAPI
+              HanGuan's SuperAPI
             </Typography>
           </Toolbar>
         </AppBar>
@@ -791,22 +791,19 @@ function HomePage({ health, user, admin, announcements, onNavigate, onLogout }) 
       >
         <Stack direction="row" spacing={1.2} alignItems="center">
           <Box
+            component="img"
+            src="https://hanguasapi.oss-cn-beijing.aliyuncs.com/%E5%9B%BE%E7%89%87-removebg-preview.png"
+            alt="HanGuan's SuperAPI"
             sx={{
               width: 38,
               height: 38,
               borderRadius: 1,
-              display: "grid",
-              placeItems: "center",
-              bgcolor: "primary.main",
-              color: "primary.contrastText",
-              fontWeight: 900
+              objectFit: "contain"
             }}
-          >
-            S
-          </Box>
+          />
           <Box>
             <Typography variant="h6" sx={{ lineHeight: 1 }}>
-              SAPI
+              HanGuan's SuperAPI
             </Typography>
             <Typography variant="caption" color="text.secondary">
               LLM API Relay
@@ -986,7 +983,7 @@ function HomePage({ health, user, admin, announcements, onNavigate, onLogout }) 
         <Stack spacing={5}>
           <Box sx={{ textAlign: "center" }}>
             <Typography variant="h4" sx={{ fontWeight: 820, mb: 1 }}>
-              为什么选择 SAPI
+              为什么选择 HanGuan's SuperAPI
             </Typography>
             <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 560, mx: "auto" }}>
               专为高校师生打造的 LLM API 聚合平台，开箱即用
@@ -1090,7 +1087,7 @@ function HomePage({ health, user, admin, announcements, onNavigate, onLogout }) 
         }}
       >
         <Typography variant="body2">
-          SAPI - LLM API Relay · 对大学生免费开放
+          HanGuan's SuperAPI · 对大学生免费开放
         </Typography>
       </Box>
     </Box>
@@ -1477,12 +1474,12 @@ function AuthPage({
               </Box>
               <Box>
                 <Typography variant="h5">
-                  {isRegister ? "注册 SAPI 账号" : "登录 SAPI"}
+                  {isRegister ? "注册 HanGuan's SuperAPI 账号" : "登录 HanGuan's SuperAPI"}
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                   {isRegister
                     ? "注册后进入用户控制台，自助创建 API Key。"
-                    : "登录 SAPI 用户控制台。"}
+                    : "登录 HanGuan's SuperAPI 用户控制台。"}
                 </Typography>
               </Box>
             </Stack>
@@ -1733,23 +1730,19 @@ function Sidebar({
     <Stack sx={{ height: "100%", p: 2.25, overflow: "auto" }} spacing={2.5}>
       <Stack direction="row" spacing={1.5} alignItems="center">
         <Box
+          component="img"
+          src="https://hanguasapi.oss-cn-beijing.aliyuncs.com/%E5%9B%BE%E7%89%87-removebg-preview.png"
+          alt="HanGuan's SuperAPI"
           sx={{
             width: 44,
             height: 44,
             borderRadius: 1,
-            display: "grid",
-            placeItems: "center",
-            bgcolor: "#d7fff8",
-            color: "#0f4d49",
-            fontWeight: 900,
-            fontSize: 20
+            objectFit: "contain"
           }}
-        >
-          S
-        </Box>
+        />
         <Box>
           <Typography variant="h6" sx={{ lineHeight: 1.1 }}>
-            SAPI
+            HanGuan's SuperAPI
           </Typography>
           <Typography variant="caption" sx={{ color: "#aab7c4" }}>
             LLM API Relay
@@ -1965,7 +1958,7 @@ function PortalView({
     : "overview";
   const pageMeta = {
     overview: { title: "可调用 API", description: "API Key、模型和端点摘要。" },
-    key: { title: "API Key", description: "管理你的 SAPI 调用密钥。" },
+    key: { title: "API Key", description: "管理你的 HanGuan's SuperAPI 调用密钥。" },
     usage: { title: "请求与用量", description: "查看 Token 用量和请求记录。" },
     models: { title: "模型与端点", description: "查看当前可用模型和 OpenAI 兼容端点。" },
     example: { title: "调用示例", description: "复制可直接执行的 curl 请求。" }
@@ -2114,7 +2107,7 @@ function PortalView({
                     </Button>
                   }
                 >
-                  你还没有 API Key。创建后即可调用 SAPI 的 /v1 接口。
+                  你还没有 API Key。创建后即可调用 HanGuan's SuperAPI 的 /v1 接口。
                 </Alert>
               )}
             </Stack>
@@ -2429,12 +2422,12 @@ function DownloadConfigDialog({ open, onClose, baseUrl, apiKeys, defaultKey, mod
     "echo SUCCESS: Custom configuration written to settings.json!",
     `echo Redirected to ${endpoint} successfully.`,
     "",
-    "mshta vbscript:msgbox(\"Configuration completed successfully! Claude Code has been configured.\",64,\"SAPI Configurator\")(window.close)",
+    "mshta vbscript:msgbox(\"Configuration completed successfully! Claude Code has been configured.\",64,\"HanGuan's SuperAPI Configurator\")(window.close)",
     "goto END",
     "",
     ":FAIL",
     "echo ERROR: Claude Code not found.",
-    "mshta vbscript:msgbox(\"Error: Claude Code is not installed. Please install it first.\",16,\"SAPI Configurator\")(window.close)",
+    "mshta vbscript:msgbox(\"Error: Claude Code is not installed. Please install it first.\",16,\"HanGuan's SuperAPI Configurator\")(window.close)",
     "",
     ":END",
     "echo ==================================================",
@@ -2488,12 +2481,12 @@ function DownloadConfigDialog({ open, onClose, baseUrl, apiKeys, defaultKey, mod
     "echo SUCCESS: Custom configuration and auth token written!",
     "echo Configuration completed.",
     "",
-    "mshta vbscript:msgbox(\"Configuration completed successfully! config.toml and auth.json have been generated in .codex folder.\",64,\"SAPI Configurator\")(window.close)",
+    "mshta vbscript:msgbox(\"Configuration completed successfully! config.toml and auth.json have been generated in .codex folder.\",64,\"HanGuan's SuperAPI Configurator\")(window.close)",
     "goto END",
     "",
     ":FAIL",
     "echo ERROR: Codex not found.",
-    "mshta vbscript:msgbox(\"Error: Codex is not installed. Please install it first.\",16,\"SAPI Configurator\")(window.close)",
+    "mshta vbscript:msgbox(\"Error: Codex is not installed. Please install it first.\",16,\"HanGuan's SuperAPI Configurator\")(window.close)",
     "",
     ":END",
     "echo ==================================================",
