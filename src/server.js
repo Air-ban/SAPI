@@ -405,6 +405,7 @@ function sanitizeApiKeyRecord(record, includeKey = true) {
     preview: maskKey(key),
     enabled: record?.enabled !== false,
     allowedModels: Array.isArray(record?.allowedModels) ? record.allowedModels : [],
+    rpmLimit: typeof record?.rpmLimit === "number" ? record.rpmLimit : 0,
     createdAt: record?.createdAt || "",
     updatedAt: record?.updatedAt || "",
     lastUsedAt: record?.lastUsedAt || ""
@@ -1158,6 +1159,59 @@ function isModelAllowed(apiKeyRecord, model) {
   const modelId = String(model || "").trim();
   if (!modelId) return true;
   return allowed.some((item) => String(item || "").trim() === modelId);
+}
+
+const rpmWindows = new Map();
+
+function getRpmLimit(apiKeyRecord, db) {
+  if (typeof apiKeyRecord?.rpmLimit === "number" && apiKeyRecord.rpmLimit > 0) {
+    return apiKeyRecord.rpmLimit;
+  }
+  return typeof db?.defaultRpmLimit === "number" && db.defaultRpmLimit > 0 ? db.defaultRpmLimit : 30;
+}
+
+function checkMaintenanceMode(db, res) {
+  if (db.maintenanceMode) {
+    const endTime = db.maintenanceEndTime || "";
+    const msg = endTime
+      ? `站点维护中，预计 ${new Date(endTime).toLocaleString("zh-CN")} 恢复。`
+      : "站点维护中，请稍后重试。";
+    sendError(res, 503, msg, "maintenance_mode");
+    return true;
+  }
+  return false;
+}
+
+function checkRpmLimit(apiKeyRecord, db) {
+  const limit = getRpmLimit(apiKeyRecord, db);
+  const key = apiKeyRecord?.key || "";
+  if (!key || limit <= 0) return { allowed: true, limit, current: 0 };
+
+  const now = Date.now();
+  const windowStart = now - 60 * 1000;
+
+  let timestamps = rpmWindows.get(key);
+  if (!timestamps) {
+    timestamps = [];
+    rpmWindows.set(key, timestamps);
+  }
+
+  // Clean old entries
+  const cutoffIndex = timestamps.findIndex((t) => t >= windowStart);
+  if (cutoffIndex > 0) {
+    timestamps.splice(0, cutoffIndex);
+  } else if (cutoffIndex === -1) {
+    timestamps.length = 0;
+  }
+
+
+
+  if (timestamps.length >= limit) {
+    return { allowed: false, limit, current: timestamps.length };
+  }
+
+  timestamps.push(now);
+  return { allowed: true, limit, current: timestamps.length };
 }
 
 function generateTimestamp() {
@@ -2027,11 +2081,19 @@ async function handleResponsesProxy(req, res) {
     return;
   }
 
+  if (checkMaintenanceMode(db, res)) return;
+
   const responseRequest = convertToChatCompletionsPayload(req.body || {});
   const model = responseRequest.payload.model;
 
   if (model && !isModelAllowed(apiKeyRecord, model)) {
     sendError(res, 403, `Model "${model}" is not allowed for this API key.`, "model_not_allowed");
+    return;
+  }
+
+  const rpmCheck = checkRpmLimit(apiKeyRecord, db);
+  if (!rpmCheck.allowed) {
+    sendError(res, 429, `Rate limit exceeded: ${rpmCheck.current}/${rpmCheck.limit} RPM.`, "rate_limit_exceeded");
     return;
   }
 
@@ -2578,15 +2640,23 @@ async function handleAnthropicCountTokens(req, res) {
     return;
   }
 
-  const { user, apiKeyRecord } = findUserByKey(apiKey);
+  const { db, user, apiKeyRecord } = findUserByKey(apiKey);
   if (!user) {
     sendAnthropicError(res, 401, "authentication_error", "Invalid or disabled SAPI API key.");
     return;
   }
 
+  if (checkMaintenanceMode(db, res)) return;
+
   const model = req.body?.model || "";
   if (model && !isModelAllowed(apiKeyRecord, model)) {
     sendAnthropicError(res, 403, "permission_error", `Model "${model}" is not allowed for this API key.`);
+    return;
+  }
+
+  const rpmCheck = checkRpmLimit(apiKeyRecord, db);
+  if (!rpmCheck.allowed) {
+    sendAnthropicError(res, 429, "rate_limit_error", `Rate limit exceeded: ${rpmCheck.current}/${rpmCheck.limit} RPM.`);
     return;
   }
 
@@ -2607,9 +2677,17 @@ async function handleAnthropicMessagesProxy(req, res) {
     return;
   }
 
+  if (checkMaintenanceMode(db, res)) return;
+
   const model = req.body?.model || "";
   if (model && !isModelAllowed(apiKeyRecord, model)) {
     sendAnthropicError(res, 403, "permission_error", `Model "${model}" is not allowed for this API key.`);
+    return;
+  }
+
+  const rpmCheck = checkRpmLimit(apiKeyRecord, db);
+  if (!rpmCheck.allowed) {
+    sendAnthropicError(res, 429, "rate_limit_error", `Rate limit exceeded: ${rpmCheck.current}/${rpmCheck.limit} RPM.`);
     return;
   }
 
@@ -3088,9 +3166,17 @@ async function proxyToProvider(req, res) {
     return;
   }
 
+  if (checkMaintenanceMode(db, res)) return;
+
   const model = req.body?.model || "";
   if (model && !isModelAllowed(apiKeyRecord, model)) {
     sendError(res, 403, `Model "${model}" is not allowed for this API key.`, "model_not_allowed");
+    return;
+  }
+
+  const rpmCheck = checkRpmLimit(apiKeyRecord, db);
+  if (!rpmCheck.allowed) {
+    sendError(res, 429, `Rate limit exceeded: ${rpmCheck.current}/${rpmCheck.limit} RPM.`, "rate_limit_exceeded");
     return;
   }
 
@@ -3765,7 +3851,7 @@ app.get("/api/user/me", requireUserAccount, (req, res) => {
   res.json({ user: sanitizeUser(req.user), config: serviceConfig() });
 });
 
-function createUserApiKeyRecord(user, name = "", allowedModels = []) {
+function createUserApiKeyRecord(user, name = "", allowedModels = [], rpmLimit = 0) {
   const createdAt = now();
   const apiKeys = getApiKeys(user);
   const record = {
@@ -3774,6 +3860,7 @@ function createUserApiKeyRecord(user, name = "", allowedModels = []) {
     key: randomApiKey(),
     enabled: true,
     allowedModels: Array.isArray(allowedModels) ? allowedModels : [],
+    rpmLimit: Number.isFinite(rpmLimit) && rpmLimit > 0 ? Math.floor(rpmLimit) : 0,
     createdAt,
     updatedAt: createdAt,
     lastUsedAt: ""
@@ -3789,10 +3876,11 @@ function createUserApiKeyRecord(user, name = "", allowedModels = []) {
 app.post("/api/user/api-key", requireUserAccount, (req, res) => {
   const name = String(req.body?.name || "").trim();
   const allowedModels = Array.isArray(req.body?.allowedModels) ? req.body.allowedModels : [];
+  const rpmLimit = Number(req.body?.rpmLimit) || 0;
   const updated = mutateDb((db) => {
     const user = db.users.find((item) => item.id === req.user.id);
     if (!user) return null;
-    createUserApiKeyRecord(user, name, allowedModels);
+    createUserApiKeyRecord(user, name, allowedModels, rpmLimit);
     return user;
   });
 
@@ -3871,6 +3959,10 @@ app.put("/api/user/api-keys/:id", requireUserAccount, (req, res) => {
     }
     if (req.body?.allowedModels !== undefined) {
       target.allowedModels = Array.isArray(req.body.allowedModels) ? req.body.allowedModels : [];
+    }
+    if (req.body?.rpmLimit !== undefined) {
+      const rpmLimit = Number(req.body.rpmLimit);
+      target.rpmLimit = Number.isFinite(rpmLimit) && rpmLimit > 0 ? Math.floor(rpmLimit) : 0;
     }
     const updatedAt = now();
     target.updatedAt = updatedAt;
@@ -4405,7 +4497,11 @@ app.get("/api/admin/state", requireAdmin, (req, res) => {
     invitationCodes: db.invitationCodes || [],
     announcements: db.announcements || [],
     suggestions: db.suggestions || [],
+    siteBanner: db.siteBanner || { content: "", updatedAt: "" },
+    maintenanceMode: Boolean(db.maintenanceMode),
+    maintenanceEndTime: db.maintenanceEndTime || "",
     siteEmail: db.siteEmail || "",
+    defaultRpmLimit: typeof db.defaultRpmLimit === "number" ? db.defaultRpmLimit : 30,
     smtpConfig: {
       host: smtp.host,
       port: smtp.port,
@@ -4414,6 +4510,54 @@ app.get("/api/admin/state", requireAdmin, (req, res) => {
       from: smtp.from,
       hasPass: Boolean(smtp.pass)
     }
+  });
+});
+
+app.put("/api/admin/rpm-limit", requireAdmin, (req, res) => {
+  const limit = Number(req.body?.defaultRpmLimit);
+  if (!Number.isFinite(limit) || limit < 1) {
+    sendError(res, 400, "RPM limit must be a positive number.", "invalid_rpm_limit");
+    return;
+  }
+  mutateDb((db) => {
+    db.defaultRpmLimit = Math.floor(limit);
+  });
+  res.json({ defaultRpmLimit: Math.floor(limit) });
+});
+
+app.get("/api/banner", (req, res) => {
+  const db = readDb();
+  res.json(db.siteBanner || { content: "", updatedAt: "" });
+});
+
+app.put("/api/admin/banner", requireAdmin, (req, res) => {
+  const content = String(req.body?.content || "").trim();
+  const updatedAt = now();
+  mutateDb((db) => {
+    db.siteBanner = { content, updatedAt };
+  });
+  res.json({ content, updatedAt });
+});
+
+app.get("/api/maintenance", (req, res) => {
+  const db = readDb();
+  res.json({
+    maintenanceMode: Boolean(db.maintenanceMode),
+    maintenanceEndTime: db.maintenanceEndTime || ""
+  });
+});
+
+app.put("/api/admin/maintenance", requireAdmin, (req, res) => {
+  const enabled = Boolean(req.body?.maintenanceMode);
+  const endTime = String(req.body?.maintenanceEndTime || "").trim();
+  mutateDb((db) => {
+    db.maintenanceMode = enabled;
+    if (endTime) db.maintenanceEndTime = endTime;
+    if (!enabled) db.maintenanceEndTime = "";
+  });
+  res.json({
+    maintenanceMode: enabled,
+    maintenanceEndTime: endTime || ""
   });
 });
 
@@ -4580,6 +4724,33 @@ app.delete("/api/admin/users/:id", requireAdmin, (req, res) => {
   res.status(204).end();
 });
 
+app.put("/api/admin/users/:userId/api-keys/:keyId", requireAdmin, (req, res) => {
+  const updated = mutateDb((db) => {
+    const user = db.users.find((item) => item.id === req.params.userId);
+    if (!user) return null;
+    const target = getApiKeys(user).find((item) => item.id === req.params.keyId);
+    if (!target) return false;
+
+    if (req.body?.rpmLimit !== undefined) {
+      const rpmLimit = Number(req.body.rpmLimit);
+      target.rpmLimit = Number.isFinite(rpmLimit) && rpmLimit > 0 ? Math.floor(rpmLimit) : 0;
+    }
+    target.updatedAt = now();
+    return user;
+  });
+
+  if (updated === false) {
+    sendError(res, 404, "API key not found.", "not_found");
+    return;
+  }
+  if (!updated) {
+    sendError(res, 404, "User not found.", "not_found");
+    return;
+  }
+
+  res.json(sanitizeUser(updated));
+});
+
 app.put("/api/admin/users/:id/password", requireAdmin, (req, res) => {
   const newPassword = String(req.body?.password || "");
   if (newPassword.length < 8) {
@@ -4727,6 +4898,14 @@ function handleModelsList(req, res) {
   const { db, user, apiKeyRecord } = findUserByKey(apiKey);
   if (!user) {
     sendError(res, 401, "Invalid or disabled SAPI API key.", "invalid_api_key");
+    return;
+  }
+
+  if (checkMaintenanceMode(db, res)) return;
+
+  const rpmCheck = checkRpmLimit(apiKeyRecord, db);
+  if (!rpmCheck.allowed) {
+    sendError(res, 429, `Rate limit exceeded: ${rpmCheck.current}/${rpmCheck.limit} RPM.`, "rate_limit_exceeded");
     return;
   }
 

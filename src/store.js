@@ -85,6 +85,22 @@ function readDb() {
     db.siteEmail = "";
     changed = true;
   }
+  if (typeof db.defaultRpmLimit !== "number") {
+    db.defaultRpmLimit = 30;
+    changed = true;
+  }
+  if (db.siteBanner === undefined) {
+    db.siteBanner = { content: "", updatedAt: "" };
+    changed = true;
+  }
+  if (db.maintenanceMode === undefined) {
+    db.maintenanceMode = false;
+    changed = true;
+  }
+  if (db.maintenanceEndTime === undefined) {
+    db.maintenanceEndTime = "";
+    changed = true;
+  }
   for (const provider of db.providers) {
     if (!provider.healthStatus) {
       provider.healthStatus = "unknown";
@@ -191,6 +207,10 @@ function readDb() {
         }
         if (!Array.isArray(normalized.allowedModels)) {
           normalized.allowedModels = [];
+          itemChanged = true;
+        }
+        if (typeof normalized.rpmLimit !== "number") {
+          normalized.rpmLimit = 0;
           itemChanged = true;
         }
         if (itemChanged) changed = true;

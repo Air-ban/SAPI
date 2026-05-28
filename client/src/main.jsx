@@ -66,6 +66,7 @@ import AnalyticsIcon from "@mui/icons-material/Analytics";
 import ApiIcon from "@mui/icons-material/Api";
 import BarChartIcon from "@mui/icons-material/BarChart";
 import CampaignOutlinedIcon from "@mui/icons-material/CampaignOutlined";
+import WarningIcon from "@mui/icons-material/Warning";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
@@ -79,6 +80,7 @@ import PersonAddIcon from "@mui/icons-material/PersonAdd";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import RocketLaunchIcon from "@mui/icons-material/RocketLaunch";
 import RotateRightIcon from "@mui/icons-material/RotateRight";
+import SpeedIcon from "@mui/icons-material/Speed";
 import MailIcon from "@mui/icons-material/Mail";
 import SendIcon from "@mui/icons-material/Send";
 import VpnKeyIcon from "@mui/icons-material/VpnKey";
@@ -238,6 +240,8 @@ function App() {
   const [publicConfig, setPublicConfig] = useState(null);
   const [announcements, setAnnouncements] = useState([]);
   const [activeAnnouncement, setActiveAnnouncement] = useState(null);
+  const [banner, setBanner] = useState(null);
+  const [maintenance, setMaintenance] = useState({ maintenanceMode: false, maintenanceEndTime: "" });
   const compact = useMediaQuery(theme.breakpoints.down("md"));
 
   const showToast = useCallback((message, severity = "success") => {
@@ -272,6 +276,24 @@ function App() {
       if (next) setActiveAnnouncement(next);
     } catch {
       setAnnouncements([]);
+    }
+  }, []);
+
+  const loadBanner = useCallback(async () => {
+    try {
+      const data = await request("/api/banner", { admin: false });
+      setBanner(data.content ? data : null);
+    } catch {
+      setBanner(null);
+    }
+  }, []);
+
+  const loadMaintenance = useCallback(async () => {
+    try {
+      const data = await request("/api/maintenance", { admin: false });
+      setMaintenance(data);
+    } catch {
+      setMaintenance({ maintenanceMode: false, maintenanceEndTime: "" });
     }
   }, []);
 
@@ -338,7 +360,9 @@ function App() {
     checkHealth();
     loadPublicConfig();
     loadAnnouncements();
-  }, [checkHealth, loadPublicConfig, loadAnnouncements]);
+    loadBanner();
+    loadMaintenance();
+  }, [checkHealth, loadPublicConfig, loadAnnouncements, loadBanner, loadMaintenance]);
 
   useEffect(() => {
     loadProviderHealth();
@@ -354,6 +378,12 @@ function App() {
       });
     }
   }, [route, adminToken, loadAdminState, logout, showToast]);
+
+  useEffect(() => {
+    if (route === "portal" || route === "home") {
+      loadMaintenance();
+    }
+  }, [route, loadMaintenance]);
 
   useEffect(() => {
     if (userToken) {
@@ -709,6 +739,12 @@ function App() {
           }}
         >
           <Box sx={{ maxWidth: 1220, mx: "auto" }}>
+            {maintenance.maintenanceMode ? (
+              <MaintenanceBanner maintenance={maintenance} />
+            ) : null}
+            {(route === "portal" && banner) ? (
+              <SiteBanner banner={banner} />
+            ) : null}
             {route === "portal" ? (
               <PortalView
                 page={portalPage}
@@ -2500,6 +2536,9 @@ function ApiKeyCard({ apiKey, usage, onCopy, onRotate, onToggle, onDelete }) {
           <Typography variant="caption" color="text.secondary">
             最近使用：{formatDate(apiKey.lastUsedAt)}
           </Typography>
+          <Typography variant="caption" color="text.secondary">
+            RPM 限制：{apiKey.rpmLimit > 0 ? apiKey.rpmLimit : "默认"}
+          </Typography>
         </Stack>
       </Stack>
       <Stack direction="row" spacing={0.75} alignItems="center" justifyContent={{ xs: "flex-start", md: "flex-end" }}>
@@ -3412,11 +3451,28 @@ function AdminView({
       ) : null}
 
       {currentPage === "smtp" ? (
-        <SmtpConfigSection
-          config={state?.smtpConfig || {}}
-          afterChange={afterChange}
-          onToast={onToast}
-        />
+        <Stack spacing={2.5}>
+          <SmtpConfigSection
+            config={state?.smtpConfig || {}}
+            afterChange={afterChange}
+            onToast={onToast}
+          />
+          <MaintenanceSection
+            maintenance={state ? { maintenanceMode: state.maintenanceMode, maintenanceEndTime: state.maintenanceEndTime } : { maintenanceMode: false, maintenanceEndTime: "" }}
+            afterChange={afterChange}
+            onToast={onToast}
+          />
+          <BannerEditSection
+            banner={state?.siteBanner}
+            afterChange={afterChange}
+            onToast={onToast}
+          />
+          <RpmLimitSection
+            defaultRpmLimit={state?.defaultRpmLimit ?? 30}
+            afterChange={afterChange}
+            onToast={onToast}
+          />
+        </Stack>
       ) : null}
 
       {currentPage === "announcements" ? (
@@ -4153,10 +4209,60 @@ function ProviderRow({ provider, afterChange, onConfirm, onEdit, onToast }) {
   );
 }
 
+function ApiKeyRpmRow({ apiKey, userId, afterChange, onToast }) {
+  const [rpm, setRpm] = useState(apiKey.rpmLimit > 0 ? String(apiKey.rpmLimit) : "");
+  const [loading, setLoading] = useState(false);
+
+  const save = async () => {
+    setLoading(true);
+    try {
+      await request(`/api/admin/users/${userId}/api-keys/${apiKey.id}`, {
+        method: "PUT",
+        body: { rpmLimit: rpm ? Math.max(1, Number(rpm)) : 0 }
+      });
+      await afterChange(`${apiKey.name} RPM 已更新`);
+    } catch (error) {
+      onToast(error.message, "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Paper variant="outlined" sx={{ p: 1.5, bgcolor: '#fbfcfe' }}>
+      <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems="center">
+        <Typography variant="body2" sx={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <strong>{apiKey.name}</strong> <code>{apiKey.preview || apiKey.key?.slice(0, 12) + "..."}</code>
+        </Typography>
+        <TextField
+          label="RPM 限制"
+          type="number"
+          size="small"
+          value={rpm}
+          onChange={(e) => setRpm(e.target.value)}
+          placeholder={apiKey.rpmLimit > 0 ? String(apiKey.rpmLimit) : "全局默认"}
+          inputProps={{ min: 1 }}
+          sx={{ width: 140, flexShrink: 0 }}
+        />
+        <Button
+          size="small"
+          variant="contained"
+          onClick={() => save().catch((e) => onToast(e.message, "error"))}
+          disabled={loading}
+          sx={{ flexShrink: 0 }}
+        >
+          {loading ? <CircularProgress size={16} /> : "保存"}
+        </Button>
+      </Stack>
+    </Paper>
+  );
+}
+
 function UserRow({ user, usage, afterChange, onConfirm, onCopy, onToast }) {
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [passwordLoading, setPasswordLoading] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   const toggle = async () => {
     await request(`/api/admin/users/${user.id}`, {
@@ -4221,6 +4327,13 @@ function UserRow({ user, usage, afterChange, onConfirm, onCopy, onToast }) {
         meta={meta}
         actions={
           <>
+            {apiKeys.length ? (
+              <Tooltip title="管理 API Key">
+                <IconButton size="small" onClick={() => setExpanded(!expanded)}>
+                  <SettingsIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            ) : null}
             {apiKeys[0]?.key ? (
               <Tooltip title="复制首个 Key">
                 <IconButton size="small" onClick={() => onCopy(apiKeys[0].key)}>
@@ -4249,6 +4362,19 @@ function UserRow({ user, usage, afterChange, onConfirm, onCopy, onToast }) {
           </>
         }
       />
+      {expanded && apiKeys.length ? (
+        <Stack spacing={1} sx={{ pl: { xs: 0, md: 7 }, mb: 1 }}>
+          {apiKeys.map((key) => (
+            <ApiKeyRpmRow
+              key={key.id || key.key}
+              apiKey={key}
+              userId={user.id}
+              afterChange={afterChange}
+              onToast={onToast}
+            />
+          ))}
+        </Stack>
+      ) : null}
       <Dialog open={passwordDialogOpen} onClose={() => setPasswordDialogOpen(false)} maxWidth="xs" fullWidth>
         <DialogTitle>重置用户密码</DialogTitle>
         <DialogContent>
@@ -4833,6 +4959,208 @@ function SiteEmailSection({ afterChange, onToast }) {
   );
 }
 
+function MaintenanceSection({ maintenance, afterChange, onToast }) {
+  const [enabled, setEnabled] = useState(false);
+  const [endTime, setEndTime] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    setEnabled(maintenance?.maintenanceMode || false);
+    setEndTime(maintenance?.maintenanceEndTime || "");
+  }, [maintenance]);
+
+  const toggle = async (checked) => {
+    setLoading(true);
+    try {
+      await request("/api/admin/maintenance", {
+        method: "PUT",
+        body: {
+          maintenanceMode: checked,
+          maintenanceEndTime: checked ? endTime : ""
+        }
+      });
+      setEnabled(checked);
+      if (!checked) setEndTime("");
+      await afterChange(checked ? "维护模式已开启，所有 API 请求将被阻止" : "维护模式已关闭");
+    } catch (error) {
+      onToast(error.message, "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const saveEndTime = async () => {
+    setLoading(true);
+    try {
+      await request("/api/admin/maintenance", {
+        method: "PUT",
+        body: {
+          maintenanceMode: enabled,
+          maintenanceEndTime: endTime
+        }
+      });
+      await afterChange("预计恢复时间已更新");
+    } catch (error) {
+      onToast(error.message, "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Section title="维护模式" icon={<WarningIcon />}>
+      <Stack spacing={2}>
+        <Typography variant="body2" color="text.secondary">
+          开启维护模式后，所有用户的 API 请求将被阻止（返回 503），用户端页面将显示维护通知。
+        </Typography>
+        <FormControlLabel
+          control={
+            <Switch
+              checked={enabled}
+              onChange={(e) => toggle(e.target.checked).catch((e) => onToast(e.message, "error"))}
+              disabled={loading}
+            />
+          }
+          label={enabled ? "维护模式已开启" : "开启维护模式"}
+        />
+        {enabled ? (
+          <>
+            <TextField
+              label="预计恢复时间"
+              type="datetime-local"
+              value={endTime.slice(0, 16)}
+              onChange={(e) => setEndTime(e.target.value ? new Date(e.target.value).toISOString() : "")}
+              InputLabelProps={{ shrink: true }}
+              fullWidth
+            />
+            <Stack direction="row" spacing={1.5} justifyContent="flex-end">
+              <Button
+                variant="contained"
+                onClick={() => saveEndTime().catch((e) => onToast(e.message, "error"))}
+                disabled={loading}
+                startIcon={loading ? <CircularProgress size={16} /> : <SaveIcon />}
+              >
+                保存时间
+              </Button>
+            </Stack>
+          </>
+        ) : null}
+      </Stack>
+    </Section>
+  );
+}
+
+function BannerEditSection({ banner, afterChange, onToast }) {
+  const [content, setContent] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    setContent(banner?.content || "");
+  }, [banner]);
+
+  const save = async () => {
+    setLoading(true);
+    try {
+      await request("/api/admin/banner", {
+        method: "PUT",
+        body: { content }
+      });
+      await afterChange("站点横幅已保存");
+    } catch (error) {
+      onToast(error.message, "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Section title="站点横幅" icon={<CampaignOutlinedIcon />}>
+      <Stack spacing={2}>
+        <Typography variant="body2" color="text.secondary">
+          设置站点顶部横幅内容，将在用户端页面顶部显示。留空则不显示横幅。
+        </Typography>
+        <TextField
+          label="横幅内容"
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+          placeholder="输入横幅内容..."
+          multiline
+          rows={3}
+          fullWidth
+        />
+        {banner?.updatedAt ? (
+          <Typography variant="caption" color="text.secondary">
+            上次更新：{formatDate(banner.updatedAt)}
+          </Typography>
+        ) : null}
+        <Stack direction="row" spacing={1.5} justifyContent="flex-end">
+          <Button
+            variant="contained"
+            onClick={() => save().catch((e) => onToast(e.message, "error"))}
+            disabled={loading}
+            startIcon={loading ? <CircularProgress size={16} /> : <SaveIcon />}
+          >
+            保存横幅
+          </Button>
+        </Stack>
+      </Stack>
+    </Section>
+  );
+}
+
+function RpmLimitSection({ defaultRpmLimit, afterChange, onToast }) {
+  const [limit, setLimit] = useState(30);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    setLimit(defaultRpmLimit);
+  }, [defaultRpmLimit]);
+
+  const save = async () => {
+    setLoading(true);
+    try {
+      await request("/api/admin/rpm-limit", {
+        method: "PUT",
+        body: { defaultRpmLimit: limit }
+      });
+      await afterChange("全局 RPM 限制已保存");
+    } catch (error) {
+      onToast(error.message, "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Section title="全局 RPM 限制" icon={<SpeedIcon />}>
+      <Stack spacing={2}>
+        <Typography variant="body2" color="text.secondary">
+          设置每个 API Key 的默认每分钟请求数（RPM）上限。用户可以为单个 Key 设置不同的限制，未设置则使用此全局默认值。
+        </Typography>
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems={{ xs: "stretch", sm: "flex-start" }}>
+          <TextField
+            label="默认 RPM 限制"
+            type="number"
+            value={limit}
+            onChange={(e) => setLimit(Math.max(1, Number(e.target.value) || 1))}
+            inputProps={{ min: 1 }}
+            sx={{ flex: 1 }}
+          />
+          <Button
+            variant="contained"
+            onClick={() => save().catch((e) => onToast(e.message, "error"))}
+            disabled={loading}
+            startIcon={loading ? <CircularProgress size={16} /> : <SaveIcon />}
+            sx={{ height: 56, flexShrink: 0 }}
+          >
+            保存
+          </Button>
+        </Stack>
+      </Stack>
+    </Section>
+  );
+}
+
 function EntityRow({ title, enabled, icon, meta, actions, failoverChip }) {
   return (
     <Paper
@@ -4899,6 +5227,47 @@ function EntityRow({ title, enabled, icon, meta, actions, failoverChip }) {
 
 function DividerLine() {
   return <Box sx={{ height: 1, bgcolor: "divider", width: "100%" }} />;
+}
+
+function MaintenanceBanner({ maintenance }) {
+  const endTimeStr = maintenance.maintenanceEndTime
+    ? `预计 ${new Date(maintenance.maintenanceEndTime).toLocaleString("zh-CN")} 恢复`
+    : "恢复时间待定";
+
+  return (
+    <Alert
+      severity="warning"
+      icon={<CampaignOutlinedIcon />}
+      sx={{ mb: 2.5, "& .MuiAlert-message": { flex: 1 } }}
+    >
+      <Typography variant="body2" sx={{ fontWeight: 700 }}>
+        站点维护中
+      </Typography>
+      <Typography variant="body2">
+        {endTimeStr}，在此期间所有 API 请求将暂时中断。如有紧急需求请联系管理员。
+      </Typography>
+    </Alert>
+  );
+}
+
+function SiteBanner({ banner }) {
+  if (!banner || !banner.content) return null;
+  return (
+    <Alert
+      severity="info"
+      icon={<CampaignOutlinedIcon />}
+      sx={{ mb: 2.5, "& .MuiAlert-message": { flex: 1 } }}
+    >
+      <Typography variant="body2" sx={{ fontWeight: 600 }}>
+        {banner.content}
+      </Typography>
+      {banner.updatedAt ? (
+        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>
+          更新于 {formatDate(banner.updatedAt)}
+        </Typography>
+      ) : null}
+    </Alert>
+  );
 }
 
 function PageHeader({ eyebrow, title, description, action }) {
