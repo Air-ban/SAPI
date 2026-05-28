@@ -4110,6 +4110,7 @@ app.get("/api/admin/state", requireAdmin, (req, res) => {
     usage: getUsageStats(db),
     invitationCodes: db.invitationCodes || [],
     announcements: db.announcements || [],
+    documents: db.documents || [],
     smtpConfig: {
       host: smtp.host,
       port: smtp.port,
@@ -4464,6 +4465,137 @@ app.get("/v1/models", (req, res) => {
       cli_support: model.cliSupport || []
     }))
   });
+});
+
+app.get("/api/documents", (req, res) => {
+  const db = readDb();
+  const documents = (db.documents || [])
+    .filter((item) => item.published === true)
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  res.json({ documents: documents.map((d) => ({ id: d.id, title: d.title, slug: d.slug, description: d.description, createdAt: d.createdAt, updatedAt: d.updatedAt })) });
+});
+
+app.get("/api/documents/:slug", (req, res) => {
+  const db = readDb();
+  const document = (db.documents || []).find((d) => d.slug === req.params.slug && d.published === true);
+  if (!document) {
+    sendError(res, 404, "Document not found.", "not_found");
+    return;
+  }
+  res.json({ document });
+});
+
+app.get("/api/admin/documents", requireAdmin, (req, res) => {
+  const db = readDb();
+  res.json({ documents: db.documents || [] });
+});
+
+app.post("/api/admin/documents", requireAdmin, (req, res) => {
+  const title = String(req.body?.title || "").trim();
+  const slug = String(req.body?.slug || "").trim();
+  const content = String(req.body?.content || "").trim();
+  const description = String(req.body?.description || "").trim();
+  const published = Boolean(req.body?.published);
+
+  if (!title) {
+    sendError(res, 400, "Title is required.", "invalid_title");
+    return;
+  }
+  if (!slug) {
+    sendError(res, 400, "Slug is required.", "invalid_slug");
+    return;
+  }
+  if (!/^[a-z0-9-]+$/.test(slug)) {
+    sendError(res, 400, "Slug must contain only lowercase letters, numbers, and hyphens.", "invalid_slug");
+    return;
+  }
+
+  const record = mutateDb((db) => {
+    if (!Array.isArray(db.documents)) db.documents = [];
+    const exists = db.documents.some((d) => d.slug === slug);
+    if (exists) return null;
+    const createdAt = now();
+    const item = {
+      id: randomId("doc"),
+      title,
+      slug,
+      content,
+      description,
+      published,
+      createdAt,
+      updatedAt: createdAt
+    };
+    db.documents.push(item);
+    return item;
+  });
+
+  if (!record) {
+    sendError(res, 409, "Document with this slug already exists.", "slug_exists");
+    return;
+  }
+
+  res.status(201).json(record);
+});
+
+app.put("/api/admin/documents/:id", requireAdmin, (req, res) => {
+  const updated = mutateDb((db) => {
+    if (!Array.isArray(db.documents)) db.documents = [];
+    const item = db.documents.find((d) => d.id === req.params.id);
+    if (!item) return null;
+
+    if (req.body?.title !== undefined) {
+      item.title = String(req.body.title || "").trim() || item.title;
+    }
+    if (req.body?.slug !== undefined) {
+      const newSlug = String(req.body.slug || "").trim();
+      if (newSlug && !/^[a-z0-9-]+$/.test(newSlug)) return { error: "invalid_slug" };
+      const exists = db.documents.some((d) => d.slug === newSlug && d.id !== item.id);
+      if (exists) return { error: "slug_exists" };
+      if (newSlug) item.slug = newSlug;
+    }
+    if (req.body?.content !== undefined) {
+      item.content = String(req.body.content || "").trim();
+    }
+    if (req.body?.description !== undefined) {
+      item.description = String(req.body.description || "").trim();
+    }
+    if (req.body?.published !== undefined) {
+      item.published = Boolean(req.body.published);
+    }
+    item.updatedAt = now();
+    return item;
+  });
+
+  if (!updated) {
+    sendError(res, 404, "Document not found.", "not_found");
+    return;
+  }
+  if (updated.error === "invalid_slug") {
+    sendError(res, 400, "Slug must contain only lowercase letters, numbers, and hyphens.", "invalid_slug");
+    return;
+  }
+  if (updated.error === "slug_exists") {
+    sendError(res, 409, "Document with this slug already exists.", "slug_exists");
+    return;
+  }
+
+  res.json(updated);
+});
+
+app.delete("/api/admin/documents/:id", requireAdmin, (req, res) => {
+  const removed = mutateDb((db) => {
+    if (!Array.isArray(db.documents)) db.documents = [];
+    const before = db.documents.length;
+    db.documents = db.documents.filter((d) => d.id !== req.params.id);
+    return before !== db.documents.length;
+  });
+
+  if (!removed) {
+    sendError(res, 404, "Document not found.", "not_found");
+    return;
+  }
+
+  res.status(204).end();
 });
 
 app.get("/api/health/providers", (req, res) => {

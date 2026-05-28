@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { marked } from "marked";
+import hljs from "highlight.js";
 import {
   BarChart,
   Bar,
@@ -84,6 +86,14 @@ import SettingsIcon from "@mui/icons-material/Settings";
 import SchoolIcon from "@mui/icons-material/School";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import DownloadIcon from "@mui/icons-material/Download";
+import DescriptionIcon from "@mui/icons-material/Description";
+import VisibilityIcon from "@mui/icons-material/Visibility";
+import BookIcon from "@mui/icons-material/Book";
+import ArrowBackIcon from "@mui/icons-material/ArrowBack";
+import PreviewIcon from "@mui/icons-material/Preview";
+import SaveIcon from "@mui/icons-material/Save";
+import UnpublishedIcon from "@mui/icons-material/Unpublished";
+import PublishIcon from "@mui/icons-material/Publish";
 
 const DRAWER_WIDTH = 276;
 const ADMIN_TOKEN_KEY = "sapiAdminToken";
@@ -229,6 +239,8 @@ function App() {
   const [publicConfig, setPublicConfig] = useState(null);
   const [announcements, setAnnouncements] = useState([]);
   const [activeAnnouncement, setActiveAnnouncement] = useState(null);
+  const [documents, setDocuments] = useState([]);
+  const [activeDocument, setActiveDocument] = useState(null);
   const compact = useMediaQuery(theme.breakpoints.down("md"));
 
   const showToast = useCallback((message, severity = "success") => {
@@ -263,6 +275,15 @@ function App() {
       if (next) setActiveAnnouncement(next);
     } catch {
       setAnnouncements([]);
+    }
+  }, []);
+
+  const loadDocuments = useCallback(async () => {
+    try {
+      const data = await request("/api/documents", { admin: false });
+      setDocuments(data.documents || []);
+    } catch {
+      setDocuments([]);
     }
   }, []);
 
@@ -329,7 +350,8 @@ function App() {
     checkHealth();
     loadPublicConfig();
     loadAnnouncements();
-  }, [checkHealth, loadPublicConfig, loadAnnouncements]);
+    loadDocuments();
+  }, [checkHealth, loadPublicConfig, loadAnnouncements, loadDocuments]);
 
   useEffect(() => {
     loadProviderHealth();
@@ -1713,7 +1735,8 @@ function Sidebar({
     { id: "key", icon: <KeyIcon />, primary: "API Key", secondary: "复制、创建与轮换" },
     { id: "usage", icon: <BarChartIcon />, primary: "请求与用量", secondary: "Token 与请求记录" },
     { id: "models", icon: <ApiIcon />, primary: "模型与端点", secondary: "可用模型和接口" },
-    { id: "example", icon: <RocketLaunchIcon />, primary: "调用示例", secondary: "curl 请求模板" }
+    { id: "example", icon: <RocketLaunchIcon />, primary: "调用示例", secondary: "curl 请求模板" },
+    { id: "docs", icon: <BookIcon />, primary: "文档中心", secondary: "查看使用文档" }
   ];
   const adminNavGroups = [
     {
@@ -1724,7 +1747,8 @@ function Sidebar({
         { id: "usage", icon: <BarChartIcon />, primary: "请求与用量", secondary: "全局统计和明细" },
         { id: "providers", icon: <ApiIcon />, primary: "上游供应商", secondary: "API、模型和密钥" },
         { id: "users", icon: <KeyIcon />, primary: "用户账号", secondary: "用户 Key 与权限" },
-        { id: "announcements", icon: <CampaignOutlinedIcon />, primary: "公告管理", secondary: "发布和管理系统公告" }
+        { id: "announcements", icon: <CampaignOutlinedIcon />, primary: "公告管理", secondary: "发布和管理系统公告" },
+        { id: "documents", icon: <DescriptionIcon />, primary: "文档管理", secondary: "编辑和发布文档" }
       ]
     },
     {
@@ -1963,7 +1987,7 @@ function PortalView({
     `  -H "Content-Type: application/json" \\`,
     `  -d '{"model":"${model}","messages":[{"role":"user","content":"hello"}]}'`
   ].join("\n");
-  const currentPage = ["overview", "key", "usage", "models", "example"].includes(page)
+  const currentPage = ["overview", "key", "usage", "models", "example", "docs"].includes(page)
     ? page
     : "overview";
   const pageMeta = {
@@ -1971,7 +1995,8 @@ function PortalView({
     key: { title: "API Key", description: "管理你的 HanGuan's SuperAPI 调用密钥。" },
     usage: { title: "请求与用量", description: "查看 Token 用量和请求记录。" },
     models: { title: "模型与端点", description: "查看当前可用模型和 OpenAI 兼容端点。" },
-    example: { title: "调用示例", description: "复制可直接执行的 curl 请求。" }
+    example: { title: "调用示例", description: "复制可直接执行的 curl 请求。" },
+    docs: { title: "文档中心", description: "查看使用文档和教程。" }
   }[currentPage] || {
     title: "可调用 API",
     description: "API Key、模型和端点摘要。"
@@ -2278,6 +2303,10 @@ function PortalView({
       >
         <CodeBlock value={curlExample} />
       </Section>
+      ) : null}
+
+      {currentPage === "docs" ? (
+        <UserDocsView />
       ) : null}
     </Stack>
   );
@@ -3079,7 +3108,7 @@ function AdminView({
   const providers = state?.providers || [];
   const users = state?.users || [];
   const usage = state?.usage;
-  const currentPage = ["overview", "usage", "providers", "responses", "users", "invitations", "smtp", "announcements"].includes(page)
+  const currentPage = ["overview", "usage", "providers", "responses", "users", "invitations", "smtp", "announcements", "documents"].includes(page)
     ? page
     : "overview";
   const pageMeta = {
@@ -3089,7 +3118,8 @@ function AdminView({
     users: { title: "用户账号", description: "管理用户 Key 和访问状态。" },
     invitations: { title: "邀请码管理", description: "创建、发送和管理邀请码。" },
     smtp: { title: "SMTP 设置", description: "配置邮件发送服务。" },
-    announcements: { title: "公告管理", description: "发布和管理系统公告。" }
+    announcements: { title: "公告管理", description: "发布和管理系统公告。" },
+    documents: { title: "文档管理", description: "编辑和发布系统文档。" }
   }[currentPage] || {
     title: "上游 API 与用户 Key",
     description: "供应商、用户和用量摘要。"
@@ -3256,6 +3286,15 @@ function AdminView({
       {currentPage === "announcements" ? (
         <AnnouncementsSection
           announcements={state?.announcements || []}
+          afterChange={afterChange}
+          onConfirm={onConfirm}
+          onToast={onToast}
+        />
+      ) : null}
+
+      {currentPage === "documents" ? (
+        <DocumentsSection
+          documents={state?.documents || []}
           afterChange={afterChange}
           onConfirm={onConfirm}
           onToast={onToast}
@@ -5617,6 +5656,466 @@ function AnnouncementDialog({ announcement, onDismiss }) {
         <Button onClick={onDismiss} variant="contained">知道了</Button>
       </DialogActions>
     </Dialog>
+  );
+}
+
+marked.setOptions({
+  gfm: true,
+  breaks: true,
+  headerIds: true,
+  mangle: false,
+  highlight: (code, lang) => {
+    if (lang && hljs.getLanguage(lang)) {
+      try {
+        return hljs.highlight(code, { language: lang }).value;
+      } catch {
+        return code;
+      }
+    }
+    return code;
+  }
+});
+
+function MarkdownContent({ content }) {
+  const html = marked.parse(content || "");
+  return (
+    <Box
+      className="markdown-body"
+      sx={{
+        "& h1": { fontSize: "1.75rem", fontWeight: 780, mt: 3, mb: 1.5, pb: 0.75, borderBottom: "1px solid", borderColor: "divider" },
+        "& h2": { fontSize: "1.4rem", fontWeight: 740, mt: 2.5, mb: 1.25, pb: 0.5, borderBottom: "1px solid", borderColor: "divider" },
+        "& h3": { fontSize: "1.15rem", fontWeight: 720, mt: 2, mb: 1 },
+        "& h4, & h5, & h6": { fontSize: "1rem", fontWeight: 700, mt: 1.5, mb: 0.75 },
+        "& p": { lineHeight: 1.8, mb: 1.25 },
+        "& ul, & ol": { pl: 3, mb: 1.25 },
+        "& li": { mb: 0.5, lineHeight: 1.7 },
+        "& code": {
+          fontFamily: 'Consolas, "SFMono-Regular", Menlo, monospace',
+          fontSize: "0.88em",
+          bgcolor: "rgba(15,23,42,0.06)",
+          px: 0.5,
+          py: 0.15,
+          borderRadius: 0.75
+        },
+        "& pre": {
+          bgcolor: "#101820",
+          color: "#d1fae5",
+          p: 2,
+          borderRadius: 1,
+          overflow: "auto",
+          fontSize: 13,
+          lineHeight: 1.7,
+          mb: 1.5,
+          "& code": {
+            bgcolor: "transparent",
+            color: "inherit",
+            px: 0,
+            py: 0,
+            fontSize: "inherit"
+          }
+        },
+        "& blockquote": {
+          borderLeft: "4px solid",
+          borderColor: "primary.main",
+          pl: 2,
+          py: 0.5,
+          my: 1.5,
+          bgcolor: "rgba(15,118,110,0.04)",
+          borderRadius: "0 8px 8px 0"
+        },
+        "& a": { color: "primary.main", textDecoration: "none", "&:hover": { textDecoration: "underline" } },
+        "& table": { width: "100%", borderCollapse: "collapse", mb: 1.5 },
+        "& th, & td": { border: "1px solid", borderColor: "divider", p: 1, textAlign: "left" },
+        "& th": { bgcolor: "rgba(15,23,42,0.04)", fontWeight: 700 },
+        "& img": { maxWidth: "100%", borderRadius: 1 },
+        "& hr": { border: 0, borderTop: "1px solid", borderColor: "divider", my: 2 }
+      }}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+}
+
+function UserDocsView() {
+  const [docs, setDocs] = useState([]);
+  const [selectedDoc, setSelectedDoc] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    request("/api/documents", { admin: false })
+      .then((data) => {
+        setDocs(data.documents || []);
+        setLoading(false);
+      })
+      .catch(() => {
+        setDocs([]);
+        setLoading(false);
+      });
+  }, []);
+
+  const loadDoc = async (slug) => {
+    try {
+      const data = await request(`/api/documents/${slug}`, { admin: false });
+      setSelectedDoc(data.document);
+    } catch {
+      setSelectedDoc(null);
+    }
+  };
+
+  if (loading) {
+    return (
+      <Paper variant="outlined" sx={{ p: 4, textAlign: "center" }}>
+        <CircularProgress size={28} />
+        <Typography color="text.secondary" sx={{ mt: 1 }}>加载文档中...</Typography>
+      </Paper>
+    );
+  }
+
+  if (selectedDoc) {
+    return (
+      <Stack spacing={2}>
+        <Paper variant="outlined" sx={{ p: { xs: 2, sm: 3 } }}>
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }}>
+            <Button
+              size="small"
+              startIcon={<ArrowBackIcon />}
+              variant="outlined"
+              onClick={() => setSelectedDoc(null)}
+            >
+              返回列表
+            </Button>
+          </Stack>
+          <Typography variant="h4" sx={{ fontWeight: 780, mb: 1 }}>
+            {selectedDoc.title}
+          </Typography>
+          {selectedDoc.description ? (
+            <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
+              {selectedDoc.description}
+            </Typography>
+          ) : null}
+          <MarkdownContent content={selectedDoc.content} />
+        </Paper>
+      </Stack>
+    );
+  }
+
+  if (!docs.length) {
+    return (
+      <Paper variant="outlined" sx={{ p: 4 }}>
+        <EmptyState text="暂无可用文档。" />
+      </Paper>
+    );
+  }
+
+  return (
+    <Stack spacing={2}>
+      <Typography variant="body2" color="text.secondary">
+        共 {docs.length} 篇文档
+      </Typography>
+      <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "repeat(2, 1fr)" }, gap: 2 }}>
+        {docs.map((doc) => (
+          <Paper
+            key={doc.id}
+            variant="outlined"
+            sx={{
+              p: 2.5,
+              cursor: "pointer",
+              transition: "all 0.2s",
+              "&:hover": { boxShadow: "0 4px 20px rgba(15, 23, 42, 0.08)", borderColor: "primary.light" }
+            }}
+            onClick={() => loadDoc(doc.slug)}
+          >
+            <Stack direction="row" spacing={1.5} alignItems="flex-start">
+              <Box
+                sx={{
+                  width: 42,
+                  height: 42,
+                  borderRadius: 1,
+                  display: "grid",
+                  placeItems: "center",
+                  bgcolor: "rgba(15,118,110,0.1)",
+                  color: "primary.main",
+                  flexShrink: 0
+                }}
+              >
+                <DescriptionIcon />
+              </Box>
+              <Box sx={{ minWidth: 0 }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 780 }}>
+                  {doc.title}
+                </Typography>
+                {doc.description ? (
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, lineHeight: 1.6 }}>
+                    {doc.description}
+                  </Typography>
+                ) : null}
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: "block" }}>
+                  更新于 {formatDate(doc.updatedAt || doc.createdAt)}
+                </Typography>
+              </Box>
+            </Stack>
+          </Paper>
+        ))}
+      </Box>
+    </Stack>
+  );
+}
+
+function DocumentsSection({ documents, afterChange, onConfirm, onToast }) {
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewDoc, setPreviewDoc] = useState(null);
+  const [form, setForm] = useState({ title: "", slug: "", content: "", description: "", published: false });
+
+  const resetForm = () => setForm({ title: "", slug: "", content: "", description: "", published: false });
+
+  const createDocument = async () => {
+    await request("/api/admin/documents", {
+      method: "POST",
+      body: form
+    });
+    resetForm();
+    setCreateOpen(false);
+    await afterChange("文档已创建");
+  };
+
+  const updateDocument = async () => {
+    if (!editing) return;
+    await request(`/api/admin/documents/${editing.id}`, {
+      method: "PUT",
+      body: form
+    });
+    setEditOpen(false);
+    setEditing(null);
+    await afterChange("文档已更新");
+  };
+
+  const deleteDocument = (id, title) => {
+    onConfirm({
+      title: "删除文档",
+      message: `确认删除文档 "${title}"？`,
+      confirmText: "删除",
+      danger: true,
+      action: async () => {
+        await request(`/api/admin/documents/${id}`, { method: "DELETE" });
+        await afterChange("文档已删除");
+      }
+    });
+  };
+
+  const togglePublished = async (item) => {
+    try {
+      await request(`/api/admin/documents/${item.id}`, {
+        method: "PUT",
+        body: { published: !item.published }
+      });
+      await afterChange(item.published ? "文档已取消发布" : "文档已发布");
+    } catch (error) {
+      onToast(error.message, "error");
+    }
+  };
+
+  const openEdit = (item) => {
+    setEditing(item);
+    setForm({
+      title: item.title,
+      slug: item.slug,
+      content: item.content,
+      description: item.description || "",
+      published: item.published === true
+    });
+    setEditOpen(true);
+  };
+
+  const openPreview = (item) => {
+    setPreviewDoc(item);
+    setPreviewOpen(true);
+  };
+
+  return (
+    <>
+      <Section
+        title="文档管理"
+        icon={<DescriptionIcon />}
+        action={
+          <Button startIcon={<AddIcon />} variant="contained" size="small" onClick={() => { resetForm(); setCreateOpen(true); }}>
+            新建文档
+          </Button>
+        }
+      >
+        {documents.length ? (
+          <Stack spacing={1.5}>
+            {documents.map((item) => (
+              <Paper
+                key={item.id}
+                variant="outlined"
+                sx={{
+                  p: { xs: 1.5, sm: 2 },
+                  display: "grid",
+                  gridTemplateColumns: { xs: "1fr", md: "minmax(0, 1fr) auto" },
+                  gap: 1.5,
+                  alignItems: "center",
+                  bgcolor: item.published === true ? "#fbfcfe" : "action.hover",
+                  opacity: item.published === true ? 1 : 0.85
+                }}
+              >
+                <Stack spacing={0.5} sx={{ minWidth: 0 }}>
+                  <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                    <Typography variant="subtitle1" sx={{ fontWeight: 780 }}>
+                      {item.title}
+                    </Typography>
+                    <Chip
+                      size="small"
+                      label={item.published === true ? "已发布" : "未发布"}
+                      color={item.published === true ? "success" : "default"}
+                      variant="outlined"
+                    />
+                    <Chip size="small" label={`/${item.slug}`} variant="outlined" sx={{ fontFamily: "Consolas, monospace" }} />
+                  </Stack>
+                  {item.description ? (
+                    <Typography variant="body2" color="text.secondary">
+                      {item.description}
+                    </Typography>
+                  ) : null}
+                  <Typography variant="caption" color="text.secondary">
+                    更新于 {formatDate(item.updatedAt || item.createdAt)}
+                  </Typography>
+                </Stack>
+                <Stack direction="row" spacing={0.5} alignItems="center" justifyContent={{ xs: "flex-start", md: "flex-end" }}>
+                  <Tooltip title="预览">
+                    <IconButton size="small" onClick={() => openPreview(item)}>
+                      <VisibilityIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title={item.published === true ? "取消发布" : "发布"}>
+                    <IconButton size="small" onClick={() => togglePublished(item)}>
+                      {item.published === true ? <UnpublishedIcon fontSize="small" color="success" /> : <PublishIcon fontSize="small" color="disabled" />}
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="编辑">
+                    <IconButton size="small" onClick={() => openEdit(item)}>
+                      <EditIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="删除">
+                    <IconButton size="small" color="error" onClick={() => deleteDocument(item.id, item.title)}>
+                      <DeleteOutlineIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </Stack>
+              </Paper>
+            ))}
+          </Stack>
+        ) : (
+          <EmptyState text="还没有创建文档。创建后发布，用户端即可查看。" />
+        )}
+      </Section>
+
+      <Dialog open={createOpen} onClose={() => setCreateOpen(false)} maxWidth="md" fullWidth PaperProps={{ component: "form", onSubmit: (e) => { e.preventDefault(); createDocument().catch((err) => onToast(err.message, "error")); } }}>
+        <DialogTitle>新建文档</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <TextField
+              label="标题"
+              value={form.title}
+              onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
+              placeholder="文档标题"
+              required
+              autoFocus
+            />
+            <TextField
+              label="Slug"
+              value={form.slug}
+              onChange={(e) => setForm((f) => ({ ...f, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "").replace(/-+/g, "-") }))}
+              placeholder="文档标识，如 getting-started"
+              required
+              helperText="仅允许小写字母、数字和连字符"
+            />
+            <TextField
+              label="描述"
+              value={form.description}
+              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+              placeholder="简短描述"
+            />
+            <TextField
+              label="内容（Markdown）"
+              value={form.content}
+              onChange={(e) => setForm((f) => ({ ...f, content: e.target.value }))}
+              placeholder="支持 Markdown 语法"
+              multiline
+              rows={12}
+            />
+            <FormControlLabel
+              control={<Switch checked={form.published} onChange={(e) => setForm((f) => ({ ...f, published: e.target.checked }))} />}
+              label="立即发布"
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setCreateOpen(false)} color="inherit">取消</Button>
+          <Button type="submit" variant="contained" startIcon={<AddIcon />}>创建</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={editOpen} onClose={() => { setEditOpen(false); setEditing(null); }} maxWidth="md" fullWidth PaperProps={{ component: "form", onSubmit: (e) => { e.preventDefault(); updateDocument().catch((err) => onToast(err.message, "error")); } }}>
+        <DialogTitle>编辑文档</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <TextField
+              label="标题"
+              value={form.title}
+              onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
+              required
+            />
+            <TextField
+              label="Slug"
+              value={form.slug}
+              onChange={(e) => setForm((f) => ({ ...f, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "").replace(/-+/g, "-") }))}
+              required
+              helperText="仅允许小写字母、数字和连字符"
+            />
+            <TextField
+              label="描述"
+              value={form.description}
+              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+            />
+            <TextField
+              label="内容（Markdown）"
+              value={form.content}
+              onChange={(e) => setForm((f) => ({ ...f, content: e.target.value }))}
+              multiline
+              rows={12}
+            />
+            <FormControlLabel
+              control={<Switch checked={form.published} onChange={(e) => setForm((f) => ({ ...f, published: e.target.checked }))} />}
+              label="已发布"
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => { setEditOpen(false); setEditing(null); }} color="inherit">取消</Button>
+          <Button type="submit" variant="contained" startIcon={<SaveIcon />}>保存</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={previewOpen} onClose={() => setPreviewOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>
+          <Stack direction="row" spacing={1} alignItems="center">
+            <PreviewIcon color="primary" />
+            <Typography variant="h6" component="span" sx={{ fontWeight: 780 }}>
+              {previewDoc?.title || "文档预览"}
+            </Typography>
+          </Stack>
+        </DialogTitle>
+        <DialogContent>
+          <MarkdownContent content={previewDoc?.content || ""} />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPreviewOpen(false)}>关闭</Button>
+        </DialogActions>
+      </Dialog>
+    </>
   );
 }
 
