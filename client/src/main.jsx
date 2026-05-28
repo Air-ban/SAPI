@@ -184,6 +184,16 @@ async function request(path, options = {}) {
     body: options.body ? JSON.stringify(options.body) : undefined
   });
   const text = await response.text();
+
+  const contentType = response.headers.get("content-type") || "";
+  const looksLikeJson = contentType.includes("application/json") || /^\s*[{\[]/.test(text);
+
+  if (!looksLikeJson) {
+    const status = response.status;
+    const snippet = text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
+    throw new Error(`服务器暂时不可用 (${status})${snippet ? "：" + snippet : ""}`);
+  }
+
   const data = text ? JSON.parse(text) : null;
 
   if (!response.ok) {
@@ -3283,7 +3293,7 @@ function ProviderDialog({ open, onClose, provider, afterChange, onToast }) {
   const [loading, setLoading] = useState(false);
 
   const reset = useCallback(() => {
-    setForm({ name: "", baseUrl: "", apiKey: "", enabled: true, failoverThreshold: 3 });
+    setForm({ name: "", baseUrl: "", apiKey: "", enabled: true, failoverThreshold: 3, priority: 0 });
     setSelectedModels([]);
     setModelSelectionTouched(false);
     setLookup({ loading: false, error: "", models: [] });
@@ -3298,7 +3308,8 @@ function ProviderDialog({ open, onClose, provider, afterChange, onToast }) {
         baseUrl: provider.baseUrl || "",
         apiKey: "",
         enabled: provider.enabled !== false,
-        failoverThreshold: typeof provider.failoverThreshold === "number" ? provider.failoverThreshold : 3
+        failoverThreshold: typeof provider.failoverThreshold === 'number' ? provider.failoverThreshold : 3,
+        priority: typeof provider.priority === 'number' ? provider.priority : 0
       });
       const normalized = (provider.models || []).map((m) => {
         if (m && typeof m === "object") return { id: m.id || "", name: m.name || m.id || "", description: m.description || "", cliSupport: Array.isArray(m.cliSupport) ? m.cliSupport : [] };
@@ -3738,15 +3749,26 @@ function ProviderDialog({ open, onClose, provider, afterChange, onToast }) {
             </Button>
           </Stack>
 
-          <TextField
-            label="故障切换阈值"
-            type="number"
-            value={form.failoverThreshold}
-            onChange={update("failoverThreshold")}
-            helperText="连续失败达到该次数后自动切换到下一个供应商（0 表示不启用）"
-            inputProps={{ min: 0 }}
-            sx={{ maxWidth: 200 }}
-          />
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+            <TextField
+              label="故障切换阈值"
+              type="number"
+              value={form.failoverThreshold}
+              onChange={update("failoverThreshold")}
+              helperText="连续失败达到该次数后自动切换到下一个供应商（0 表示不启用）"
+              inputProps={{ min: 0 }}
+              sx={{ maxWidth: 200 }}
+            />
+            <TextField
+              label="优先级"
+              type="number"
+              value={form.priority}
+              onChange={update("priority")}
+              helperText="数值越大优先级越高，默认 0"
+              inputProps={{ min: 0 }}
+              sx={{ maxWidth: 200 }}
+            />
+          </Stack>
           <FormControlLabel
             control={<Switch checked={form.enabled} onChange={update("enabled")} />}
             label="启用"
@@ -3781,7 +3803,10 @@ function ProviderRow({ provider, afterChange, onConfirm, onEdit, onToast }) {
         name: provider.name,
         baseUrl: provider.baseUrl,
         models: provider.models,
-        enabled: !provider.enabled
+        modelMappings: provider.modelMappings,
+        enabled: !provider.enabled,
+        failoverThreshold: typeof provider.failoverThreshold === 'number' ? provider.failoverThreshold : 3,
+        priority: typeof provider.priority === 'number' ? provider.priority : 0
       }
     });
     await afterChange(provider.enabled ? "上游 API 已停用" : "上游 API 已启用");
@@ -3834,6 +3859,7 @@ function ProviderRow({ provider, afterChange, onConfirm, onEdit, onToast }) {
         ["API Key", provider.apiKey || "-"],
         ["模型", modelLabels.join(", ") || "-"],
         ...(mappingLabels.length ? [["映射", mappingLabels.join(", ")]] : []),
+        ["优先级", typeof provider.priority === 'number' ? provider.priority : 0],
         ...(failureLabel ? [["故障切换", failureLabel]] : [])
       ]}
       actions={

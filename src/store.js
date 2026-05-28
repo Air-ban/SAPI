@@ -106,6 +106,10 @@ function readDb() {
       provider.modelMappings = {};
       changed = true;
     }
+    if (typeof provider.priority !== "number") {
+      provider.priority = 0;
+      changed = true;
+    }
   }
 
   for (const user of db.users) {
@@ -283,6 +287,13 @@ function normalizeProviderInput(input, existing = null) {
     ? Math.floor(failoverThresholdRaw)
     : 3;
 
+  const priorityRaw = input.priority === undefined
+    ? (existing?.priority ?? 0)
+    : Number(input.priority);
+  const priority = Number.isFinite(priorityRaw) && priorityRaw >= 0
+    ? Math.floor(priorityRaw)
+    : 0;
+
   return {
     name,
     baseUrl: baseUrl.replace(/\/+$/, ""),
@@ -290,7 +301,8 @@ function normalizeProviderInput(input, existing = null) {
     models: normalizeModels(input.models ?? existing?.models ?? ""),
     modelMappings: normalizeModelMappings(input.modelMappings ?? existing?.modelMappings ?? {}),
     enabled: Boolean(input.enabled ?? existing?.enabled ?? true),
-    failoverThreshold
+    failoverThreshold,
+    priority
   };
 }
 

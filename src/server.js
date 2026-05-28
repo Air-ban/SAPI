@@ -440,10 +440,21 @@ function chooseProvider(db, body = {}) {
   return candidates[0]?.provider || null;
 }
 
+function sortProvidersByPriority(providers) {
+  return providers.slice().sort((a, b) => {
+    const pa = a.priority || 0;
+    const pb = b.priority || 0;
+    if (pa !== pb) return pb - pa;
+    return String(a.createdAt || "").localeCompare(String(b.createdAt || ""));
+  });
+}
+
 function chooseProviderCandidates(db, body = {}) {
   const model = body && typeof body === "object" ? body.model : "";
-  const providers = db.providers.filter(
-    (provider) => provider.enabled && isProviderAvailableForFailover(provider)
+  const providers = sortProvidersByPriority(
+    db.providers.filter(
+      (provider) => provider.enabled && isProviderAvailableForFailover(provider)
+    )
   );
   if (providers.length === 0) return [];
 
@@ -460,8 +471,10 @@ function chooseProviderCandidates(db, body = {}) {
 }
 
 function chooseAnthropicProviderCandidates(db, model) {
-  const providers = db.providers.filter(
-    (provider) => provider.enabled && isProviderAvailableForFailover(provider)
+  const providers = sortProvidersByPriority(
+    db.providers.filter(
+      (provider) => provider.enabled && isProviderAvailableForFailover(provider)
+    )
   );
   if (providers.length === 0) return [];
 
@@ -2294,6 +2307,71 @@ async function handleResponsesProxy(req, res) {
     recordProviderFailure(provider.id);
     sendError(res, 502, `Upstream provider request failed: ${error.message}`, "upstream_request_failed");
   }
+}
+
+function estimateAnthropicInputTokens(body) {
+  let text = "";
+
+  const append = (value) => {
+    if (value === null || value === undefined) return;
+    text += String(value);
+  };
+
+  if (body.system) {
+    if (typeof body.system === "string") {
+      append(body.system);
+    } else if (Array.isArray(body.system)) {
+      for (const item of body.system) {
+        if (item?.type === "text") append(item.text);
+      }
+    }
+  }
+
+  for (const msg of body.messages || []) {
+    append(msg.role);
+    if (typeof msg.content === "string") {
+      append(msg.content);
+    } else if (Array.isArray(msg.content)) {
+      for (const block of msg.content) {
+        if (block?.type === "text" || block?.type === "input_text") {
+          append(block.text);
+        }
+      }
+    }
+  }
+
+  let tokens = 0;
+  for (const char of text) {
+    tokens += char.charCodeAt(0) < 128 ? 0.25 : 0.6;
+  }
+
+  tokens += (body.messages?.length || 0) * 3;
+  if (body.system) tokens += 3;
+
+  return Math.max(1, Math.ceil(tokens));
+}
+
+async function handleAnthropicCountTokens(req, res) {
+  const apiKey = getUserApiKey(req);
+  if (!apiKey) {
+    sendAnthropicError(res, 401, "authentication_error", "SAPI API key is required.");
+    return;
+  }
+
+  const { user, apiKeyRecord } = findUserByKey(apiKey);
+  if (!user) {
+    sendAnthropicError(res, 401, "authentication_error", "Invalid or disabled SAPI API key.");
+    return;
+  }
+
+  const model = req.body?.model || "";
+  if (model && !isModelAllowed(apiKeyRecord, model)) {
+    sendAnthropicError(res, 403, "permission_error", `Model "${model}" is not allowed for this API key.`);
+    return;
+  }
+
+  const inputTokens = estimateAnthropicInputTokens(req.body || {});
+  res.json({ input_tokens: inputTokens });
 }
 
 async function handleAnthropicMessagesProxy(req, res) {
@@ -4416,6 +4494,7 @@ app.get("/api/health/providers", (req, res) => {
 });
 
 app.post("/responses", handleResponsesProxy);
+app.post("/v1/messages/count_tokens", handleAnthropicCountTokens);
 app.post("/v1/messages", handleAnthropicMessagesProxy);
 app.all("/v1/*", proxyToProvider);
 
@@ -4506,6 +4585,23 @@ function runHealthChecks() {
     checkProviderHealth(provider).catch(() => {});
   }
 }
+
+app.use((err, req, res, next) => {
+  if (req.path.startsWith("/api/") || req.path.startsWith("/v1/") || req.path === "/responses") {
+    console.error(`[API Error] ${req.method} ${req.path}:`, err);
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: {
+          message: "Internal server error.",
+          type: "internal_error",
+          code: "internal_error"
+        }
+      });
+    }
+    return;
+  }
+  next(err);
+});
 
 app.listen(PORT, () => {
   console.log(`SAPI is running at http://localhost:${PORT}`);
