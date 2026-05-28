@@ -47,6 +47,194 @@ const C_CYAN = "\x1b[36m";
 const C_DIM = "\x1b[2m";
 const C_BOLD = "\x1b[1m";
 
+const swaggerSpec = {
+  openapi: "3.0.3",
+  info: {
+    title: "SAPI Proxy API",
+    description: "SAPI OpenAI-compatible proxy endpoints. Use your SAPI API Key in the Authorization header: Bearer sk-sapi-...",
+    version: "0.1.0"
+  },
+  servers: [{ url: PUBLIC_BASE_URL }],
+  tags: [
+    { name: "Models", description: "List available models" },
+    { name: "Chat", description: "Chat completions" },
+    { name: "Completions", description: "Text completions" },
+    { name: "Embeddings", description: "Text embeddings" },
+    { name: "Anthropic", description: "Anthropic-compatible endpoints" }
+  ],
+  paths: {
+    "/v1/models": {
+      get: {
+        tags: ["Models"],
+        summary: "List available models",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          "200": { description: "Models list" }
+        }
+      }
+    },
+    "/v1/chat/completions": {
+      post: {
+        tags: ["Chat"],
+        summary: "Chat completions",
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  model: { type: "string", example: "gpt-4o-mini" },
+                  messages: { type: "array", items: { type: "object" }, example: [{ role: "user", content: "hello" }] },
+                  stream: { type: "boolean", example: false },
+                  temperature: { type: "number", example: 0.7 },
+                  max_tokens: { type: "integer", example: 2048 }
+                },
+                required: ["model", "messages"]
+              }
+            }
+          }
+        },
+        responses: {
+          "200": { description: "Chat completion response" }
+        }
+      }
+    },
+    "/v1/completions": {
+      post: {
+        tags: ["Completions"],
+        summary: "Text completions",
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  model: { type: "string" },
+                  prompt: { type: "string" },
+                  stream: { type: "boolean" }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          "200": { description: "Completion response" }
+        }
+      }
+    },
+    "/v1/embeddings": {
+      post: {
+        tags: ["Embeddings"],
+        summary: "Create embeddings",
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  model: { type: "string" },
+                  input: { type: "string" }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          "200": { description: "Embeddings response" }
+        }
+      }
+    },
+    "/v1/messages": {
+      post: {
+        tags: ["Anthropic"],
+        summary: "Anthropic Messages API",
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  model: { type: "string" },
+                  messages: { type: "array", items: { type: "object" } },
+                  max_tokens: { type: "integer" }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          "200": { description: "Message response" }
+        }
+      }
+    },
+    "/v1/messages/count_tokens": {
+      post: {
+        tags: ["Anthropic"],
+        summary: "Count tokens (Anthropic)",
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  model: { type: "string" },
+                  messages: { type: "array", items: { type: "object" } }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          "200": { description: "Token count response" }
+        }
+      }
+    },
+    "/responses": {
+      post: {
+        tags: ["Chat"],
+        summary: "OpenAI Responses API",
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  model: { type: "string" },
+                  input: { type: "string" }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          "200": { description: "Response" }
+        }
+      }
+    }
+  },
+  components: {
+    securitySchemes: {
+      bearerAuth: {
+        type: "http",
+        scheme: "bearer",
+        bearerFormat: "JWT"
+      }
+    }
+  }
+};
+
 const app = express();
 
 app.use(express.json({ limit: "20mb" }));
@@ -243,6 +431,39 @@ function requireAdmin(req, res, next) {
 
 function normalizeUsername(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+function requireAnyAuth(req, res, next) {
+  const token = getBearerToken(req);
+  const db = readDb();
+  const payload = verifyToken(token, db.appSecret);
+
+  if (!payload || !payload.sub) {
+    sendError(res, 401, "Authentication is required.", "unauthorized");
+    return;
+  }
+
+  if (payload.role === "admin") {
+    next();
+    return;
+  }
+
+  if (payload.role === "user") {
+    const user = db.users.find((candidate) => candidate.id === payload.sub);
+    if (!user) {
+      sendError(res, 401, "User account was not found.", "unauthorized");
+      return;
+    }
+    if (!user.enabled) {
+      sendError(res, 403, "User account is disabled.", "user_disabled");
+      return;
+    }
+    req.user = user;
+    next();
+    return;
+  }
+
+  sendError(res, 401, "Authentication is required.", "unauthorized");
 }
 
 function requireUserAccount(req, res, next) {
@@ -3410,7 +3631,7 @@ app.post("/api/auth/send-verification-code", async (req, res) => {
       from: config.from || config.user,
       to: email,
       subject: "SAPI 验证码",
-      text: `您的验证码是：${code}\n\n验证码 10 分钟内有效。如非本人操作，请忽略此邮件。`
+      text: `您的验证码是：${code}\n\n验证码 10 分钟内有效。如未收到，请检查垃圾邮件文件夹。如非本人操作，请忽略此邮件。`
     });
     res.json({ success: true });
   } catch (error) {
@@ -4074,7 +4295,7 @@ async function sendAnnouncementEmail(db, announcement) {
         from: config.from || config.user,
         to: user.email,
         subject: `【公告】${announcement.title}`,
-        text: `${announcement.title}\n\n${announcement.content}\n\n---\n此邮件由系统自动发送。如果您觉得邮件比较打扰，可以前往 ${baseUrl}/#portal 关闭"接收公告邮件通知"。`,
+        text: `${announcement.title}\n\n${announcement.content}\n\n---\n此邮件由系统自动发送。如未收到，请检查垃圾邮件文件夹。如果您觉得邮件比较打扰，可以前往 ${baseUrl}/#portal 关闭"接收公告邮件通知"。`,
         html
       });
     } catch {
@@ -4183,7 +4404,8 @@ app.get("/api/admin/state", requireAdmin, (req, res) => {
     usage: getUsageStats(db),
     invitationCodes: db.invitationCodes || [],
     announcements: db.announcements || [],
-    documents: db.documents || [],
+    suggestions: db.suggestions || [],
+    siteEmail: db.siteEmail || "",
     smtpConfig: {
       host: smtp.host,
       port: smtp.port,
@@ -4431,7 +4653,7 @@ app.post("/api/auth/forgot-password/send-code", async (req, res) => {
       from: config.from || config.user,
       to: email,
       subject: "SAPI 密码重置验证码",
-      text: `您的密码重置验证码是：${code}\n\n验证码 10 分钟内有效。如非本人操作，请忽略此邮件。`
+      text: `您的密码重置验证码是：${code}\n\n验证码 10 分钟内有效。如未收到，请检查垃圾邮件文件夹。如非本人操作，请忽略此邮件。`
     });
     res.json({ success: true });
   } catch (error) {
@@ -4543,135 +4765,109 @@ function handleModelsList(req, res) {
 app.get("/v1/models", handleModelsList);
 app.get("/models", handleModelsList);
 
-app.get("/api/documents", (req, res) => {
-  const db = readDb();
-  const documents = (db.documents || [])
-    .filter((item) => item.published === true)
-    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
-  res.json({ documents: documents.map((d) => ({ id: d.id, title: d.title, slug: d.slug, description: d.description, createdAt: d.createdAt, updatedAt: d.updatedAt })) });
-});
-
-app.get("/api/documents/:slug", (req, res) => {
-  const db = readDb();
-  const document = (db.documents || []).find((d) => d.slug === req.params.slug && d.published === true);
-  if (!document) {
-    sendError(res, 404, "Document not found.", "not_found");
-    return;
-  }
-  res.json({ document });
-});
-
-app.get("/api/admin/documents", requireAdmin, (req, res) => {
-  const db = readDb();
-  res.json({ documents: db.documents || [] });
-});
-
-app.post("/api/admin/documents", requireAdmin, (req, res) => {
+app.post("/api/suggestions", async (req, res) => {
   const title = String(req.body?.title || "").trim();
-  const slug = String(req.body?.slug || "").trim();
   const content = String(req.body?.content || "").trim();
-  const description = String(req.body?.description || "").trim();
-  const published = Boolean(req.body?.published);
+  const contact = String(req.body?.contact || "").trim();
 
   if (!title) {
     sendError(res, 400, "Title is required.", "invalid_title");
     return;
   }
-  if (!slug) {
-    sendError(res, 400, "Slug is required.", "invalid_slug");
-    return;
-  }
-  if (!/^[a-z0-9-]+$/.test(slug)) {
-    sendError(res, 400, "Slug must contain only lowercase letters, numbers, and hyphens.", "invalid_slug");
+  if (!content) {
+    sendError(res, 400, "Content is required.", "invalid_content");
     return;
   }
 
-  const record = mutateDb((db) => {
-    if (!Array.isArray(db.documents)) db.documents = [];
-    const exists = db.documents.some((d) => d.slug === slug);
-    if (exists) return null;
-    const createdAt = now();
-    const item = {
-      id: randomId("doc"),
-      title,
-      slug,
-      content,
-      description,
-      published,
-      createdAt,
-      updatedAt: createdAt
-    };
-    db.documents.push(item);
-    return item;
+  const token = getBearerToken(req);
+  const db = readDb();
+  const payload = verifyToken(token, db.appSecret);
+  let userId = "";
+  let userName = "";
+  if (payload && payload.sub && payload.role === "user") {
+    const user = db.users.find((u) => u.id === payload.sub);
+    if (user) {
+      userId = user.id;
+      userName = user.name || user.username || "";
+    }
+  }
+
+  const suggestion = {
+    id: randomId("sg"),
+    title,
+    content,
+    contact,
+    userId,
+    userName,
+    createdAt: now(),
+    updatedAt: now()
+  };
+
+  mutateDb((db) => {
+    if (!Array.isArray(db.suggestions)) db.suggestions = [];
+    db.suggestions.unshift(suggestion);
   });
 
-  if (!record) {
-    sendError(res, 409, "Document with this slug already exists.", "slug_exists");
-    return;
+  const siteEmail = db.siteEmail || "";
+  if (siteEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(siteEmail)) {
+    const smtp = getSmtpConfig(db);
+    const transport = createSmtpTransport(smtp);
+    if (transport) {
+      try {
+        await transport.sendMail({
+          from: smtp.from || smtp.user,
+          to: siteEmail,
+          subject: `[SAPI 建议反馈] ${title}`,
+          text: `用户提交了新的建议反馈。\n\n标题：${title}\n内容：${content}\n${contact ? `联系方式：${contact}\n` : ""}${userName ? `提交用户：${userName}\n` : ""}提交时间：${suggestion.createdAt}\n\n请在管理后台查看详情。如未收到此邮件，请检查垃圾邮件文件夹。`
+        });
+      } catch {
+        // Ignore email sending failures.
+      }
+    }
   }
 
-  res.status(201).json(record);
+  res.json({ success: true, suggestion });
 });
 
-app.put("/api/admin/documents/:id", requireAdmin, (req, res) => {
-  const updated = mutateDb((db) => {
-    if (!Array.isArray(db.documents)) db.documents = [];
-    const item = db.documents.find((d) => d.id === req.params.id);
-    if (!item) return null;
-
-    if (req.body?.title !== undefined) {
-      item.title = String(req.body.title || "").trim() || item.title;
-    }
-    if (req.body?.slug !== undefined) {
-      const newSlug = String(req.body.slug || "").trim();
-      if (newSlug && !/^[a-z0-9-]+$/.test(newSlug)) return { error: "invalid_slug" };
-      const exists = db.documents.some((d) => d.slug === newSlug && d.id !== item.id);
-      if (exists) return { error: "slug_exists" };
-      if (newSlug) item.slug = newSlug;
-    }
-    if (req.body?.content !== undefined) {
-      item.content = String(req.body.content || "").trim();
-    }
-    if (req.body?.description !== undefined) {
-      item.description = String(req.body.description || "").trim();
-    }
-    if (req.body?.published !== undefined) {
-      item.published = Boolean(req.body.published);
-    }
-    item.updatedAt = now();
-    return item;
-  });
-
-  if (!updated) {
-    sendError(res, 404, "Document not found.", "not_found");
-    return;
-  }
-  if (updated.error === "invalid_slug") {
-    sendError(res, 400, "Slug must contain only lowercase letters, numbers, and hyphens.", "invalid_slug");
-    return;
-  }
-  if (updated.error === "slug_exists") {
-    sendError(res, 409, "Document with this slug already exists.", "slug_exists");
-    return;
-  }
-
-  res.json(updated);
+app.get("/api/admin/suggestions", requireAdmin, (req, res) => {
+  const db = readDb();
+  const suggestions = (db.suggestions || []).sort((a, b) =>
+    String(b.createdAt || "").localeCompare(String(a.createdAt || ""))
+  );
+  res.json({ suggestions });
 });
 
-app.delete("/api/admin/documents/:id", requireAdmin, (req, res) => {
+app.delete("/api/admin/suggestions/:id", requireAdmin, (req, res) => {
   const removed = mutateDb((db) => {
-    if (!Array.isArray(db.documents)) db.documents = [];
-    const before = db.documents.length;
-    db.documents = db.documents.filter((d) => d.id !== req.params.id);
-    return before !== db.documents.length;
+    if (!Array.isArray(db.suggestions)) db.suggestions = [];
+    const before = db.suggestions.length;
+    db.suggestions = db.suggestions.filter((s) => s.id !== req.params.id);
+    return before !== db.suggestions.length;
   });
 
   if (!removed) {
-    sendError(res, 404, "Document not found.", "not_found");
+    sendError(res, 404, "Suggestion not found.", "not_found");
     return;
   }
 
   res.status(204).end();
+});
+
+app.get("/api/admin/site-email", requireAdmin, (req, res) => {
+  const db = readDb();
+  res.json({ siteEmail: db.siteEmail || "" });
+});
+
+app.put("/api/admin/site-email", requireAdmin, (req, res) => {
+  const email = String(req.body?.siteEmail || "").trim();
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    sendError(res, 400, "Valid email address is required.", "invalid_email");
+    return;
+  }
+  mutateDb((db) => {
+    db.siteEmail = email;
+  });
+  res.json({ siteEmail: email });
 });
 
 app.get("/api/health/providers", (req, res) => {
@@ -4705,6 +4901,43 @@ app.post("/responses", handleResponsesProxy);
 app.post("/v1/messages/count_tokens", handleAnthropicCountTokens);
 app.post("/v1/messages", handleAnthropicMessagesProxy);
 app.all("/v1/*", proxyToProvider);
+
+app.get("/api/swagger.json", (req, res) => {
+  res.json(swaggerSpec);
+});
+
+app.get("/swagger", (req, res) => {
+  res.send(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>SAPI API Docs</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+  <style>html,body{margin:0;padding:0;height:100%}</style>
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>
+    (function() {
+      var token = localStorage.getItem("sapiUserToken") || localStorage.getItem("sapiAdminToken") || "";
+      SwaggerUIBundle({
+        url: '/api/swagger.json',
+        dom_id: '#swagger-ui',
+        presets: [SwaggerUIBundle.presets.apis, SwaggerUIBundle.presets.standalone],
+        requestInterceptor: function(req) {
+          if (token) {
+            req.headers = req.headers || {};
+            req.headers.Authorization = "Bearer " + token;
+          }
+          return req;
+        }
+      });
+    })();
+  </script>
+</body>
+</html>`);
+});
 
 app.use((req, res) => {
   if (req.path.startsWith("/api/") || req.path.startsWith("/v1/") || req.path === "/responses") {

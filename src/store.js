@@ -77,6 +77,14 @@ function readDb() {
     db.documents = [];
     changed = true;
   }
+  if (!Array.isArray(db.suggestions)) {
+    db.suggestions = [];
+    changed = true;
+  }
+  if (db.siteEmail === undefined) {
+    db.siteEmail = "";
+    changed = true;
+  }
   for (const provider of db.providers) {
     if (!provider.healthStatus) {
       provider.healthStatus = "unknown";
