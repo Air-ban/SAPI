@@ -39,6 +39,14 @@ const HOP_BY_HOP_HEADERS = new Set([
   "content-length"
 ]);
 
+const C_RESET = "\x1b[0m";
+const C_GREEN = "\x1b[32m";
+const C_RED = "\x1b[31m";
+const C_YELLOW = "\x1b[33m";
+const C_CYAN = "\x1b[36m";
+const C_DIM = "\x1b[2m";
+const C_BOLD = "\x1b[1m";
+
 const app = express();
 
 app.use(express.json({ limit: "20mb" }));
@@ -49,24 +57,22 @@ app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-API-Key, anthropic-version, anthropic-beta");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
 
+  const startMs = Date.now();
+  res.on("finish", () => {
+    const duration = Date.now() - startMs;
+    const ok = res.statusCode < 400;
+    const ts = new Date().toLocaleString("zh-CN", { hour12: false });
+    const statusColor = ok ? C_GREEN : C_RED;
+    const statusLabel = ok ? "OK" : "FAIL";
+    console.log(
+      `${C_DIM}[${ts}]${C_RESET} ${C_CYAN}${req.method}${C_RESET} ${C_BOLD}${req.path}${C_RESET} ` +
+      `${statusColor}${C_BOLD}${res.statusCode} ${statusLabel}${C_RESET} ${C_DIM}${duration}ms${C_RESET}`
+    );
+  });
+
   if (req.method === "OPTIONS") {
     res.status(204).end();
     return;
-  }
-
-  if (req.path.startsWith("/api/")) {
-    const startMs = Date.now();
-    res.on("finish", () => {
-      const duration = Date.now() - startMs;
-      const ok = res.statusCode < 400;
-      const ts = new Date().toLocaleString("zh-CN", { hour12: false });
-      const statusColor = ok ? C_GREEN : C_RED;
-      const statusLabel = ok ? "OK" : "FAIL";
-      console.log(
-        `${C_DIM}[${ts}]${C_RESET} ${C_CYAN}${req.method}${C_RESET} ${C_BOLD}${req.path}${C_RESET} ` +
-        `${statusColor}${C_BOLD}${res.statusCode} ${statusLabel}${C_RESET} ${C_DIM}${duration}ms${C_RESET}`
-      );
-    });
   }
 
   next();
@@ -187,6 +193,7 @@ function sanitizeUser(user, includeKey = true) {
     apiKeys: apiKeys.map((item) => sanitizeApiKeyRecord(item, includeKey)),
     hasApiKey: apiKeys.length > 0 || Boolean(primaryKey),
     enabled: Boolean(user.enabled),
+    receiveAnnouncementEmail: user.receiveAnnouncementEmail !== false,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt
   };
@@ -799,14 +806,6 @@ function trimStoredRecords(db, key, maxRecords = 50000) {
     db[key] = db[key].slice(db[key].length - maxRecords);
   }
 }
-
-const C_RESET = "\x1b[0m";
-const C_GREEN = "\x1b[32m";
-const C_RED = "\x1b[31m";
-const C_YELLOW = "\x1b[33m";
-const C_CYAN = "\x1b[36m";
-const C_DIM = "\x1b[2m";
-const C_BOLD = "\x1b[1m";
 
 function logRequestToTerminal({ method, endpoint, status, ok, stream, durationMs, userName, model, providerName, errorCode, errorMessage, promptTokens, completionTokens, finishReason }) {
   const ts = new Date().toLocaleString("zh-CN", { hour12: false });
@@ -3698,6 +3697,26 @@ app.delete("/api/user/api-keys/:id", requireUserAccount, (req, res) => {
   res.json({ ok: true });
 });
 
+app.put("/api/user/settings", requireUserAccount, (req, res) => {
+  const updated = mutateDb((db) => {
+    const user = db.users.find((item) => item.id === req.user.id);
+    if (!user) return null;
+
+    if (req.body?.receiveAnnouncementEmail !== undefined) {
+      user.receiveAnnouncementEmail = Boolean(req.body.receiveAnnouncementEmail);
+    }
+    user.updatedAt = now();
+    return user;
+  });
+
+  if (!updated) {
+    sendError(res, 404, "User not found.", "not_found");
+    return;
+  }
+
+  res.json({ user: sanitizeUser(updated) });
+});
+
 function createAdminApiKeyRecord(db, name = "") {
   const createdAt = now();
   if (!Array.isArray(db.adminApiKeys)) db.adminApiKeys = [];
@@ -4020,10 +4039,55 @@ app.get("/api/admin/announcements", requireAdmin, (req, res) => {
   res.json({ announcements: db.announcements || [] });
 });
 
-app.post("/api/admin/announcements", requireAdmin, (req, res) => {
+async function sendAnnouncementEmail(db, announcement) {
+  const config = getSmtpConfig(db);
+  const transport = createSmtpTransport(config);
+  if (!transport) return;
+
+  const recipients = (db.users || []).filter(
+    (u) => u.email && u.enabled !== false && u.receiveAnnouncementEmail !== false
+  );
+  if (!recipients.length) return;
+
+  const baseUrl = PUBLIC_BASE_URL;
+  const html = `
+<div style="font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; max-width: 600px; margin: 0 auto; color: #17202a;">
+  <div style="background: linear-gradient(135deg, #0f766e 0%, #0d9488 100%); padding: 28px; text-align: center; border-radius: 8px 8px 0 0;">
+    <h2 style="color: #fff; margin: 0; font-weight: 780;">HanGuan's SuperAPI 公告</h2>
+  </div>
+  <div style="background: #fff; padding: 28px; border: 1px solid #dce3ea; border-top: 0; border-radius: 0 0 8px 8px;">
+    <h3 style="margin-top: 0; color: #0f766e; font-weight: 760;">${announcement.title}</h3>
+    <div style="line-height: 1.8; white-space: pre-wrap; color: #334155;">${announcement.content.replace(/\n/g, '<br>')}</div>
+    <hr style="border: 0; border-top: 1px solid #dce3ea; margin: 24px 0;">
+    <p style="color: #64748b; font-size: 13px; line-height: 1.7; margin: 0;">
+      此邮件由系统自动发送。如果您觉得邮件比较打扰，可以前往
+      <a href="${baseUrl}/#portal" style="color: #0f766e; text-decoration: none; font-weight: 700;">用户控制台</a>
+      关闭"接收公告邮件通知"。
+    </p>
+  </div>
+</div>
+`;
+
+  for (const user of recipients) {
+    try {
+      await transport.sendMail({
+        from: config.from || config.user,
+        to: user.email,
+        subject: `【公告】${announcement.title}`,
+        text: `${announcement.title}\n\n${announcement.content}\n\n---\n此邮件由系统自动发送。如果您觉得邮件比较打扰，可以前往 ${baseUrl}/#portal 关闭"接收公告邮件通知"。`,
+        html
+      });
+    } catch {
+      // Ignore individual email failures
+    }
+  }
+}
+
+app.post("/api/admin/announcements", requireAdmin, async (req, res) => {
   const title = String(req.body?.title || "").trim();
   const content = String(req.body?.content || "").trim();
   const type = ["info", "warning", "success", "error"].includes(req.body?.type) ? req.body.type : "info";
+  const sendEmail = Boolean(req.body?.sendEmail);
 
   if (!title) {
     sendError(res, 400, "Title is required.", "invalid_title");
@@ -4043,12 +4107,18 @@ app.post("/api/admin/announcements", requireAdmin, (req, res) => {
       content,
       type,
       enabled: true,
+      sendEmail,
       createdAt,
       updatedAt: createdAt
     };
     db.announcements.push(item);
     return item;
   });
+
+  if (sendEmail) {
+    const db = readDb();
+    sendAnnouncementEmail(db, record).catch(() => {});
+  }
 
   res.status(201).json(record);
 });
@@ -4070,6 +4140,9 @@ app.put("/api/admin/announcements/:id", requireAdmin, (req, res) => {
     }
     if (req.body?.enabled !== undefined) {
       item.enabled = Boolean(req.body.enabled);
+    }
+    if (req.body?.sendEmail !== undefined) {
+      item.sendEmail = Boolean(req.body.sendEmail);
     }
     item.updatedAt = now();
     return item;
@@ -4427,7 +4500,7 @@ app.get("/api/public/key", (req, res) => {
   });
 });
 
-app.get("/v1/models", (req, res) => {
+function handleModelsList(req, res) {
   const apiKey = getUserApiKey(req);
   const { db, user, apiKeyRecord } = findUserByKey(apiKey);
   if (!user) {
@@ -4465,7 +4538,10 @@ app.get("/v1/models", (req, res) => {
       cli_support: model.cliSupport || []
     }))
   });
-});
+}
+
+app.get("/v1/models", handleModelsList);
+app.get("/models", handleModelsList);
 
 app.get("/api/documents", (req, res) => {
   const db = readDb();

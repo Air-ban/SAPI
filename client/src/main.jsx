@@ -523,6 +523,17 @@ function App() {
     showToast("API Key 已删除");
   };
 
+  const updateUserSettings = async (body) => {
+    const data = await request("/api/user/settings", {
+      method: "PUT",
+      admin: false,
+      token: userToken,
+      body
+    });
+    setUserSession((current) => ({ ...(current || {}), user: data.user }));
+    showToast("设置已保存");
+  };
+
   const copyText = async (text) => {
     await navigator.clipboard.writeText(text);
     showToast("已复制");
@@ -748,6 +759,9 @@ function App() {
                     .catch((error) => showToast(error.message, "error"))
                 }
                 onCopy={copyText}
+                onUpdateSettings={(body) =>
+                  updateUserSettings(body).catch((error) => showToast(error.message, "error"))
+                }
               />
             ) : (
               <AdminView
@@ -1736,7 +1750,8 @@ function Sidebar({
     { id: "usage", icon: <BarChartIcon />, primary: "请求与用量", secondary: "Token 与请求记录" },
     { id: "models", icon: <ApiIcon />, primary: "模型与端点", secondary: "可用模型和接口" },
     { id: "example", icon: <RocketLaunchIcon />, primary: "调用示例", secondary: "curl 请求模板" },
-    { id: "docs", icon: <BookIcon />, primary: "文档中心", secondary: "查看使用文档" }
+    { id: "docs", icon: <BookIcon />, primary: "文档中心", secondary: "查看使用文档" },
+    { id: "settings", icon: <SettingsIcon />, primary: "通知设置", secondary: "邮件通知偏好设置" }
   ];
   const adminNavGroups = [
     {
@@ -1969,7 +1984,8 @@ function PortalView({
   onUpdateApiKey,
   onDeleteApiKey,
   onRefresh,
-  onCopy
+  onCopy,
+  onUpdateSettings
 }) {
   const effectiveConfig = config || {
     baseUrl: window.location.origin,
@@ -1987,7 +2003,7 @@ function PortalView({
     `  -H "Content-Type: application/json" \\`,
     `  -d '{"model":"${model}","messages":[{"role":"user","content":"hello"}]}'`
   ].join("\n");
-  const currentPage = ["overview", "key", "usage", "models", "example", "docs"].includes(page)
+  const currentPage = ["overview", "key", "usage", "models", "example", "docs", "settings"].includes(page)
     ? page
     : "overview";
   const pageMeta = {
@@ -1996,7 +2012,8 @@ function PortalView({
     usage: { title: "请求与用量", description: "查看 Token 用量和请求记录。" },
     models: { title: "模型与端点", description: "查看当前可用模型和 OpenAI 兼容端点。" },
     example: { title: "调用示例", description: "复制可直接执行的 curl 请求。" },
-    docs: { title: "文档中心", description: "查看使用文档和教程。" }
+    docs: { title: "文档中心", description: "查看使用文档和教程。" },
+    settings: { title: "通知设置", description: "管理邮件通知偏好。" }
   }[currentPage] || {
     title: "可调用 API",
     description: "API Key、模型和端点摘要。"
@@ -2308,7 +2325,54 @@ function PortalView({
       {currentPage === "docs" ? (
         <UserDocsView />
       ) : null}
+
+      {currentPage === "settings" ? (
+        <UserSettingsSection user={user} onUpdateSettings={onUpdateSettings} />
+      ) : null}
     </Stack>
+  );
+}
+
+function UserSettingsSection({ user, onUpdateSettings }) {
+  const [saving, setSaving] = useState(false);
+
+  const handleToggle = async (checked) => {
+    setSaving(true);
+    try {
+      await onUpdateSettings({ receiveAnnouncementEmail: checked });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section title="通知偏好" icon={<SettingsIcon />}>
+      <Paper variant="outlined" sx={{ p: { xs: 2, sm: 3 } }}>
+        <Stack spacing={2}>
+          <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr auto" }, gap: 2, alignItems: "center" }}>
+            <Stack spacing={0.5}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 760 }}>
+                接收公告邮件通知
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                开启后，当管理员发布新公告时，你会收到邮件通知。如果觉得邮件比较打扰，可以关闭此选项。
+              </Typography>
+            </Stack>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={user?.receiveAnnouncementEmail !== false}
+                  onChange={(e) => handleToggle(e.target.checked)}
+                  disabled={saving}
+                />
+              }
+              label=""
+              sx={{ m: 0, justifyContent: "flex-end" }}
+            />
+          </Box>
+        </Stack>
+      </Paper>
+    </Section>
   );
 }
 
@@ -5301,9 +5365,9 @@ function AnnouncementsSection({ announcements, afterChange, onConfirm, onToast }
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ title: "", content: "", type: "info" });
+  const [form, setForm] = useState({ title: "", content: "", type: "info", sendEmail: false });
 
-  const resetForm = () => setForm({ title: "", content: "", type: "info" });
+  const resetForm = () => setForm({ title: "", content: "", type: "info", sendEmail: false });
 
   const createAnnouncement = async () => {
     await request("/api/admin/announcements", {
@@ -5353,7 +5417,7 @@ function AnnouncementsSection({ announcements, afterChange, onConfirm, onToast }
 
   const openEdit = (item) => {
     setEditing(item);
-    setForm({ title: item.title, content: item.content, type: item.type || "info" });
+    setForm({ title: item.title, content: item.content, type: item.type || "info", sendEmail: item.sendEmail === true });
     setEditOpen(true);
   };
 
@@ -5410,6 +5474,9 @@ function AnnouncementsSection({ announcements, afterChange, onConfirm, onToast }
                       color={item.enabled !== false ? "success" : "default"}
                       variant="outlined"
                     />
+                    {item.sendEmail === true ? (
+                      <Chip size="small" label="邮件通知" color="primary" variant="outlined" icon={<MailIcon fontSize="small" />} />
+                    ) : null}
                   </Stack>
                   <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: "pre-wrap" }}>
                     {item.content}
@@ -5478,6 +5545,15 @@ function AnnouncementsSection({ announcements, afterChange, onConfirm, onToast }
                 <MenuItem value="error">错误</MenuItem>
               </Select>
             </FormControl>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={form.sendEmail}
+                  onChange={(e) => setForm((f) => ({ ...f, sendEmail: e.target.checked }))}
+                />
+              }
+              label="同时发送邮件通知给用户"
+            />
           </Stack>
         </DialogContent>
         <DialogActions>
@@ -5518,6 +5594,15 @@ function AnnouncementsSection({ announcements, afterChange, onConfirm, onToast }
                 <MenuItem value="error">错误</MenuItem>
               </Select>
             </FormControl>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={form.sendEmail}
+                  onChange={(e) => setForm((f) => ({ ...f, sendEmail: e.target.checked }))}
+                />
+              }
+              label="同时发送邮件通知给用户"
+            />
           </Stack>
         </DialogContent>
         <DialogActions>

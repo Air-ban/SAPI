@@ -125,6 +125,10 @@ function readDb() {
       user.email = "";
       changed = true;
     }
+    if (user.receiveAnnouncementEmail === undefined) {
+      user.receiveAnnouncementEmail = true;
+      changed = true;
+    }
     if (user.apiKey === undefined || user.apiKey === null) {
       user.apiKey = "";
       changed = true;
