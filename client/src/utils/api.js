@@ -22,6 +22,13 @@ export async function request(path, options = {}) {
   });
   const text = await response.text();
 
+  if (!text.trim()) {
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    return null;
+  }
+
   const contentType = response.headers.get("content-type") || "";
   const looksLikeJson = contentType.includes("application/json") || /^\s*[{\[]/.test(text);
 

@@ -139,7 +139,7 @@ function App() {
       setUserUsage(null);
       return;
     }
-    const data = await request("/api/user/usage", { admin: false, token });
+    const data = await request("/api/user/usage?days=365", { admin: false, token });
     setUserUsage(data);
   }, []);
 

@@ -1,8 +1,11 @@
 package handlers
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/smtp"
 	"strings"
@@ -66,9 +69,14 @@ func sendMail(info SMTPInfo, to, subject, body string) error {
 		return nil
 	}
 
-	msg := "From: " + info.From + "\r\n" +
-		"To: " + to + "\r\n" +
-		"Subject: " + subject + "\r\n" +
+	from := strings.TrimSpace(info.From)
+	if from == "" {
+		from = strings.TrimSpace(info.User)
+	}
+
+	msg := "From: " + sanitizeMailHeader(from) + "\r\n" +
+		"To: " + sanitizeMailHeader(to) + "\r\n" +
+		"Subject: " + sanitizeMailHeader(subject) + "\r\n" +
 		"MIME-Version: 1.0\r\n" +
 		"Content-Type: text/plain; charset=\"UTF-8\"\r\n" +
 		"\r\n" +
@@ -76,7 +84,95 @@ func sendMail(info SMTPInfo, to, subject, body string) error {
 
 	auth := smtp.PlainAuth("", info.User, info.Pass, info.Host)
 	addr := fmt.Sprintf("%s:%d", info.Host, info.Port)
-	return smtp.SendMail(addr, auth, info.From, []string{to}, []byte(msg))
+	return sendSMTPMail(info, addr, auth, from, []string{to}, []byte(msg))
+}
+
+func sendSMTPMail(info SMTPInfo, addr string, auth smtp.Auth, from string, recipients []string, msg []byte) error {
+	var client *smtp.Client
+	var err error
+
+	if useImplicitSMTPTLS(info) {
+		conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 15 * time.Second}, "tcp", addr, &tls.Config{
+			ServerName: info.Host,
+			MinVersion: tls.VersionTLS12,
+		})
+		if err != nil {
+			return err
+		}
+		client, err = smtp.NewClient(conn, info.Host)
+		if err != nil {
+			conn.Close()
+			return err
+		}
+	} else {
+		conn, err := net.DialTimeout("tcp", addr, 15*time.Second)
+		if err != nil {
+			return err
+		}
+		client, err = smtp.NewClient(conn, info.Host)
+		if err != nil {
+			conn.Close()
+			return err
+		}
+	}
+	defer client.Close()
+
+	if err := client.Hello("localhost"); err != nil {
+		return err
+	}
+
+	if !useImplicitSMTPTLS(info) {
+		if ok, _ := client.Extension("STARTTLS"); ok {
+			if err := client.StartTLS(&tls.Config{
+				ServerName: info.Host,
+				MinVersion: tls.VersionTLS12,
+			}); err != nil {
+				return err
+			}
+		}
+	}
+
+	if auth != nil {
+		if ok, _ := client.Extension("AUTH"); ok {
+			if err := client.Auth(auth); err != nil {
+				return err
+			}
+		}
+	}
+
+	if err := client.Mail(from); err != nil {
+		return err
+	}
+	for _, recipient := range recipients {
+		if err := client.Rcpt(recipient); err != nil {
+			return err
+		}
+	}
+
+	writer, err := client.Data()
+	if err != nil {
+		return err
+	}
+	if _, err := writer.Write(msg); err != nil {
+		writer.Close()
+		return err
+	}
+	if err := writer.Close(); err != nil {
+		return err
+	}
+
+	if err := client.Quit(); err != nil && err != io.EOF {
+		return err
+	}
+	return nil
+}
+
+func useImplicitSMTPTLS(info SMTPInfo) bool {
+	return info.Secure || info.Port == 465
+}
+
+func sanitizeMailHeader(value string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(value), "\r", " "), "\n", " ")
 }
 
 func publicConfig() map[string]interface{} {
@@ -327,20 +423,20 @@ func handleProvidersHealth(w http.ResponseWriter, r *http.Request) {
 			history = history[len(history)-60:]
 		}
 		providers = append(providers, map[string]interface{}{
-			"id":                      p.ID,
-			"name":                    p.Name,
-			"baseUrl":                 p.BaseURL,
-			"models":                  p.Models,
-			"modelMappings":           p.ModelMappings,
-			"healthStatus":            p.HealthStatus,
-			"latency":                 p.Latency,
-			"ping":                    p.Ping,
-			"availability7d":          p.Availability7d,
-			"lastHealthCheck":         p.LastHealthCheck,
-			"healthHistory":           history,
-			"consecutiveFailures":     counter.ConsecutiveFailures,
-			"failoverThreshold":       threshold,
-			"isAvailableForFailover":  threshold <= 0 || counter.ConsecutiveFailures < threshold,
+			"id":                     p.ID,
+			"name":                   p.Name,
+			"baseUrl":                p.BaseURL,
+			"models":                 p.Models,
+			"modelMappings":          p.ModelMappings,
+			"healthStatus":           p.HealthStatus,
+			"latency":                p.Latency,
+			"ping":                   p.Ping,
+			"availability7d":         p.Availability7d,
+			"lastHealthCheck":        p.LastHealthCheck,
+			"healthHistory":          history,
+			"consecutiveFailures":    counter.ConsecutiveFailures,
+			"failoverThreshold":      threshold,
+			"isAvailableForFailover": threshold <= 0 || counter.ConsecutiveFailures < threshold,
 		})
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -403,13 +499,13 @@ func handlePostSuggestion(w http.ResponseWriter, r *http.Request) {
 			"用户提交了新的建议反馈。\n\n标题："+title+"\n内容："+content+"\n"+
 				func() string {
 					if contact != "" {
-						return "联系方式："+contact+"\n"
+						return "联系方式：" + contact + "\n"
 					}
 					return ""
 				}()+
 				func() string {
 					if userName != "" {
-						return "提交用户："+userName+"\n"
+						return "提交用户：" + userName + "\n"
 					}
 					return ""
 				}()+
@@ -441,13 +537,13 @@ func handleSwaggerJSON(w http.ResponseWriter, r *http.Request) {
 			{"name": "Anthropic", "description": "Anthropic-compatible endpoints"},
 		},
 		"paths": map[string]interface{}{
-			"/v1/models":             map[string]interface{}{"get": map[string]interface{}{"tags": []string{"Models"}, "summary": "List available models", "security": []map[string][]string{{"bearerAuth": {}}}, "responses": map[string]interface{}{"200": map[string]string{"description": "Models list"}}}},
-			"/v1/chat/completions":   map[string]interface{}{"post": map[string]interface{}{"tags": []string{"Chat"}, "summary": "Chat completions", "security": []map[string][]string{{"bearerAuth": {}}}}},
-			"/v1/completions":        map[string]interface{}{"post": map[string]interface{}{"tags": []string{"Completions"}, "summary": "Text completions", "security": []map[string][]string{{"bearerAuth": {}}}}},
-			"/v1/embeddings":         map[string]interface{}{"post": map[string]interface{}{"tags": []string{"Embeddings"}, "summary": "Create embeddings", "security": []map[string][]string{{"bearerAuth": {}}}}},
-			"/v1/messages":           map[string]interface{}{"post": map[string]interface{}{"tags": []string{"Anthropic"}, "summary": "Anthropic Messages API", "security": []map[string][]string{{"bearerAuth": {}}}}},
+			"/v1/models":                map[string]interface{}{"get": map[string]interface{}{"tags": []string{"Models"}, "summary": "List available models", "security": []map[string][]string{{"bearerAuth": {}}}, "responses": map[string]interface{}{"200": map[string]string{"description": "Models list"}}}},
+			"/v1/chat/completions":      map[string]interface{}{"post": map[string]interface{}{"tags": []string{"Chat"}, "summary": "Chat completions", "security": []map[string][]string{{"bearerAuth": {}}}}},
+			"/v1/completions":           map[string]interface{}{"post": map[string]interface{}{"tags": []string{"Completions"}, "summary": "Text completions", "security": []map[string][]string{{"bearerAuth": {}}}}},
+			"/v1/embeddings":            map[string]interface{}{"post": map[string]interface{}{"tags": []string{"Embeddings"}, "summary": "Create embeddings", "security": []map[string][]string{{"bearerAuth": {}}}}},
+			"/v1/messages":              map[string]interface{}{"post": map[string]interface{}{"tags": []string{"Anthropic"}, "summary": "Anthropic Messages API", "security": []map[string][]string{{"bearerAuth": {}}}}},
 			"/v1/messages/count_tokens": map[string]interface{}{"post": map[string]interface{}{"tags": []string{"Anthropic"}, "summary": "Count tokens (Anthropic)", "security": []map[string][]string{{"bearerAuth": {}}}}},
-			"/responses":             map[string]interface{}{"post": map[string]interface{}{"tags": []string{"Chat"}, "summary": "OpenAI Responses API", "security": []map[string][]string{{"bearerAuth": {}}}}},
+			"/responses":                map[string]interface{}{"post": map[string]interface{}{"tags": []string{"Chat"}, "summary": "OpenAI Responses API", "security": []map[string][]string{{"bearerAuth": {}}}}},
 		},
 		"components": map[string]interface{}{
 			"securitySchemes": map[string]interface{}{

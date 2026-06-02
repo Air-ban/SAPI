@@ -20,6 +20,7 @@ import RocketLaunchIcon from "@mui/icons-material/RocketLaunch";
 import { EmptyState } from "../components/EmptyState";
 import { Metric } from "../components/Metric";
 import { Section } from "../components/Section";
+import { RequestHeatmap } from "./RequestHeatmap";
 import {
   cacheHitText,
   formatDate,
@@ -54,6 +55,12 @@ export function UsageSection({ usage }) {
         <EmptyState text="暂无调用记录。" />
       ) : (
         <Stack spacing={2}>
+          {usage.byDay.length > 0 ? (
+            <Paper variant="outlined" sx={statCardSx}>
+              <RequestHeatmap data={usage.byDay} title="每日调用次数" />
+            </Paper>
+          ) : null}
+
           <Box
             sx={{
               display: "grid",

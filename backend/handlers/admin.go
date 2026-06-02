@@ -57,19 +57,19 @@ func handleAdminState(w http.ResponseWriter, r *http.Request) {
 	smtp := getSMTPConfig(db)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"providers":         store.RedactProviders(db.Providers),
-		"users":             sanitizeUsers(db.Users),
-		"adminApiKeys":      sanitizeAdminAPIKeys(db.AdminAPIKeys),
-		"publicConfig":      serviceConfig(),
-		"usage":             usage.GetUsageStats(db, "", 30),
-		"invitationCodes":   db.InvitationCodes,
-		"announcements":     db.Announcements,
-		"suggestions":       db.Suggestions,
-		"siteBanner":        db.SiteBanner,
-		"maintenanceMode":   db.MaintenanceMode,
+		"providers":          store.RedactProviders(db.Providers),
+		"users":              sanitizeUsers(db.Users),
+		"adminApiKeys":       sanitizeAdminAPIKeys(db.AdminAPIKeys),
+		"publicConfig":       serviceConfig(),
+		"usage":              usage.GetUsageStats(db, "", 30),
+		"invitationCodes":    db.InvitationCodes,
+		"announcements":      db.Announcements,
+		"suggestions":        db.Suggestions,
+		"siteBanner":         db.SiteBanner,
+		"maintenanceMode":    db.MaintenanceMode,
 		"maintenanceEndTime": db.MaintenanceEndTime,
-		"siteEmail":         db.SiteEmail,
-		"defaultRpmLimit":   db.DefaultRPMLimit,
+		"siteEmail":          db.SiteEmail,
+		"defaultRpmLimit":    db.DefaultRPMLimit,
 		"smtpConfig": map[string]interface{}{
 			"host":    smtp.Host,
 			"port":    smtp.Port,
@@ -108,12 +108,17 @@ func handleAdminUpdateSMTP(w http.ResponseWriter, r *http.Request) {
 	json.NewDecoder(r.Body).Decode(&body)
 
 	updated := store.MutateDB(func(db *models.Database) interface{} {
+		pass := strings.TrimSpace(toString(body["pass"]))
+		if pass == "" && db.SMTPConfig != nil {
+			pass = db.SMTPConfig.Pass
+		}
+
 		db.SMTPConfig = &models.SMTPConfig{
 			Host:   strings.TrimSpace(toString(body["host"])),
 			Port:   int(toFloat(body["port"])),
 			Secure: toBool(body["secure"]),
 			User:   strings.TrimSpace(toString(body["user"])),
-			Pass:   strings.TrimSpace(toString(body["pass"])),
+			Pass:   pass,
 			From:   strings.TrimSpace(toString(body["from"])),
 		}
 		if db.SMTPConfig.Port == 0 {
