@@ -80,6 +80,7 @@ func buildSpaHandler(publicDir string) http.HandlerFunc {
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !isAPIPath(r.URL.Path) && r.URL.Path != "/swagger" && r.URL.Path != "/models" {
+			w.Header().Set("Cache-Control", "no-store")
 			path := filepath.Join(publicDir, filepath.Clean(r.URL.Path))
 			if info, err := os.Stat(path); err == nil && !info.IsDir() {
 				fs.ServeHTTP(w, r)
