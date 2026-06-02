@@ -44,6 +44,7 @@ func MountAdminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/admin/announcements/{id}", middleware.RequireAdmin(handleAdminUpdateAnnouncement))
 	mux.HandleFunc("DELETE /api/admin/announcements/{id}", middleware.RequireAdmin(handleAdminDeleteAnnouncement))
 	mux.HandleFunc("GET /api/admin/suggestions", middleware.RequireAdmin(handleAdminListSuggestions))
+	mux.HandleFunc("PUT /api/admin/suggestions/{id}/reply", middleware.RequireAdmin(handleAdminReplySuggestion))
 	mux.HandleFunc("DELETE /api/admin/suggestions/{id}", middleware.RequireAdmin(handleAdminDeleteSuggestion))
 	mux.HandleFunc("GET /api/admin/site-email", middleware.RequireAdmin(handleAdminGetSiteEmail))
 	mux.HandleFunc("PUT /api/admin/site-email", middleware.RequireAdmin(handleAdminUpdateSiteEmail))
@@ -825,6 +826,39 @@ func handleAdminListSuggestions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"suggestions": suggestions})
+}
+
+func handleAdminReplySuggestion(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var body map[string]interface{}
+	json.NewDecoder(r.Body).Decode(&body)
+	reply := strings.TrimSpace(toString(body["reply"]))
+
+	result := store.MutateDB(func(db *models.Database) interface{} {
+		for i := range db.Suggestions {
+			if db.Suggestions[i].ID == id {
+				now := store.Now()
+				db.Suggestions[i].Reply = reply
+				db.Suggestions[i].UpdatedAt = now
+				if reply == "" {
+					db.Suggestions[i].RepliedAt = ""
+					db.Suggestions[i].RepliedBy = ""
+				} else {
+					db.Suggestions[i].RepliedAt = now
+					db.Suggestions[i].RepliedBy = "admin"
+				}
+				return &db.Suggestions[i]
+			}
+		}
+		return nil
+	})
+
+	if result == nil {
+		utils.SendError(w, 404, "Suggestion not found.", "not_found")
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{"suggestion": result})
 }
 
 func handleAdminDeleteSuggestion(w http.ResponseWriter, r *http.Request) {

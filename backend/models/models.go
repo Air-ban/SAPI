@@ -1,46 +1,46 @@
 package models
 
 type Database struct {
-	Version             int              `json:"version"`
-	AppSecret           string           `json:"appSecret"`
-	Providers           []Provider       `json:"providers"`
-	Users               []User           `json:"users"`
-	TokenUsage          []interface{}    `json:"tokenUsage"`
-	RequestLogs         []RequestLog     `json:"requestLogs"`
-	AdminAPIKeys        []APIKeyRecord   `json:"adminApiKeys"`
-	InvitationCodes     []InvitationCode `json:"invitationCodes"`
-	VerificationCodes   []VerificationCode `json:"verificationCodes"`
-	Announcements       []Announcement   `json:"announcements"`
-	Documents           []interface{}    `json:"documents"`
-	Suggestions         []Suggestion     `json:"suggestions"`
-	SMTPConfig          *SMTPConfig      `json:"smtpConfig"`
-	SiteEmail           string           `json:"siteEmail"`
-	DefaultRPMLimit     int              `json:"defaultRpmLimit"`
-	SiteBanner          *SiteBanner      `json:"siteBanner"`
-	MaintenanceMode     bool             `json:"maintenanceMode"`
-	MaintenanceEndTime  string           `json:"maintenanceEndTime"`
-	CreatedAt           string           `json:"createdAt"`
-	UpdatedAt           string           `json:"updatedAt"`
+	Version            int                `json:"version"`
+	AppSecret          string             `json:"appSecret"`
+	Providers          []Provider         `json:"providers"`
+	Users              []User             `json:"users"`
+	TokenUsage         []interface{}      `json:"tokenUsage"`
+	RequestLogs        []RequestLog       `json:"requestLogs"`
+	AdminAPIKeys       []APIKeyRecord     `json:"adminApiKeys"`
+	InvitationCodes    []InvitationCode   `json:"invitationCodes"`
+	VerificationCodes  []VerificationCode `json:"verificationCodes"`
+	Announcements      []Announcement     `json:"announcements"`
+	Documents          []interface{}      `json:"documents"`
+	Suggestions        []Suggestion       `json:"suggestions"`
+	SMTPConfig         *SMTPConfig        `json:"smtpConfig"`
+	SiteEmail          string             `json:"siteEmail"`
+	DefaultRPMLimit    int                `json:"defaultRpmLimit"`
+	SiteBanner         *SiteBanner        `json:"siteBanner"`
+	MaintenanceMode    bool               `json:"maintenanceMode"`
+	MaintenanceEndTime string             `json:"maintenanceEndTime"`
+	CreatedAt          string             `json:"createdAt"`
+	UpdatedAt          string             `json:"updatedAt"`
 }
 
 type Provider struct {
-	ID                  string              `json:"id"`
-	Name                string              `json:"name"`
-	BaseURL             string              `json:"baseUrl"`
-	APIKey              string              `json:"apiKey"`
-	Models              []Model             `json:"models"`
-	ModelMappings       map[string]string   `json:"modelMappings"`
-	Enabled             bool                `json:"enabled"`
-	FailoverThreshold   int                 `json:"failoverThreshold"`
-	Priority            int                 `json:"priority"`
-	HealthStatus        string              `json:"healthStatus"`
-	Latency             int                 `json:"latency"`
-	Ping                int                 `json:"ping"`
-	Availability7d      float64             `json:"availability7d"`
-	HealthHistory       []HealthHistoryEntry `json:"healthHistory"`
-	LastHealthCheck     string              `json:"lastHealthCheck"`
-	CreatedAt           string              `json:"createdAt"`
-	UpdatedAt           string              `json:"updatedAt"`
+	ID                string               `json:"id"`
+	Name              string               `json:"name"`
+	BaseURL           string               `json:"baseUrl"`
+	APIKey            string               `json:"apiKey"`
+	Models            []Model              `json:"models"`
+	ModelMappings     map[string]string    `json:"modelMappings"`
+	Enabled           bool                 `json:"enabled"`
+	FailoverThreshold int                  `json:"failoverThreshold"`
+	Priority          int                  `json:"priority"`
+	HealthStatus      string               `json:"healthStatus"`
+	Latency           int                  `json:"latency"`
+	Ping              int                  `json:"ping"`
+	Availability7d    float64              `json:"availability7d"`
+	HealthHistory     []HealthHistoryEntry `json:"healthHistory"`
+	LastHealthCheck   string               `json:"lastHealthCheck"`
+	CreatedAt         string               `json:"createdAt"`
+	UpdatedAt         string               `json:"updatedAt"`
 }
 
 type Model struct {
@@ -71,15 +71,15 @@ type User struct {
 }
 
 type APIKeyRecord struct {
-	ID             string   `json:"id"`
-	Name           string   `json:"name"`
-	Key            string   `json:"key"`
-	Enabled        bool     `json:"enabled"`
-	AllowedModels  []string `json:"allowedModels"`
-	RPMLimit       int      `json:"rpmLimit"`
-	CreatedAt      string   `json:"createdAt"`
-	UpdatedAt      string   `json:"updatedAt"`
-	LastUsedAt     string   `json:"lastUsedAt"`
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	Key           string   `json:"key"`
+	Enabled       bool     `json:"enabled"`
+	AllowedModels []string `json:"allowedModels"`
+	RPMLimit      int      `json:"rpmLimit"`
+	CreatedAt     string   `json:"createdAt"`
+	UpdatedAt     string   `json:"updatedAt"`
+	LastUsedAt    string   `json:"lastUsedAt"`
 }
 
 type RequestLog struct {
@@ -113,14 +113,14 @@ type RequestLog struct {
 }
 
 type InvitationCode struct {
-	ID        string               `json:"id"`
-	Code      string               `json:"code"`
-	Note      string               `json:"note"`
-	CreatedAt string               `json:"createdAt"`
-	ExpiresAt string               `json:"expiresAt"`
-	MaxUses   int                  `json:"maxUses"`
-	UsedCount int                  `json:"usedCount"`
-	UsedBy    []InvitationCodeUse  `json:"usedBy"`
+	ID        string              `json:"id"`
+	Code      string              `json:"code"`
+	Note      string              `json:"note"`
+	CreatedAt string              `json:"createdAt"`
+	ExpiresAt string              `json:"expiresAt"`
+	MaxUses   int                 `json:"maxUses"`
+	UsedCount int                 `json:"usedCount"`
+	UsedBy    []InvitationCodeUse `json:"usedBy"`
 }
 
 type InvitationCodeUse struct {
@@ -154,6 +154,9 @@ type Suggestion struct {
 	Contact   string `json:"contact"`
 	UserID    string `json:"userId"`
 	UserName  string `json:"userName"`
+	Reply     string `json:"reply"`
+	RepliedAt string `json:"repliedAt"`
+	RepliedBy string `json:"repliedBy"`
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt"`
 }

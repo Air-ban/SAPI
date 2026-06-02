@@ -24,6 +24,7 @@ func MountUserRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/user/api-keys/{id}", middleware.RequireUserAccount(handleUserDeleteAPIKey))
 	mux.HandleFunc("PUT /api/user/settings", middleware.RequireUserAccount(handleUserSettings))
 	mux.HandleFunc("GET /api/user/usage", middleware.RequireUserAccount(handleUserUsage))
+	mux.HandleFunc("GET /api/user/suggestions", middleware.RequireUserAccount(handleUserSuggestions))
 }
 
 func handleUserMe(w http.ResponseWriter, r *http.Request) {
@@ -305,6 +306,25 @@ func handleUserUsage(w http.ResponseWriter, r *http.Request) {
 		days = min(max(d, 1), 365)
 	}
 	json.NewEncoder(w).Encode(usage.GetUsageStats(db, user.ID, days))
+}
+
+func handleUserSuggestions(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r)
+	db := store.ReadDB()
+	items := make([]models.Suggestion, 0)
+	for _, suggestion := range db.Suggestions {
+		if suggestion.UserID == user.ID {
+			items = append(items, suggestion)
+		}
+	}
+	for i := 0; i < len(items); i++ {
+		for j := i + 1; j < len(items); j++ {
+			if items[j].CreatedAt > items[i].CreatedAt {
+				items[i], items[j] = items[j], items[i]
+			}
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"suggestions": items})
 }
 
 func createUserAPIKeyRecord(user *models.User, name string, allowedModels []string, rpmLimit int) *models.APIKeyRecord {
