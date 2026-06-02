@@ -31,10 +31,17 @@ func handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	username, _ := body["username"].(string)
 	password, _ := body["password"].(string)
 
+	if !checkLoginRateLimit(w, r, username) {
+		return
+	}
+
 	if !auth.SafeEqual(username, cfg.AdminUser) || !auth.SafeEqual(password, cfg.AdminPassword) {
+		recordLoginFailure(r, username)
 		utils.SendError(w, 401, "Invalid admin username or password.", "invalid_login")
 		return
 	}
+
+	clearLoginFailures(username)
 
 	db := store.ReadDB()
 	token := auth.SignTokenString(auth.TokenPayload{Role: "admin", Sub: cfg.AdminUser}, db.AppSecret)
@@ -52,7 +59,12 @@ func handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	identifier := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", body["username"])))
 	password, _ := body["password"].(string)
 
+	if !checkLoginRateLimit(w, r, identifier) {
+		return
+	}
+
 	if auth.SafeEqual(identifier, normalizeUsername(cfg.AdminUser)) && auth.SafeEqual(password, cfg.AdminPassword) {
+		clearLoginFailures(identifier)
 		db := store.ReadDB()
 		token := auth.SignTokenString(auth.TokenPayload{Role: "admin", Sub: cfg.AdminUser}, db.AppSecret)
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -81,14 +93,18 @@ func handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if foundUser == nil || foundUser.PasswordHash == "" || !auth.VerifyPassword(password, foundUser.PasswordHash) {
+		recordLoginFailure(r, identifier)
 		utils.SendError(w, 401, "Invalid username, email or password.", "invalid_login")
 		return
 	}
 
 	if !foundUser.Enabled {
+		recordLoginFailure(r, identifier)
 		utils.SendError(w, 403, "User account is disabled.", "user_disabled")
 		return
 	}
+
+	clearLoginFailures(identifier)
 
 	token := auth.SignTokenString(auth.TokenPayload{Role: "user", Sub: foundUser.ID}, db.AppSecret)
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -472,17 +488,17 @@ func sanitizeUser(user *models.User) map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"id":                        user.ID,
-		"name":                      user.Name,
-		"username":                  user.Username,
-		"email":                     user.Email,
-		"apiKey":                    primaryKey,
-		"apiKeys":                   sanitizedKeys,
-		"hasApiKey":                 len(apiKeys) > 0 || primaryKey != "",
-		"enabled":                   user.Enabled,
-		"receiveAnnouncementEmail":  user.ReceiveAnnouncementEmail,
-		"createdAt":                 user.CreatedAt,
-		"updatedAt":                 user.UpdatedAt,
+		"id":                       user.ID,
+		"name":                     user.Name,
+		"username":                 user.Username,
+		"email":                    user.Email,
+		"apiKey":                   primaryKey,
+		"apiKeys":                  sanitizedKeys,
+		"hasApiKey":                len(apiKeys) > 0 || primaryKey != "",
+		"enabled":                  user.Enabled,
+		"receiveAnnouncementEmail": user.ReceiveAnnouncementEmail,
+		"createdAt":                user.CreatedAt,
+		"updatedAt":                user.UpdatedAt,
 	}
 }
 
@@ -516,16 +532,16 @@ func sanitizeAPIKeyRecord(record *models.APIKeyRecord) map[string]interface{} {
 	}
 	preview := maskKey(key)
 	return map[string]interface{}{
-		"id":             getRecordID(record),
-		"name":           getRecordName(record),
-		"key":            key,
-		"preview":        preview,
-		"enabled":        getRecordEnabled(record),
-		"allowedModels":  getRecordAllowedModels(record),
-		"rpmLimit":       getRecordRPMLimit(record),
-		"createdAt":      getRecordCreatedAt(record),
-		"updatedAt":      getRecordUpdatedAt(record),
-		"lastUsedAt":     getRecordLastUsedAt(record),
+		"id":            getRecordID(record),
+		"name":          getRecordName(record),
+		"key":           key,
+		"preview":       preview,
+		"enabled":       getRecordEnabled(record),
+		"allowedModels": getRecordAllowedModels(record),
+		"rpmLimit":      getRecordRPMLimit(record),
+		"createdAt":     getRecordCreatedAt(record),
+		"updatedAt":     getRecordUpdatedAt(record),
+		"lastUsedAt":    getRecordLastUsedAt(record),
 	}
 }
 
