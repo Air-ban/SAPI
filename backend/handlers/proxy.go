@@ -1,0 +1,1208 @@
+package handlers
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"strings"
+	"time"
+
+	"sapi/logging"
+	"sapi/middleware"
+	"sapi/models"
+	"sapi/proxy"
+	"sapi/utils"
+)
+
+func MountProxyRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /chat/completions", handleProxyToProvider)
+	mux.HandleFunc("POST /responses", handleResponsesProxyHandler)
+	mux.HandleFunc("POST /v1/responses", handleResponsesProxyHandler)
+	mux.HandleFunc("POST /messages/count_tokens", handleAnthropicCountTokensHandler)
+	mux.HandleFunc("POST /v1/messages/count_tokens", handleAnthropicCountTokensHandler)
+	mux.HandleFunc("POST /messages", handleAnthropicMessagesProxyHandler)
+	mux.HandleFunc("POST /v1/messages", handleAnthropicMessagesProxyHandler)
+	mux.HandleFunc("/v1/", handleProxyToProvider)
+}
+
+func maskKeyPreview(key string) string {
+	if key == "" {
+		return ""
+	}
+	if len(key) <= 12 {
+		return key[:min(6, len(key))] + "..."
+	}
+	return key[:12] + "..." + key[len(key)-min(6, len(key)-12):]
+}
+
+type apiKeyInfo struct {
+	User         *models.User
+	APIKeyRecord *models.APIKeyRecord
+	DB           *models.Database
+}
+
+func validateProxyRequest(w http.ResponseWriter, r *http.Request) (*apiKeyInfo, bool) {
+	apiKey := utils.GetUserAPIKey(r)
+	if apiKey == "" {
+		utils.SendError(w, 401, "SAPI API key is required.", "missing_api_key")
+		return nil, false
+	}
+
+	result := middleware.FindUserByKey(apiKey)
+	if result.User == nil {
+		utils.SendError(w, 401, "Invalid or disabled SAPI API key.", "invalid_api_key")
+		return nil, false
+	}
+
+	if middleware.CheckMaintenanceMode(result.DB, w) {
+		return nil, false
+	}
+
+	info := &apiKeyInfo{
+		User:         result.User,
+		APIKeyRecord: result.APIKeyRecord,
+		DB:           result.DB,
+	}
+
+	model := ""
+	if r.Body != nil {
+		bodyBytes, _ := io.ReadAll(r.Body)
+		r.Body = io.NopCloser(strings.NewReader(string(bodyBytes)))
+		var body map[string]interface{}
+		if json.Unmarshal(bodyBytes, &body) == nil {
+			if m, ok := body["model"].(string); ok {
+				model = m
+			}
+		}
+	}
+
+	if model != "" && info.APIKeyRecord != nil && len(info.APIKeyRecord.AllowedModels) > 0 {
+		allowed := false
+		for _, am := range info.APIKeyRecord.AllowedModels {
+			if strings.TrimSpace(am) == strings.TrimSpace(model) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			utils.SendError(w, 403, fmt.Sprintf("Model \"%s\" is not allowed for this API key.", model), "model_not_allowed")
+			return nil, false
+		}
+	}
+
+	allowed, limit, current := middleware.CheckRPMLimit(info.APIKeyRecord, info.DB)
+	if !allowed {
+		utils.SendError(w, 429, fmt.Sprintf("Rate limit exceeded: %d/%d RPM.", current, limit), "rate_limit_exceeded")
+		return nil, false
+	}
+
+	return info, true
+}
+
+func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
+	info, ok := validateProxyRequest(w, r)
+	if !ok {
+		return
+	}
+
+	bodyBytes, _ := io.ReadAll(r.Body)
+	var body map[string]interface{}
+	json.Unmarshal(bodyBytes, &body)
+
+	responseRequest := proxy.ConvertToChatCompletionsPayload(body)
+	payload, _ := responseRequest["model"]
+	model := fmt.Sprintf("%v", payload)
+
+	stream := true
+	if s, ok := body["stream"].(bool); ok {
+		stream = s
+	}
+
+	candidates := proxy.ChooseProviderCandidates(info.DB, responseRequest)
+	if len(candidates) == 0 {
+		utils.SendError(w, 503, "No enabled upstream provider is configured.", "no_provider")
+		return
+	}
+
+	var selectedProvider *proxy.ProviderCandidate
+	var upstreamResp *http.Response
+	var lastError error
+	startedAt := time.Now()
+
+	for i := range candidates {
+		candidate := &candidates[i]
+		startedAt = time.Now()
+
+		upstreamURL := utils.BuildUpstreamURL(candidate.Provider.BaseURL, "/v1/chat/completions")
+		reqBody, _ := json.Marshal(responseRequest)
+
+		req, err := http.NewRequest("POST", upstreamURL, strings.NewReader(string(reqBody)))
+		if err != nil {
+			lastError = err
+			continue
+		}
+		req.Header.Set("Authorization", "Bearer "+candidate.Provider.APIKey)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept-Encoding", "identity")
+		if accept := r.Header.Get("Accept"); accept != "" {
+			req.Header.Set("Accept", accept)
+		}
+
+		client := &http.Client{Timeout: 10 * time.Minute}
+		resp, err := client.Do(req)
+		if err != nil {
+			proxy.RecordProviderFailure(candidate.Provider.ID)
+			lastError = err
+			continue
+		}
+
+		if !isOK(resp.StatusCode) && proxy.IsUpstreamProviderError(resp.StatusCode) {
+			logging.RecordRequestLog(logging.RequestLogParams{
+				UserID:        info.User.ID,
+				UserName:      info.User.Name,
+				Username:      info.User.Username,
+				APIKeyID:      getKeyID(info.APIKeyRecord),
+				APIKeyName:    getKeyName(info.APIKeyRecord),
+				APIKeyPreview: maskKeyPreview(info.APIKeyRecord.Key),
+				ProviderID:    candidate.Provider.ID,
+				ProviderName:  candidate.Provider.Name,
+				Model:         model,
+				UpstreamModel: candidate.UpstreamModel,
+				Endpoint:      "/responses",
+				Method:        "POST",
+				Status:        resp.StatusCode,
+				OK:            false,
+				Stream:        stream,
+				DurationMs:    int(time.Since(startedAt).Milliseconds()),
+			})
+			proxy.RecordProviderFailure(candidate.Provider.ID)
+			resp.Body.Close()
+			lastError = fmt.Errorf("upstream provider responded with HTTP %d", resp.StatusCode)
+			continue
+		}
+
+		if !isOK(resp.StatusCode) {
+			proxy.RelayUpstreamResponse(resp, w)
+			resp.Body.Close()
+			return
+		}
+
+		selectedProvider = candidate
+		upstreamResp = resp
+		break
+	}
+
+	if selectedProvider == nil {
+		msg := "All upstream providers failed."
+		if lastError != nil {
+			msg = "All upstream providers failed. Last error: " + lastError.Error()
+		}
+		utils.SendError(w, 502, msg, "upstream_request_failed")
+		return
+	}
+
+	provider := selectedProvider
+	defer upstreamResp.Body.Close()
+
+	if !stream {
+		bodyBytes, _ := io.ReadAll(upstreamResp.Body)
+		var payload map[string]interface{}
+		json.Unmarshal(bodyBytes, &payload)
+
+		text, finishReason, usage := proxy.ExtractChatCompletionText(payload)
+		instructions, _ := body["instructions"].(string)
+		input, _ := responseRequest["input"].([]map[string]interface{})
+
+		outputItems := make([]interface{}, 0)
+		reasoningEffort, _ := body["reasoning"].(map[string]interface{})
+		effort := ""
+		if reasoningEffort != nil {
+			effort, _ = reasoningEffort["effort"].(string)
+		}
+		if effort != "" {
+			outputItems = append(outputItems, proxy.CreateReasoningItem(effort))
+		}
+		outputItems = append(outputItems, proxy.CreateAssistantMessageItem(text))
+
+		respObj := proxy.BuildResponseObject(map[string]interface{}{
+			"status":            "completed",
+			"model":             model,
+			"input":             input,
+			"instructions":      instructions,
+			"output":            outputItems,
+			"outputText":        text,
+			"usage":             usage,
+			"reasoningEffort":   effort,
+			"finishReason":      finishReason,
+		})
+
+		logging.RecordRequestLog(logging.RequestLogParams{
+			UserID:        info.User.ID,
+			UserName:      info.User.Name,
+			Username:      info.User.Username,
+			APIKeyID:      getKeyID(info.APIKeyRecord),
+			APIKeyName:    getKeyName(info.APIKeyRecord),
+			APIKeyPreview: maskKeyPreview(info.APIKeyRecord.Key),
+			ProviderID:    provider.Provider.ID,
+			ProviderName:  provider.Provider.Name,
+			Model:         model,
+			UpstreamModel: provider.UpstreamModel,
+			Endpoint:      "/responses",
+			Method:        "POST",
+			Status:        200,
+			OK:            true,
+			Stream:        false,
+			DurationMs:    int(time.Since(startedAt).Milliseconds()),
+			Usage:         usage,
+		})
+		proxy.RecordProviderSuccess(provider.Provider.ID)
+
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(respObj)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(200)
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+
+	sseWriter := proxy.CreateSseWriter(w)
+	responseID := utils.GenerateID("resp")
+	messageID := utils.GenerateID("msg")
+
+	reasoningEffort, _ := body["reasoning"].(map[string]interface{})
+	effort := ""
+	if reasoningEffort != nil {
+		effort, _ = reasoningEffort["effort"].(string)
+	}
+	reasoningIdx := -1
+	if effort != "" {
+		reasoningIdx = 0
+	}
+
+	instructions, _ := body["instructions"].(string)
+	input, _ := responseRequest["input"].([]map[string]interface{})
+
+	outputItems := make([]interface{}, 0)
+	if effort != "" {
+		outputItems = append(outputItems, proxy.CreateReasoningItem(effort))
+	}
+	assistantItem := map[string]interface{}{
+		"id":      messageID,
+		"type":    "message",
+		"status":  "in_progress",
+		"content": []interface{}{},
+		"phase":   "final_answer",
+		"role":    "assistant",
+	}
+	outputItems = append(outputItems, assistantItem)
+
+	baseResponse := proxy.BuildResponseObject(map[string]interface{}{
+		"status":       "in_progress",
+		"model":        model,
+		"input":        input,
+		"instructions": instructions,
+		"output":       outputItems,
+		"outputText":   "",
+		"usage":        nil,
+		"reasoningEffort": effort,
+	})
+	baseResponse["id"] = responseID
+
+	sseWriter.Write("response.created", map[string]interface{}{"response": baseResponse})
+	sseWriter.Write("response.in_progress", map[string]interface{}{"response": baseResponse})
+
+	if effort != "" {
+		reasoningItem := proxy.CreateReasoningItem(effort)
+		sseWriter.Write("response.output_item.added", map[string]interface{}{
+			"item":         reasoningItem,
+			"output_index": 0,
+		})
+		sseWriter.Write("response.output_item.done", map[string]interface{}{
+			"item":         reasoningItem,
+			"output_index": 0,
+		})
+	}
+
+	assistIdx := 0
+	if reasoningIdx >= 0 {
+		assistIdx = 1
+	}
+	sseWriter.Write("response.output_item.added", map[string]interface{}{
+		"item":         assistantItem,
+		"output_index": assistIdx,
+	})
+
+	contentPart := map[string]interface{}{
+		"type":        "output_text",
+		"annotations": []interface{}{},
+		"logprobs":    []interface{}{},
+		"text":        "",
+	}
+	sseWriter.Write("response.content_part.added", map[string]interface{}{
+		"content_index": 0,
+		"item_id":       messageID,
+		"output_index":  assistIdx,
+		"part":          contentPart,
+	})
+
+	reader := bufio.NewReader(upstreamResp.Body)
+	var buf strings.Builder
+	outputText := ""
+	finishReason := ""
+	var usagePayload interface{}
+
+	for {
+		line, err := readLine(reader, &buf)
+		if err != nil {
+			break
+		}
+
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, ":") {
+			continue
+		}
+
+		item := trimmed
+		if strings.HasPrefix(trimmed, "data:") {
+			item = strings.TrimSpace(trimmed[5:])
+		}
+		if item == "" || item == "[DONE]" || (!strings.HasPrefix(item, "{") && !strings.HasPrefix(item, "[")) {
+			continue
+		}
+
+		var ssePayload map[string]interface{}
+		if json.Unmarshal([]byte(item), &ssePayload) != nil {
+			continue
+		}
+
+		dText, dFinish, dUsage := proxy.ExtractChatCompletionText(ssePayload)
+		if dFinish != "" {
+			finishReason = dFinish
+		}
+		if dUsage != nil {
+			usagePayload = dUsage
+		}
+
+		if dText != "" {
+			outputText += dText
+			sseWriter.Write("response.output_text.delta", map[string]interface{}{
+				"content_index": 0,
+				"delta":         dText,
+				"item_id":       messageID,
+				"output_index":  assistIdx,
+			})
+		}
+	}
+
+	completedItem := map[string]interface{}{
+		"id":     messageID,
+		"type":   "message",
+		"status": "completed",
+		"content": []interface{}{
+			map[string]interface{}{
+				"type":        "output_text",
+				"annotations": []interface{}{},
+				"logprobs":    []interface{}{},
+				"text":        outputText,
+			},
+		},
+		"phase": "final_answer",
+		"role":  "assistant",
+	}
+
+	finalOutput := make([]interface{}, 0)
+	if effort != "" {
+		finalOutput = append(finalOutput, proxy.CreateReasoningItem(effort))
+	}
+	finalOutput = append(finalOutput, completedItem)
+
+	sseWriter.Write("response.output_text.done", map[string]interface{}{
+		"content_index": 0,
+		"item_id":       messageID,
+		"output_index":  assistIdx,
+		"logprobs":      []interface{}{},
+		"text":          outputText,
+	})
+	sseWriter.Write("response.content_part.done", map[string]interface{}{
+		"content_index": 0,
+		"item_id":       messageID,
+		"output_index":  assistIdx,
+		"part": map[string]interface{}{
+			"type":        "output_text",
+			"annotations": []interface{}{},
+			"logprobs":    []interface{}{},
+			"text":        outputText,
+		},
+	})
+	sseWriter.Write("response.output_item.done", map[string]interface{}{
+		"item":         completedItem,
+		"output_index": assistIdx,
+	})
+
+	finalResponse := proxy.BuildResponseObject(map[string]interface{}{
+		"status":     "completed",
+		"model":      model,
+		"input":      input,
+		"instructions": instructions,
+		"output":     finalOutput,
+		"outputText": outputText,
+		"usage":      usagePayload,
+		"reasoningEffort": effort,
+		"finishReason": finishReason,
+	})
+	finalResponse["id"] = responseID
+
+	sseWriter.Write("response.completed", map[string]interface{}{"response": finalResponse})
+
+	logging.RecordRequestLog(logging.RequestLogParams{
+		UserID:        info.User.ID,
+		UserName:      info.User.Name,
+		Username:      info.User.Username,
+		APIKeyID:      getKeyID(info.APIKeyRecord),
+		APIKeyName:    getKeyName(info.APIKeyRecord),
+		APIKeyPreview: maskKeyPreview(info.APIKeyRecord.Key),
+		ProviderID:    provider.Provider.ID,
+		ProviderName:  provider.Provider.Name,
+		Model:         model,
+		UpstreamModel: provider.UpstreamModel,
+		Endpoint:      "/responses",
+		Method:        "POST",
+		Status:        200,
+		OK:            true,
+		Stream:        true,
+		DurationMs:    int(time.Since(startedAt).Milliseconds()),
+		Usage:         usagePayload,
+	})
+	proxy.RecordProviderSuccess(provider.Provider.ID)
+}
+
+func handleAnthropicCountTokensHandler(w http.ResponseWriter, r *http.Request) {
+	info, ok := validateProxyRequest(w, r)
+	if !ok {
+		return
+	}
+
+	bodyBytes, _ := io.ReadAll(r.Body)
+	var body map[string]interface{}
+	json.Unmarshal(bodyBytes, &body)
+
+	inputTokens := proxy.EstimateAnthropicInputTokens(body)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"input_tokens": inputTokens,
+	})
+	_ = info
+}
+
+func handleAnthropicMessagesProxyHandler(w http.ResponseWriter, r *http.Request) {
+	info, ok := validateProxyRequest(w, r)
+	if !ok {
+		return
+	}
+
+	bodyBytes, _ := io.ReadAll(r.Body)
+	var body map[string]interface{}
+	json.Unmarshal(bodyBytes, &body)
+
+	model, _ := body["model"].(string)
+	openAIBody := proxy.AnthropicToOpenAI(body)
+	openAIBody["model"] = model
+	wantStream, _ := openAIBody["stream"].(bool)
+
+	candidates := proxy.ChooseAnthropicProviderCandidates(info.DB, model)
+	if len(candidates) == 0 {
+		proxy.SendAnthropicError(w, 503, "api_error", "No enabled upstream provider is configured.")
+		return
+	}
+
+	var selectedProvider *proxy.ProviderCandidate
+	var upstreamResp *http.Response
+	var lastError error
+	startedAt := time.Now()
+
+	for i := range candidates {
+		candidate := &candidates[i]
+		startedAt = time.Now()
+
+		if candidate.UpstreamModel != "" {
+			openAIBody["model"] = candidate.UpstreamModel
+		}
+
+		upstreamURL := utils.BuildUpstreamURL(candidate.Provider.BaseURL, "/v1/chat/completions")
+		reqBody, _ := json.Marshal(openAIBody)
+
+		req, err := http.NewRequest("POST", upstreamURL, strings.NewReader(string(reqBody)))
+		if err != nil {
+			lastError = err
+			continue
+		}
+		req.Header.Set("Authorization", "Bearer "+candidate.Provider.APIKey)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept-Encoding", "identity")
+
+		client := &http.Client{Timeout: 10 * time.Minute}
+		resp, err := client.Do(req)
+		if err != nil {
+			proxy.RecordProviderFailure(candidate.Provider.ID)
+			lastError = err
+			continue
+		}
+
+		if !isOK(resp.StatusCode) && proxy.IsUpstreamProviderError(resp.StatusCode) {
+			logging.RecordRequestLog(logging.RequestLogParams{
+				UserID:        info.User.ID,
+				UserName:      info.User.Name,
+				Username:      info.User.Username,
+				APIKeyID:      getKeyID(info.APIKeyRecord),
+				APIKeyName:    getKeyName(info.APIKeyRecord),
+				APIKeyPreview: maskKeyPreview(info.APIKeyRecord.Key),
+				ProviderID:    candidate.Provider.ID,
+				ProviderName:  candidate.Provider.Name,
+				Model:         model,
+				UpstreamModel: toStringSafe(openAIBody["model"]),
+				Endpoint:      "/v1/messages",
+				Method:        "POST",
+				Status:        resp.StatusCode,
+				OK:            false,
+				Stream:        wantStream,
+				DurationMs:    int(time.Since(startedAt).Milliseconds()),
+			})
+			proxy.RecordProviderFailure(candidate.Provider.ID)
+			resp.Body.Close()
+			lastError = fmt.Errorf("upstream provider responded with HTTP %d", resp.StatusCode)
+			continue
+		}
+
+		if !isOK(resp.StatusCode) {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			var errPayload map[string]interface{}
+			json.Unmarshal(bodyBytes, &errPayload)
+			errMsg := "Upstream provider error."
+			if errData, ok := errPayload["error"].(map[string]interface{}); ok {
+				if msg, ok := errData["message"].(string); ok {
+					errMsg = msg
+				}
+			}
+			proxy.SendAnthropicError(w, resp.StatusCode, "api_error", errMsg)
+			return
+		}
+
+		selectedProvider = candidate
+		upstreamResp = resp
+		break
+	}
+
+	if selectedProvider == nil {
+		msg := "All upstream providers failed."
+		if lastError != nil {
+			msg = "All upstream providers failed. Last error: " + lastError.Error()
+		}
+		proxy.SendAnthropicError(w, 502, "api_error", msg)
+		return
+	}
+
+	provider := selectedProvider
+	defer upstreamResp.Body.Close()
+
+	if !wantStream {
+		bodyBytes, _ := io.ReadAll(upstreamResp.Body)
+		var payload map[string]interface{}
+		json.Unmarshal(bodyBytes, &payload)
+
+		anthropicResp := proxy.OpenAIToAnthropicNonStreaming(payload, model)
+		usage := utils.FindUsagePayload(payload)
+
+		w.Header().Set("Anthropic-Version", "2023-06-01")
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(anthropicResp)
+
+		logging.RecordRequestLog(logging.RequestLogParams{
+			UserID:        info.User.ID,
+			UserName:      info.User.Name,
+			Username:      info.User.Username,
+			APIKeyID:      getKeyID(info.APIKeyRecord),
+			APIKeyName:    getKeyName(info.APIKeyRecord),
+			APIKeyPreview: maskKeyPreview(info.APIKeyRecord.Key),
+			ProviderID:    provider.Provider.ID,
+			ProviderName:  provider.Provider.Name,
+			Model:         model,
+			UpstreamModel: toStringSafe(openAIBody["model"]),
+			Endpoint:      "/v1/messages",
+			Method:        "POST",
+			Status:        200,
+			OK:            true,
+			Stream:        false,
+			DurationMs:    int(time.Since(startedAt).Milliseconds()),
+			Usage:         usage,
+		})
+		proxy.RecordProviderSuccess(provider.Provider.ID)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.Header().Set("Anthropic-Version", "2023-06-01")
+	w.WriteHeader(200)
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+
+	writeEvent := func(eventType string, data interface{}) {
+		jsonData, _ := json.Marshal(data)
+		fmt.Fprintf(w, "event: %s\n", eventType)
+		fmt.Fprintf(w, "data: %s\n\n", string(jsonData))
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+	}
+
+	responseID := utils.GenerateID("msg")
+	writeEvent("message_start", map[string]interface{}{
+		"type": "message_start",
+		"message": map[string]interface{}{
+			"id":           responseID,
+			"type":         "message",
+			"role":         "assistant",
+			"content":      []interface{}{},
+			"model":        model,
+			"stop_reason":  nil,
+			"stop_sequence": nil,
+			"usage": map[string]interface{}{
+				"input_tokens":               0,
+				"output_tokens":              0,
+				"cache_creation_input_tokens": 0,
+				"cache_read_input_tokens":    0,
+			},
+		},
+	})
+
+	reader := bufio.NewReader(upstreamResp.Body)
+	var buf strings.Builder
+	var outputText string
+	var finishReason string
+	var usagePayload interface{}
+	nextContentIndex := 0
+	thinkingBlockIndex := -1
+	textBlockIndex := -1
+	toolIndexMap := map[int]int{}
+	toolArgBuffers := map[int]string{}
+
+	for {
+		line, err := readLine(reader, &buf)
+		if err != nil {
+			break
+		}
+
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, ":") {
+			continue
+		}
+
+		item := trimmed
+		if strings.HasPrefix(trimmed, "data:") {
+			item = strings.TrimSpace(trimmed[5:])
+		}
+		if item == "" || item == "[DONE]" || (!strings.HasPrefix(item, "{") && !strings.HasPrefix(item, "[")) {
+			continue
+		}
+
+		var ssePayload map[string]interface{}
+		if json.Unmarshal([]byte(item), &ssePayload) != nil {
+			continue
+		}
+
+		_, dFinish, dUsage := proxy.ExtractChatCompletionText(ssePayload)
+		if dFinish != "" {
+			choices, _ := ssePayload["choices"].([]interface{})
+			if len(choices) > 0 {
+				choice, _ := choices[0].(map[string]interface{})
+				delta, _ := choice["delta"].(map[string]interface{})
+				if delta != nil {
+					hasContent := (delta["content"] != nil && delta["content"] != "") ||
+						(len(getToolCalls(delta)) > 0) ||
+						(delta["reasoning_content"] != nil && delta["reasoning_content"] != "")
+					if !hasContent {
+						finishReason = dFinish
+					}
+				}
+			}
+		}
+		if dUsage != nil {
+			usagePayload = dUsage
+		}
+
+		events := proxy.OpenAIToAnthropicDeltaStreaming(ssePayload)
+		for _, ev := range events {
+			if toolStart, _ := ev["_toolStart"].(bool); toolStart {
+				upIdx := 0
+				if idx, ok := ev["_upstreamIndex"].(float64); ok {
+					upIdx = int(idx)
+				}
+				if _, exists := toolIndexMap[upIdx]; !exists {
+					outIdx := nextContentIndex
+					nextContentIndex++
+					toolIndexMap[upIdx] = outIdx
+					toolArgBuffers[upIdx] = ""
+					writeEvent("content_block_start", map[string]interface{}{
+						"type":          "content_block_start",
+						"index":         outIdx,
+						"content_block": ev["content_block"],
+					})
+				}
+			} else if delta, ok := ev["delta"].(map[string]interface{}); ok {
+				deltaType, _ := delta["type"].(string)
+				upIdx := 0
+				if idx, ok := ev["_upstreamIndex"].(float64); ok {
+					upIdx = int(idx)
+				}
+
+				switch deltaType {
+				case "input_json_delta":
+					if outIdx, exists := toolIndexMap[upIdx]; exists {
+						partialJSON, _ := delta["partial_json"].(string)
+						toolArgBuffers[upIdx] += partialJSON
+						writeEvent("content_block_delta", map[string]interface{}{
+							"type":  "content_block_delta",
+							"index": outIdx,
+							"delta": map[string]interface{}{
+								"type":         "input_json_delta",
+								"partial_json": partialJSON,
+							},
+						})
+					}
+				case "thinking_delta":
+					if thinkingBlockIndex < 0 {
+						thinkingBlockIndex = nextContentIndex
+						nextContentIndex++
+						writeEvent("content_block_start", map[string]interface{}{
+							"type":  "content_block_start",
+							"index": thinkingBlockIndex,
+							"content_block": map[string]interface{}{
+								"type":     "thinking",
+								"thinking": "",
+							},
+						})
+					}
+					thinking, _ := delta["thinking"].(string)
+					writeEvent("content_block_delta", map[string]interface{}{
+						"type":  "content_block_delta",
+						"index": thinkingBlockIndex,
+						"delta": map[string]interface{}{
+							"type":     "thinking_delta",
+							"thinking": thinking,
+						},
+					})
+				case "text_delta":
+					if thinkingBlockIndex >= 0 {
+						writeEvent("content_block_stop", map[string]interface{}{
+							"type":  "content_block_stop",
+							"index": thinkingBlockIndex,
+						})
+						thinkingBlockIndex = -1
+					}
+					if textBlockIndex < 0 {
+						textBlockIndex = nextContentIndex
+						nextContentIndex++
+						writeEvent("content_block_start", map[string]interface{}{
+							"type":  "content_block_start",
+							"index": textBlockIndex,
+							"content_block": map[string]interface{}{
+								"type": "text",
+								"text": "",
+							},
+						})
+					}
+					text, _ := delta["text"].(string)
+					outputText += text
+					writeEvent("content_block_delta", map[string]interface{}{
+						"type":  "content_block_delta",
+						"index": textBlockIndex,
+						"delta": map[string]interface{}{
+							"type": "text_delta",
+							"text": text,
+						},
+					})
+				}
+			}
+		}
+	}
+
+	for _, outIdx := range toolIndexMap {
+		writeEvent("content_block_stop", map[string]interface{}{
+			"type":  "content_block_stop",
+			"index": outIdx,
+		})
+	}
+
+	if textBlockIndex >= 0 {
+		writeEvent("content_block_stop", map[string]interface{}{
+			"type":  "content_block_stop",
+			"index": textBlockIndex,
+		})
+	} else {
+		if thinkingBlockIndex >= 0 {
+			writeEvent("content_block_stop", map[string]interface{}{
+				"type":  "content_block_stop",
+				"index": thinkingBlockIndex,
+			})
+			thinkingBlockIndex = -1
+		}
+		textIdx := nextContentIndex
+		writeEvent("content_block_start", map[string]interface{}{
+			"type":  "content_block_start",
+			"index": textIdx,
+			"content_block": map[string]interface{}{
+				"type": "text",
+				"text": "",
+			},
+		})
+		writeEvent("content_block_stop", map[string]interface{}{
+			"type":  "content_block_stop",
+			"index": textIdx,
+		})
+	}
+
+	stopReason := "end_turn"
+	if finishReason == "tool_calls" {
+		stopReason = "tool_use"
+	} else if finishReason == "length" {
+		stopReason = "max_tokens"
+	}
+
+	normalized := utils.NormalizeUsage(usagePayload)
+	outputTokens := 0
+	if normalized != nil {
+		outputTokens = normalized.CompletionTokens
+	}
+
+	writeEvent("message_delta", map[string]interface{}{
+		"type": "message_delta",
+		"delta": map[string]interface{}{
+			"stop_reason":   stopReason,
+			"stop_sequence": nil,
+		},
+		"usage": map[string]interface{}{
+			"output_tokens": outputTokens,
+		},
+	})
+	writeEvent("message_stop", map[string]interface{}{"type": "message_stop"})
+
+	logging.RecordRequestLog(logging.RequestLogParams{
+		UserID:        info.User.ID,
+		UserName:      info.User.Name,
+		Username:      info.User.Username,
+		APIKeyID:      getKeyID(info.APIKeyRecord),
+		APIKeyName:    getKeyName(info.APIKeyRecord),
+		APIKeyPreview: maskKeyPreview(info.APIKeyRecord.Key),
+		ProviderID:    provider.Provider.ID,
+		ProviderName:  provider.Provider.Name,
+		Model:         model,
+		UpstreamModel: toStringSafe(openAIBody["model"]),
+		Endpoint:      "/v1/messages",
+		Method:        "POST",
+		Status:        200,
+		OK:            true,
+		Stream:        true,
+		DurationMs:    int(time.Since(startedAt).Milliseconds()),
+		Usage:         usagePayload,
+		FinishReason:  finishReason,
+	})
+	proxy.RecordProviderSuccess(provider.Provider.ID)
+}
+
+func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[V1CHAT] === REQUEST === %s %s | client=%s | content-type=%s | accept=%s",
+		r.Method, r.URL.String(), r.RemoteAddr, r.Header.Get("Content-Type"), r.Header.Get("Accept"))
+
+	if r.Method == "GET" && r.URL.Path == "/v1/models" {
+		handleModelsList(w, r)
+		return
+	}
+
+	info, ok := validateProxyRequest(w, r)
+	if !ok {
+		log.Printf("[V1CHAT] VALIDATE_FAILED path=%s", r.URL.Path)
+		return
+	}
+	log.Printf("[V1CHAT] VALIDATE_OK user=%s(%s) key_id=%s key_name=%s",
+		info.User.Name, info.User.ID, getKeyID(info.APIKeyRecord), getKeyName(info.APIKeyRecord))
+
+	bodyBytes, _ := io.ReadAll(r.Body)
+	r.Body = io.NopCloser(strings.NewReader(string(bodyBytes)))
+	log.Printf("[V1CHAT] BODY_READ len=%d preview=%s", len(bodyBytes), truncateForLog(string(bodyBytes), 300))
+
+	var body map[string]interface{}
+	json.Unmarshal(bodyBytes, &body)
+	model, _ := body["model"].(string)
+	streamReq, _ := body["stream"].(bool)
+	log.Printf("[V1CHAT] BODY_PARSE model=%s stream=%v messages=%d", model, streamReq, len(extractMessages(body)))
+
+	candidates := proxy.ChooseProviderCandidates(info.DB, body)
+	if len(candidates) == 0 {
+		log.Printf("[V1CHAT] NO_PROVIDER model=%s", model)
+		utils.SendError(w, 503, "No enabled upstream provider is configured.", "no_provider")
+		return
+	}
+	log.Printf("[V1CHAT] PROVIDERS count=%d model=%s", len(candidates), model)
+	for i, c := range candidates {
+		log.Printf("[V1CHAT]   candidate[%d] provider=%s(%s) base_url=%s upstream_model=%s enabled=%v",
+			i, c.Provider.Name, c.Provider.ID, c.Provider.BaseURL, c.UpstreamModel, c.Provider.Enabled)
+	}
+
+	var lastError error
+
+	for i := range candidates {
+		candidate := &candidates[i]
+		startedAt := time.Now()
+		log.Printf("[V1CHAT] TRY_CANDIDATE[%d] provider=%s upstream_model=%s",
+			i, candidate.Provider.Name, candidate.UpstreamModel)
+
+		upstreamURL := utils.BuildUpstreamURL(candidate.Provider.BaseURL, r.URL.Path)
+		if r.URL.RawQuery != "" {
+			upstreamURL += "?" + r.URL.RawQuery
+		}
+		log.Printf("[V1CHAT] UPSTREAM_URL %s %s", r.Method, upstreamURL)
+
+		var reqBody io.Reader
+		upstreamBody, _ := utils.BuildUpstreamBody(r, candidate.UpstreamModel)
+		r.Body = io.NopCloser(strings.NewReader(string(bodyBytes)))
+		if upstreamBody != nil {
+			reqBody = strings.NewReader(string(upstreamBody))
+		}
+		log.Printf("[V1CHAT] UPSTREAM_BODY len=%d preview=%s",
+			len(upstreamBody), truncateForLog(string(upstreamBody), 200))
+
+		req, err := http.NewRequest(r.Method, upstreamURL, reqBody)
+		if err != nil {
+			log.Printf("[V1CHAT] CREATE_REQ_ERROR err=%v", err)
+			lastError = err
+			continue
+		}
+
+		forwardHeaders := utils.FilterForwardHeaders(r.Header)
+		for key, values := range forwardHeaders {
+			for _, v := range values {
+				req.Header.Add(key, v)
+			}
+		}
+		req.Header.Set("Authorization", "Bearer "+candidate.Provider.APIKey)
+		if reqBody != nil && req.Header.Get("Content-Type") == "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		req.Header.Set("Accept-Encoding", "identity")
+		log.Printf("[V1CHAT] SEND_UPSTREAM content-type=%s auth_prefix=%s...",
+			req.Header.Get("Content-Type"), truncateForLog(candidate.Provider.APIKey, 12))
+
+		client := &http.Client{Timeout: 10 * time.Minute}
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Printf("[V1CHAT] UPSTREAM_ERR err=%v", err)
+			proxy.RecordProviderFailure(candidate.Provider.ID)
+			lastError = err
+			continue
+		}
+
+		log.Printf("[V1CHAT] UPSTREAM_RESP status=%d content-type=%s content-length=%s",
+			resp.StatusCode, resp.Header.Get("Content-Type"), resp.Header.Get("Content-Length"))
+
+		if !isOK(resp.StatusCode) && proxy.IsUpstreamProviderError(resp.StatusCode) {
+			log.Printf("[V1CHAT] UPSTREAM_ERROR_5xx status=%d", resp.StatusCode)
+			logging.RecordRequestLog(logging.RequestLogParams{
+				UserID:        info.User.ID,
+				UserName:      info.User.Name,
+				Username:      info.User.Username,
+				APIKeyID:      getKeyID(info.APIKeyRecord),
+				APIKeyName:    getKeyName(info.APIKeyRecord),
+				APIKeyPreview: maskKeyPreview(info.APIKeyRecord.Key),
+				ProviderID:    candidate.Provider.ID,
+				ProviderName:  candidate.Provider.Name,
+				Model:         model,
+				UpstreamModel: candidate.UpstreamModel,
+				Endpoint:      r.URL.Path,
+				Method:        r.Method,
+				Status:        resp.StatusCode,
+				OK:            false,
+				Stream:        false,
+				DurationMs:    int(time.Since(startedAt).Milliseconds()),
+			})
+			proxy.RecordProviderFailure(candidate.Provider.ID)
+			resp.Body.Close()
+			lastError = fmt.Errorf("upstream provider responded with HTTP %d", resp.StatusCode)
+			continue
+		}
+
+		if !isOK(resp.StatusCode) {
+			log.Printf("[V1CHAT] UPSTREAM_ERROR_CLIENT status=%d", resp.StatusCode)
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			log.Printf("[V1CHAT] ERROR_BODY len=%d preview=%s", len(bodyBytes), truncateForLog(string(bodyBytes), 300))
+			w.WriteHeader(resp.StatusCode)
+			utils.CopyUpstreamHeaders(resp.Header, w, nil)
+			w.Write(bodyBytes)
+			return
+		}
+
+		isStream := utils.ShouldStreamResponse(r, resp)
+		log.Printf("[V1CHAT] DECIDE_STREAM stream_req=%v stream_resp=%v content_type=%s",
+			streamReq, isStream, resp.Header.Get("Content-Type"))
+
+		if isStream {
+			log.Printf("[V1CHAT] STREAM_START")
+			w.WriteHeader(resp.StatusCode)
+			utils.CopyUpstreamHeaders(resp.Header, w, map[string]string{
+				"Cache-Control":   "no-cache, no-transform",
+				"X-Accel-Buffering": "no",
+			})
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+
+			usage := proxy.WriteUpstreamStreamToResponse(resp, w)
+			log.Printf("[V1CHAT] STREAM_END usage=%v", usage)
+
+			logging.RecordRequestLog(logging.RequestLogParams{
+				UserID:        info.User.ID,
+				UserName:      info.User.Name,
+				Username:      info.User.Username,
+				APIKeyID:      getKeyID(info.APIKeyRecord),
+				APIKeyName:    getKeyName(info.APIKeyRecord),
+				APIKeyPreview: maskKeyPreview(info.APIKeyRecord.Key),
+				ProviderID:    candidate.Provider.ID,
+				ProviderName:  candidate.Provider.Name,
+				Model:         model,
+				UpstreamModel: candidate.UpstreamModel,
+				Endpoint:      r.URL.Path,
+				Method:        r.Method,
+				Status:        resp.StatusCode,
+				OK:            true,
+				Stream:        true,
+				DurationMs:    int(time.Since(startedAt).Milliseconds()),
+				Usage:         usage,
+			})
+			proxy.RecordProviderSuccess(candidate.Provider.ID)
+			resp.Body.Close()
+			log.Printf("[V1CHAT] === DONE (stream) === duration=%dms", int(time.Since(startedAt).Milliseconds()))
+			return
+		}
+
+		log.Printf("[V1CHAT] NONSTREAM_START")
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		log.Printf("[V1CHAT] NONSTREAM_BODY len=%d preview=%s", len(bodyBytes), truncateForLog(string(bodyBytes), 300))
+		usage := utils.ExtractUsageFromResponseText(string(bodyBytes))
+
+		w.WriteHeader(resp.StatusCode)
+		utils.CopyUpstreamHeaders(resp.Header, w, nil)
+		w.Write(bodyBytes)
+
+		logging.RecordRequestLog(logging.RequestLogParams{
+			UserID:        info.User.ID,
+			UserName:      info.User.Name,
+			Username:      info.User.Username,
+			APIKeyID:      getKeyID(info.APIKeyRecord),
+			APIKeyName:    getKeyName(info.APIKeyRecord),
+			APIKeyPreview: maskKeyPreview(info.APIKeyRecord.Key),
+			ProviderID:    candidate.Provider.ID,
+			ProviderName:  candidate.Provider.Name,
+			Model:         model,
+			UpstreamModel: candidate.UpstreamModel,
+			Endpoint:      r.URL.Path,
+			Method:        r.Method,
+			Status:        resp.StatusCode,
+			OK:            true,
+			Stream:        false,
+			DurationMs:    int(time.Since(startedAt).Milliseconds()),
+			Usage:         usage,
+		})
+		proxy.RecordProviderSuccess(candidate.Provider.ID)
+		log.Printf("[V1CHAT] === DONE (nonstream) === duration=%dms", int(time.Since(startedAt).Milliseconds()))
+		return
+	}
+
+	msg := "All upstream providers failed."
+	if lastError != nil {
+		msg = "All upstream providers failed. Last error: " + lastError.Error()
+	}
+	log.Printf("[V1CHAT] ALL_FAILED last_error=%v", lastError)
+	utils.SendError(w, 502, msg, "upstream_request_failed")
+}
+
+func getKeyID(k *models.APIKeyRecord) string {
+	if k == nil {
+		return ""
+	}
+	return k.ID
+}
+
+func getKeyName(k *models.APIKeyRecord) string {
+	if k == nil {
+		return ""
+	}
+	return k.Name
+}
+
+func getToolCalls(delta map[string]interface{}) []interface{} {
+	if tc, ok := delta["tool_calls"].([]interface{}); ok {
+		return tc
+	}
+	return nil
+}
+
+func toStringSafe(v interface{}) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+func readLine(reader *bufio.Reader, buf *strings.Builder) (string, error) {
+	for {
+		b, err := reader.ReadByte()
+		if err != nil {
+			if buf.Len() > 0 {
+				result := buf.String()
+				buf.Reset()
+				return result, nil
+			}
+			return "", err
+		}
+		if b == '\n' {
+			result := buf.String()
+			buf.Reset()
+			return result, nil
+		}
+		if b != '\r' {
+			buf.WriteByte(b)
+		}
+	}
+}
+
+func isOK(statusCode int) bool {
+	return statusCode >= 200 && statusCode < 300
+}
+
+func truncateForLog(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "...[truncated]"
+}
+
+func extractMessages(body map[string]interface{}) []interface{} {
+	if body == nil {
+		return nil
+	}
+	if msgs, ok := body["messages"].([]interface{}); ok {
+		return msgs
+	}
+	return nil
+}

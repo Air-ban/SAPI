@@ -1,0 +1,267 @@
+package proxy
+
+import (
+	"net/http"
+	"sync"
+	"time"
+
+	"sapi/models"
+	"sapi/store"
+	"sapi/utils"
+)
+
+var providerFailureCounters sync.Map
+
+type failureCounter struct {
+	ConsecutiveFailures int
+	LastFailureAt       string
+}
+
+func GetProviderFailureCounter(providerID string) *failureCounter {
+	c, ok := providerFailureCounters.Load(providerID)
+	if !ok {
+		return &failureCounter{}
+	}
+	return c.(*failureCounter)
+}
+
+func RecordProviderSuccess(providerID string) {
+	c, ok := providerFailureCounters.Load(providerID)
+	if ok && c.(*failureCounter).ConsecutiveFailures > 0 {
+		c.(*failureCounter).ConsecutiveFailures = 0
+		c.(*failureCounter).LastFailureAt = ""
+	}
+}
+
+func RecordProviderFailure(providerID string) {
+	c, loaded := providerFailureCounters.Load(providerID)
+	if loaded {
+		fc := c.(*failureCounter)
+		fc.ConsecutiveFailures++
+		fc.LastFailureAt = time.Now().UTC().Format(time.RFC3339)
+	} else {
+		providerFailureCounters.Store(providerID, &failureCounter{
+			ConsecutiveFailures: 1,
+			LastFailureAt:       time.Now().UTC().Format(time.RFC3339),
+		})
+	}
+}
+
+func IsUpstreamProviderError(status int) bool {
+	return status >= 500 || status == 429
+}
+
+func IsProviderAvailableForFailover(provider models.Provider) bool {
+	threshold := provider.FailoverThreshold
+	if threshold <= 0 {
+		return true
+	}
+	counter := GetProviderFailureCounter(provider.ID)
+	return counter.ConsecutiveFailures < threshold
+}
+
+type ProviderCandidate struct {
+	Provider      models.Provider
+	UpstreamModel string
+}
+
+func GetModelProviderMapping(provider models.Provider, modelID string) *ProviderCandidate {
+	if modelID == "" {
+		return nil
+	}
+	for _, m := range provider.Models {
+		if m.ID == modelID {
+			return &ProviderCandidate{provider, modelID}
+		}
+	}
+	if upstreamID, ok := provider.ModelMappings[modelID]; ok {
+		return &ProviderCandidate{provider, upstreamID}
+	}
+	return nil
+}
+
+func SortProvidersByPriority(providers []models.Provider) []models.Provider {
+	sorted := make([]models.Provider, len(providers))
+	copy(sorted, providers)
+	for i := 0; i < len(sorted); i++ {
+		for j := i + 1; j < len(sorted); j++ {
+			if sorted[j].Priority > sorted[i].Priority ||
+				(sorted[j].Priority == sorted[i].Priority && sorted[j].CreatedAt > sorted[i].CreatedAt) {
+				sorted[i], sorted[j] = sorted[j], sorted[i]
+			}
+		}
+	}
+	return sorted
+}
+
+func ChooseProviderCandidates(db *models.Database, body map[string]interface{}) []ProviderCandidate {
+	model := ""
+	if body != nil {
+		if m, ok := body["model"].(string); ok {
+			model = m
+		}
+	}
+
+	var enabled []models.Provider
+	for _, p := range db.Providers {
+		if p.Enabled && IsProviderAvailableForFailover(p) {
+			enabled = append(enabled, p)
+		}
+	}
+	enabled = SortProvidersByPriority(enabled)
+
+	if len(enabled) == 0 {
+		return nil
+	}
+
+	if model != "" {
+		var matched []ProviderCandidate
+		for _, p := range enabled {
+			mapping := GetModelProviderMapping(p, model)
+			if mapping != nil {
+				matched = append(matched, *mapping)
+			}
+		}
+		return matched
+	}
+
+	return []ProviderCandidate{{Provider: enabled[0], UpstreamModel: ""}}
+}
+
+func ChooseAnthropicProviderCandidates(db *models.Database, model string) []ProviderCandidate {
+	var enabled []models.Provider
+	for _, p := range db.Providers {
+		if p.Enabled && IsProviderAvailableForFailover(p) {
+			enabled = append(enabled, p)
+		}
+	}
+	enabled = SortProvidersByPriority(enabled)
+
+	if len(enabled) == 0 {
+		return nil
+	}
+
+	if model != "" {
+		var matched []ProviderCandidate
+		for _, p := range enabled {
+			mapping := GetModelProviderMapping(p, model)
+			if mapping != nil {
+				matched = append(matched, *mapping)
+			}
+		}
+		if len(matched) > 0 {
+			return matched
+		}
+	}
+
+	first := enabled[0]
+	firstModel := ""
+	if len(first.Models) > 0 {
+		firstModel = first.Models[0].ID
+	}
+	mappedFirst := ""
+	for _, v := range first.ModelMappings {
+		mappedFirst = v
+		break
+	}
+	if mappedFirst != "" {
+		return []ProviderCandidate{{Provider: first, UpstreamModel: mappedFirst}}
+	}
+	if firstModel != "" {
+		return []ProviderCandidate{{Provider: first, UpstreamModel: firstModel}}
+	}
+	return []ProviderCandidate{{Provider: first, UpstreamModel: model}}
+}
+
+func ComputeAvailability(history []models.HealthHistoryEntry) float64 {
+	since := time.Now().Add(-7 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	var recent []models.HealthHistoryEntry
+	for _, h := range history {
+		if h.Timestamp >= since {
+			recent = append(recent, h)
+		}
+	}
+	if len(recent) == 0 {
+		return 100
+	}
+	okCount := 0
+	for _, h := range recent {
+		if h.Status == "ok" {
+			okCount++
+		}
+	}
+	return float64(okCount*10000/len(recent)) / 100
+}
+
+func RunHealthChecks() {
+	db := store.ReadDB()
+	for _, p := range db.Providers {
+		if p.Enabled {
+			go checkProviderHealth(p)
+		}
+	}
+}
+
+func checkProviderHealth(provider models.Provider) {
+	url := utils.BuildUpstreamURL(provider.BaseURL, "/v1/models")
+	startedAt := time.Now()
+	status := "fail"
+	var latency int
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		latency = int(time.Since(startedAt).Milliseconds())
+	} else {
+		req.Header.Set("Authorization", "Bearer "+provider.APIKey)
+		req.Header.Set("Accept", "application/json")
+		client := &http.Client{Timeout: 30 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			latency = int(time.Since(startedAt).Milliseconds())
+		} else {
+			latency = int(time.Since(startedAt).Milliseconds())
+			if resp.StatusCode < 400 {
+				if latency > 5000 {
+					status = "slow"
+				} else {
+					status = "ok"
+				}
+				RecordProviderSuccess(provider.ID)
+			}
+			resp.Body.Close()
+		}
+	}
+
+	healthStatus := "down"
+	if status == "ok" {
+		healthStatus = "healthy"
+	} else if status == "slow" {
+		healthStatus = "degraded"
+	}
+
+	entry := models.HealthHistoryEntry{
+		Timestamp: store.Now(),
+		Status:    status,
+		Latency:   latency,
+	}
+
+	store.MutateDB(func(db *models.Database) interface{} {
+		for i := range db.Providers {
+			if db.Providers[i].ID == provider.ID {
+				p := &db.Providers[i]
+				p.HealthStatus = healthStatus
+				p.Latency = latency
+				p.Ping = latency
+				p.LastHealthCheck = entry.Timestamp
+				p.HealthHistory = append(p.HealthHistory, entry)
+				if len(p.HealthHistory) > 120 {
+					p.HealthHistory = p.HealthHistory[len(p.HealthHistory)-120:]
+				}
+				p.Availability7d = ComputeAvailability(p.HealthHistory)
+				p.UpdatedAt = store.Now()
+				break
+			}
+		}
+		return nil
+	})
+}

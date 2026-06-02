@@ -2,3 +2,7 @@ node_modules/
 data/
 .env
 npm-debug.log*
+# Go
+backend/sapi.exe
+backend/sapi
+

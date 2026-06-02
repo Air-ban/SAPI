@@ -4,10 +4,18 @@ SAPI 是一个轻量级 LLM API 中转站。管理员在后台配置上游 LLM A
 
 ## 快速启动
 
+前端构建：
+
 ```bash
 npm install
 npm run build
-npm start
+```
+
+后端启动（Go）：
+
+```bash
+cd backend
+go run .
 ```
 
 默认地址：
@@ -27,7 +35,7 @@ npm start
 
 ## 前端开发
 
-前端使用 React + MUI，源码在 `client/`，构建产物输出到 `public/` 并由 Express 直接托管。
+前端使用 React + MUI，源码在 `client/`，构建产物输出到 `public/` 并由 Go 后端直接托管。
 
 ```bash
 npm run client:dev

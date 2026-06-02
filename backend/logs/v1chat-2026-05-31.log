@@ -1,0 +1,26 @@
+2026/05/31 20:53:24.648358 [V1CHAT] === LOG STARTED === cwd=D:\project\SAPI\backend log=D:\project\SAPI\backend\logs\v1chat-2026-05-31.log
+2026/05/31 20:54:21.742508 [V1CHAT] === LOG STARTED === cwd=D:\project\SAPI\backend log=D:\project\SAPI\backend\logs\v1chat-2026-05-31.log
+2026/05/31 20:57:15.567815 [V1CHAT] === LOG STARTED === cwd=D:\project\SAPI\backend log=D:\project\SAPI\backend\logs\v1chat-2026-05-31.log
+2026/05/31 20:57:31.982564 [V1CHAT] === REQUEST === POST /chat/completions | client=[::1]:5965 | content-type=application/json | accept=*/*
+2026/05/31 20:57:31.985030 [V1CHAT] VALIDATE_OK user=Administrator(__admin__) key_id=key_1733a0197c3a5168 key_name=Admin Key 1
+2026/05/31 20:57:31.985553 [V1CHAT] BODY_READ len=62213 preview={"model":"deepseek-v4-flash","max_tokens":32000,"messages":[{"role":"system","content":"You are Kilo, a highly skilled software engineer with extensive knowledge in many programming languages, frameworks, design patterns, and best practices.\n\n# Personality\n\n- Your goal is to accomplish the user'...[truncated]
+2026/05/31 20:57:31.986080 [V1CHAT] BODY_PARSE model=deepseek-v4-flash stream=true messages=9
+2026/05/31 20:57:31.986080 [V1CHAT] PROVIDERS count=1 model=deepseek-v4-flash
+2026/05/31 20:57:31.986080 [V1CHAT]   candidate[0] provider=deepseek(prv_343b4cb042cdef93) base_url=https://api.deepseek.com upstream_model=deepseek-v4-flash enabled=true
+2026/05/31 20:57:31.986080 [V1CHAT] TRY_CANDIDATE[0] provider=deepseek upstream_model=deepseek-v4-flash
+2026/05/31 20:57:31.986080 [V1CHAT] UPSTREAM_URL POST https://api.deepseek.com/chat/completions
+2026/05/31 20:57:31.987114 [V1CHAT] BUILD_BODY_OK original_model=deepseek-v4-flash upstream_model=deepseek-v4-flash stream=true include_usage=true result_len=63178 marshal_err=<nil>
+2026/05/31 20:57:31.987114 [V1CHAT] UPSTREAM_BODY len=63178 preview={"max_tokens":32000,"messages":[{"content":"You are Kilo, a highly skilled software engineer with extensive knowledge in many programming languages, frameworks, design patterns, and best practices.\n\...[truncated]
+2026/05/31 20:57:31.987114 [V1CHAT] SEND_UPSTREAM content-type=application/json auth_prefix=sk-3ffe35105...[truncated]...
+2026/05/31 20:57:32.304722 [V1CHAT] UPSTREAM_RESP status=200 content-type=text/event-stream; charset=utf-8 content-length=
+2026/05/31 20:57:32.304722 [V1CHAT] SHOULD_STREAM content-type="text/event-stream; charset=utf-8" => true
+2026/05/31 20:57:32.304722 [V1CHAT] DECIDE_STREAM stream_req=true stream_resp=true content_type=text/event-stream; charset=utf-8
+2026/05/31 20:57:32.304722 [V1CHAT] STREAM_START
+2026/05/31 20:57:33.241572 [V1CHAT] SSE_STREAM_END total_lines=92 data_lines=46 empty_lines=46 done=true err=EOF
+2026/05/31 20:57:33.241572 [V1CHAT] STREAM_END usage=map[completion_tokens:44 completion_tokens_details:map[reasoning_tokens:25] prompt_cache_hit_tokens:0 prompt_cache_miss_tokens:14048 prompt_tokens:14048 prompt_tokens_details:map[cached_tokens:0] total_tokens:14092]
+2026/05/31 20:57:33.256816 [V1CHAT] === DONE (stream) === duration=1270ms
+2026/05/31 21:01:11.592721 [V1CHAT] === LOG STARTED === cwd=D:\project\SAPI\backend log=D:\project\SAPI\backend\logs\v1chat-2026-05-31.log
+2026/05/31 21:24:17.597496 [V1CHAT] === LOG STARTED === cwd=D:\project\SAPI\backend log=D:\project\SAPI\backend\logs\v1chat-2026-05-31.log
+2026/05/31 21:28:01.046881 [V1CHAT] === LOG STARTED === cwd=D:\project\SAPI\backend log=D:\project\SAPI\backend\logs\v1chat-2026-05-31.log
+2026/05/31 21:56:46.513789 [V1CHAT] === LOG STARTED === cwd=D:\project\SAPI\backend log=D:\project\SAPI\backend\logs\v1chat-2026-05-31.log
+2026/05/31 22:02:37.988825 [V1CHAT] === LOG STARTED === cwd=D:\project\SAPI\backend log=D:\project\SAPI\backend\logs\v1chat-2026-05-31.log

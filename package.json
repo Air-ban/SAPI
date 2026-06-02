@@ -3,23 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "description": "HanGuan's SuperAPI - a lightweight LLM API relay with admin-managed upstream APIs and user-facing API keys.",
-  "main": "src/server.js",
   "scripts": {
     "build": "vite build",
-    "client:dev": "vite --host 0.0.0.0",
-    "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "client:dev": "vite --host 0.0.0.0"
   },
   "dependencies": {
     "@emotion/react": "^11.13.3",
     "@emotion/styled": "^11.13.0",
     "@mui/icons-material": "^6.1.6",
     "@mui/material": "^6.1.6",
-    "dotenv": "^16.4.7",
-    "express": "^4.19.2",
     "highlight.js": "^11.11.1",
     "marked": "^18.0.4",
-    "nodemailer": "^8.0.8",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "recharts": "^3.8.1"
