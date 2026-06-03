@@ -33,6 +33,10 @@ func convertInputToMessages(input interface{}, instructions string) []map[string
 				visit(entry)
 			}
 		case map[string]interface{}:
+			if appendResponsesToolMessage(&messages, v) {
+				return
+			}
+
 			role, _ := v["role"].(string)
 			if role == "developer" {
 				role = "system"
@@ -77,6 +81,77 @@ func appendMessage(messages *[]map[string]interface{}, role string, content inte
 	})
 }
 
+func appendResponsesToolMessage(messages *[]map[string]interface{}, item map[string]interface{}) bool {
+	itemType := firstStringFromBody(item, "type")
+	switch itemType {
+	case "function_call":
+		name := firstStringFromBody(item, "name")
+		callID := firstStringFromBody(item, "call_id", "id")
+		if name == "" || callID == "" {
+			return false
+		}
+		*messages = append(*messages, map[string]interface{}{
+			"role":    "assistant",
+			"content": nil,
+			"tool_calls": []interface{}{
+				map[string]interface{}{
+					"id":   callID,
+					"type": "function",
+					"function": map[string]interface{}{
+						"name":      name,
+						"arguments": firstStringFromBody(item, "arguments"),
+					},
+				},
+			},
+		})
+		return true
+	case "function_call_output":
+		callID := firstStringFromBody(item, "call_id", "id")
+		if callID == "" {
+			return false
+		}
+		*messages = append(*messages, map[string]interface{}{
+			"role":         "tool",
+			"tool_call_id": callID,
+			"content":      utils.ExtractTextFromContent(item["output"]),
+		})
+		return true
+	case "custom_tool_call":
+		name := firstStringFromBody(item, "name")
+		callID := firstStringFromBody(item, "call_id", "id")
+		if name == "" || callID == "" {
+			return false
+		}
+		*messages = append(*messages, map[string]interface{}{
+			"role":    "assistant",
+			"content": nil,
+			"tool_calls": []interface{}{
+				map[string]interface{}{
+					"id":   callID,
+					"type": "custom",
+					"custom": map[string]interface{}{
+						"name":  name,
+						"input": utils.ExtractTextFromContent(item["input"]),
+					},
+				},
+			},
+		})
+		return true
+	case "custom_tool_call_output":
+		callID := firstStringFromBody(item, "call_id", "id")
+		if callID == "" {
+			return false
+		}
+		*messages = append(*messages, map[string]interface{}{
+			"role":         "tool",
+			"tool_call_id": callID,
+			"content":      utils.ExtractTextFromContent(item["output"]),
+		})
+		return true
+	}
+	return false
+}
+
 func ConvertToChatCompletionsPayload(body map[string]interface{}) map[string]interface{} {
 	input := body["input"]
 	if input == nil {
@@ -101,10 +176,17 @@ func ConvertToChatCompletionsPayload(body map[string]interface{}) map[string]int
 	}
 
 	if tools, ok := body["tools"].([]interface{}); ok && len(tools) > 0 {
-		payload["tools"] = tools
-		payload["tool_choice"] = "auto"
-		if tc, ok := body["tool_choice"].(string); ok {
-			payload["tool_choice"] = tc
+		chatTools := ConvertResponsesToolsToChatTools(tools)
+		if len(chatTools) > 0 {
+			payload["tools"] = chatTools
+			payload["tool_choice"] = "auto"
+			if tc, ok := body["tool_choice"].(string); ok {
+				payload["tool_choice"] = tc
+			} else if tc, ok := body["tool_choice"].(map[string]interface{}); ok {
+				if choice, ok := ConvertResponsesToolChoiceToChat(tc, chatTools); ok {
+					payload["tool_choice"] = choice
+				}
+			}
 		}
 	}
 
@@ -171,6 +253,167 @@ func ExtractChatCompletionText(payload map[string]interface{}) (text string, fin
 	return
 }
 
+func ConvertResponsesToolsToChatTools(tools []interface{}) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(tools))
+	for _, tool := range tools {
+		t, ok := tool.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		toolType, _ := t["type"].(string)
+		switch toolType {
+		case "function":
+			if converted, ok := convertResponsesFunctionTool(t); ok {
+				result = append(result, converted)
+			}
+		case "custom":
+			if converted, ok := convertResponsesCustomTool(t); ok {
+				result = append(result, converted)
+			}
+		}
+	}
+	return result
+}
+
+func convertResponsesFunctionTool(tool map[string]interface{}) (map[string]interface{}, bool) {
+	if fn, ok := tool["function"].(map[string]interface{}); ok {
+		name := firstStringFromBody(fn, "name")
+		if name == "" {
+			return nil, false
+		}
+		return map[string]interface{}{
+			"type": "function",
+			"function": map[string]interface{}{
+				"name":        name,
+				"description": fn["description"],
+				"parameters":  fn["parameters"],
+			},
+		}, true
+	}
+
+	name := firstStringFromBody(tool, "name")
+	if name == "" {
+		return nil, false
+	}
+	return map[string]interface{}{
+		"type": "function",
+		"function": map[string]interface{}{
+			"name":        name,
+			"description": tool["description"],
+			"parameters":  tool["parameters"],
+		},
+	}, true
+}
+
+func convertResponsesCustomTool(tool map[string]interface{}) (map[string]interface{}, bool) {
+	name := firstStringFromBody(tool, "name")
+	if name == "" {
+		return nil, false
+	}
+	return map[string]interface{}{
+		"type": "custom",
+		"custom": map[string]interface{}{
+			"name":        name,
+			"description": tool["description"],
+			"format":      tool["format"],
+		},
+	}, true
+}
+
+func ConvertResponsesToolChoiceToChat(choice map[string]interface{}, tools []map[string]interface{}) (interface{}, bool) {
+	choiceType := firstStringFromBody(choice, "type")
+	name := firstStringFromBody(choice, "name")
+
+	if choiceType == "auto" || choiceType == "required" || choiceType == "none" {
+		return choiceType, true
+	}
+	if name == "" {
+		return nil, false
+	}
+
+	for _, tool := range tools {
+		switch choiceType {
+		case "function":
+			if fn, ok := tool["function"].(map[string]interface{}); ok && fn["name"] == name {
+				return map[string]interface{}{
+					"type":     "function",
+					"function": map[string]interface{}{"name": name},
+				}, true
+			}
+		case "custom":
+			if custom, ok := tool["custom"].(map[string]interface{}); ok && custom["name"] == name {
+				return map[string]interface{}{
+					"type":   "custom",
+					"custom": map[string]interface{}{"name": name},
+				}, true
+			}
+		}
+	}
+	return nil, false
+}
+
+func ExtractChatCompletionFunctionCallItems(payload map[string]interface{}) []interface{} {
+	choices, _ := payload["choices"].([]interface{})
+	if len(choices) == 0 {
+		return nil
+	}
+
+	choice, _ := choices[0].(map[string]interface{})
+	if choice == nil {
+		return nil
+	}
+
+	message, _ := choice["message"].(map[string]interface{})
+	if message == nil {
+		message, _ = choice["delta"].(map[string]interface{})
+	}
+	if message == nil {
+		return nil
+	}
+
+	toolCalls, _ := message["tool_calls"].([]interface{})
+	if len(toolCalls) == 0 {
+		return nil
+	}
+
+	items := make([]interface{}, 0, len(toolCalls))
+	for _, toolCall := range toolCalls {
+		tc, ok := toolCall.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		switch firstStringFromBody(tc, "type") {
+		case "function":
+			fn, _ := tc["function"].(map[string]interface{})
+			name := firstStringFromBody(fn, "name")
+			if name == "" {
+				continue
+			}
+			items = append(items, map[string]interface{}{
+				"type":      "function_call",
+				"call_id":   firstStringFromBody(tc, "id"),
+				"name":      name,
+				"arguments": firstStringFromBody(fn, "arguments"),
+			})
+		case "custom":
+			custom, _ := tc["custom"].(map[string]interface{})
+			name := firstStringFromBody(custom, "name")
+			if name == "" {
+				continue
+			}
+			items = append(items, map[string]interface{}{
+				"type":    "custom_tool_call",
+				"call_id": firstStringFromBody(tc, "id"),
+				"name":    name,
+				"input":   firstStringFromBody(custom, "input"),
+			})
+		}
+	}
+	return items
+}
+
 func BuildResponseUsage(usage interface{}, outputText string) map[string]interface{} {
 	normalized := utils.NormalizeUsage(usage)
 	source, _ := usage.(map[string]interface{})
@@ -222,17 +465,17 @@ func BuildResponseUsage(usage interface{}, outputText string) map[string]interfa
 	}
 
 	return map[string]interface{}{
-		"input_tokens":         inputTokens,
-		"input_tokens_details": map[string]interface{}{"cached_tokens": cachedTokens},
-		"output_tokens":        outputTokens,
+		"input_tokens":          inputTokens,
+		"input_tokens_details":  map[string]interface{}{"cached_tokens": cachedTokens},
+		"output_tokens":         outputTokens,
 		"output_tokens_details": map[string]interface{}{"reasoning_tokens": reasoningTokens},
-		"total_tokens":         totalTokens,
+		"total_tokens":          totalTokens,
 	}
 }
 
 func BuildIncompleteDetails(finishReason string) interface{} {
 	reason := strings.TrimSpace(finishReason)
-	if reason == "" {
+	if reason == "" || reason == "tool_calls" {
 		return nil
 	}
 	if reason == "length" {
@@ -279,25 +522,25 @@ func BuildResponseObject(params map[string]interface{}) map[string]interface{} {
 	outputText, _ := params["outputText"].(string)
 
 	response := map[string]interface{}{
-		"id":                 utils.GenerateID("resp"),
-		"object":             "response",
-		"created_at":         createdAt,
-		"status":             params["status"],
-		"background":         false,
-		"error":              nil,
-		"frequency_penalty":  0.0,
-		"input":              params["input"],
-		"instructions":       fmt.Sprintf("%v", params["instructions"]),
-		"max_output_tokens":  params["maxOutputTokens"],
-		"max_tool_calls":     nil,
-		"model":              params["model"],
-		"moderation":         nil,
-		"output":             params["output"],
-		"output_text":        outputText,
-		"parallel_tool_calls": true,
-		"presence_penalty":   0.0,
-		"previous_response_id": nil,
-		"prompt_cache_key":   nil,
+		"id":                     utils.GenerateID("resp"),
+		"object":                 "response",
+		"created_at":             createdAt,
+		"status":                 params["status"],
+		"background":             false,
+		"error":                  nil,
+		"frequency_penalty":      0.0,
+		"input":                  params["input"],
+		"instructions":           fmt.Sprintf("%v", params["instructions"]),
+		"max_output_tokens":      params["maxOutputTokens"],
+		"max_tool_calls":         nil,
+		"model":                  params["model"],
+		"moderation":             nil,
+		"output":                 params["output"],
+		"output_text":            outputText,
+		"parallel_tool_calls":    true,
+		"presence_penalty":       0.0,
+		"previous_response_id":   nil,
+		"prompt_cache_key":       nil,
 		"prompt_cache_retention": "24h",
 		"reasoning": map[string]interface{}{
 			"context": "current_turn",
@@ -311,16 +554,16 @@ func BuildResponseObject(params map[string]interface{}) map[string]interface{} {
 		"text":              map[string]interface{}{},
 		"tool_choice":       "auto",
 		"tool_usage": map[string]interface{}{
-			"image_gen":   nil,
+			"image_gen":  nil,
 			"web_search": map[string]interface{}{"num_requests": 0},
 		},
-		"tools":         []interface{}{},
-		"top_logprobs":  0,
-		"top_p":         0.98,
-		"truncation":    "disabled",
-		"usage":         params["usage"],
-		"user":          nil,
-		"metadata":      map[string]interface{}{},
+		"tools":        []interface{}{},
+		"top_logprobs": 0,
+		"top_p":        0.98,
+		"truncation":   "disabled",
+		"usage":        params["usage"],
+		"user":         nil,
+		"metadata":     map[string]interface{}{},
 	}
 
 	if status, ok := params["status"].(string); ok && status == "completed" {

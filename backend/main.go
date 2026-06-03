@@ -68,9 +68,14 @@ func main() {
 }
 
 func isAPIPath(p string) bool {
-	return strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/v1/") ||
-		strings.HasPrefix(p, "/messages") || p == "/responses" || p == "/chat/completions" ||
-		p == "/models" || p == "/swagger" || strings.HasPrefix(p, "/swagger")
+	return pathMatches(p, "/api") || pathMatches(p, "/v1") ||
+		pathMatches(p, "/responses") || pathMatches(p, "/messages") ||
+		p == "/chat/completions" || p == "/models" ||
+		pathMatches(p, "/swagger")
+}
+
+func pathMatches(path, prefix string) bool {
+	return path == prefix || strings.HasPrefix(path, prefix+"/")
 }
 
 func buildSpaHandler(publicDir string) http.HandlerFunc {

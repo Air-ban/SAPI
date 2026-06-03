@@ -3,6 +3,7 @@ data/
 .env
 npm-debug.log*
 # Go
-backend/sapi.exe
+backend/*.exe
 backend/sapi
+backend/logs/
 

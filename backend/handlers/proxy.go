@@ -25,7 +25,7 @@ func MountProxyRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/messages/count_tokens", handleAnthropicCountTokensHandler)
 	mux.HandleFunc("POST /messages", handleAnthropicMessagesProxyHandler)
 	mux.HandleFunc("POST /v1/messages", handleAnthropicMessagesProxyHandler)
-	mux.HandleFunc("/v1/", handleProxyToProvider)
+	mux.HandleFunc("POST /v1/", handleProxyToProvider)
 }
 
 func maskKeyPreview(key string) string {
@@ -228,15 +228,15 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 		outputItems = append(outputItems, proxy.CreateAssistantMessageItem(text))
 
 		respObj := proxy.BuildResponseObject(map[string]interface{}{
-			"status":            "completed",
-			"model":             model,
-			"input":             input,
-			"instructions":      instructions,
-			"output":            outputItems,
-			"outputText":        text,
-			"usage":             usage,
-			"reasoningEffort":   effort,
-			"finishReason":      finishReason,
+			"status":          "completed",
+			"model":           model,
+			"input":           input,
+			"instructions":    instructions,
+			"output":          outputItems,
+			"outputText":      text,
+			"usage":           usage,
+			"reasoningEffort": effort,
+			"finishReason":    finishReason,
 		})
 
 		logging.RecordRequestLog(logging.RequestLogParams{
@@ -305,13 +305,13 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 	outputItems = append(outputItems, assistantItem)
 
 	baseResponse := proxy.BuildResponseObject(map[string]interface{}{
-		"status":       "in_progress",
-		"model":        model,
-		"input":        input,
-		"instructions": instructions,
-		"output":       outputItems,
-		"outputText":   "",
-		"usage":        nil,
+		"status":          "in_progress",
+		"model":           model,
+		"input":           input,
+		"instructions":    instructions,
+		"output":          outputItems,
+		"outputText":      "",
+		"usage":           nil,
 		"reasoningEffort": effort,
 	})
 	baseResponse["id"] = responseID
@@ -448,15 +448,15 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 	})
 
 	finalResponse := proxy.BuildResponseObject(map[string]interface{}{
-		"status":     "completed",
-		"model":      model,
-		"input":      input,
-		"instructions": instructions,
-		"output":     finalOutput,
-		"outputText": outputText,
-		"usage":      usagePayload,
+		"status":          "completed",
+		"model":           model,
+		"input":           input,
+		"instructions":    instructions,
+		"output":          finalOutput,
+		"outputText":      outputText,
+		"usage":           usagePayload,
 		"reasoningEffort": effort,
-		"finishReason": finishReason,
+		"finishReason":    finishReason,
 	})
 	finalResponse["id"] = responseID
 
@@ -669,18 +669,18 @@ func handleAnthropicMessagesProxyHandler(w http.ResponseWriter, r *http.Request)
 	writeEvent("message_start", map[string]interface{}{
 		"type": "message_start",
 		"message": map[string]interface{}{
-			"id":           responseID,
-			"type":         "message",
-			"role":         "assistant",
-			"content":      []interface{}{},
-			"model":        model,
-			"stop_reason":  nil,
+			"id":            responseID,
+			"type":          "message",
+			"role":          "assistant",
+			"content":       []interface{}{},
+			"model":         model,
+			"stop_reason":   nil,
 			"stop_sequence": nil,
 			"usage": map[string]interface{}{
-				"input_tokens":               0,
-				"output_tokens":              0,
+				"input_tokens":                0,
+				"output_tokens":               0,
 				"cache_creation_input_tokens": 0,
-				"cache_read_input_tokens":    0,
+				"cache_read_input_tokens":     0,
 			},
 		},
 	})
@@ -1059,7 +1059,7 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[V1CHAT] STREAM_START")
 			w.WriteHeader(resp.StatusCode)
 			utils.CopyUpstreamHeaders(resp.Header, w, map[string]string{
-				"Cache-Control":   "no-cache, no-transform",
+				"Cache-Control":     "no-cache, no-transform",
 				"X-Accel-Buffering": "no",
 			})
 			if flusher, ok := w.(http.Flusher); ok {
