@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -15,12 +16,24 @@ import (
 	"sapi/handlers"
 	"sapi/middleware"
 	"sapi/proxy"
+	"sapi/security"
+	"sapi/store"
 )
 
 func main() {
 	cfg := config.Load()
 
 	setupDiagnosticLog()
+
+	if err := store.Init(context.Background(), cfg); err != nil {
+		log.Fatalf("store initialization failed: %v", err)
+	}
+	defer store.Close()
+
+	if err := security.Init(context.Background(), cfg); err != nil {
+		log.Fatalf("security initialization failed: %v", err)
+	}
+	defer security.Close()
 
 	mux := http.NewServeMux()
 
@@ -36,7 +49,7 @@ func main() {
 		spaHandler = buildSpaHandler(publicDir)
 	}
 
-	handler := middleware.CORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := security.RequestGuard(middleware.CORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isAPIPath(r.URL.Path) {
 			mux.ServeHTTP(w, r)
 			return
@@ -47,7 +60,7 @@ func main() {
 		} else {
 			mux.ServeHTTP(w, r)
 		}
-	}))
+	})))
 
 	wrappedHandler := loggingMiddleware(handler)
 

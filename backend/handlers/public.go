@@ -16,6 +16,7 @@ import (
 	"sapi/middleware"
 	"sapi/models"
 	"sapi/proxy"
+	"sapi/security"
 	"sapi/store"
 	"sapi/utils"
 )
@@ -241,6 +242,7 @@ func serviceConfig() map[string]interface{} {
 
 func MountPublicRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/health", handleHealth)
+	mux.HandleFunc("GET /api/ready", handleReady)
 	mux.HandleFunc("GET /api/public/config", handlePublicConfig)
 	mux.HandleFunc("GET /api/public/key", handlePublicKey)
 	mux.HandleFunc("GET /v1/models", handleModelsList)
@@ -259,6 +261,19 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 		"ok":   true,
 		"name": "SAPI",
 		"time": store.Now(),
+	})
+}
+
+func handleReady(w http.ResponseWriter, r *http.Request) {
+	checks := map[string]interface{}{
+		"store":    store.Health(r.Context()),
+		"security": map[string]interface{}{"redis": security.Health(r.Context())},
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":     true,
+		"name":   "SAPI",
+		"time":   store.Now(),
+		"checks": checks,
 	})
 }
 
@@ -445,12 +460,14 @@ func handleProvidersHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func handlePostSuggestion(w http.ResponseWriter, r *http.Request) {
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
-	title := strings.TrimSpace(fmt.Sprintf("%v", body["title"]))
-	content := strings.TrimSpace(fmt.Sprintf("%v", body["content"]))
-	contact := strings.TrimSpace(fmt.Sprintf("%v", body["contact"]))
+	title := security.SafeSingleLine(fmt.Sprintf("%v", body["title"]), 160)
+	content := security.SafeText(fmt.Sprintf("%v", body["content"]), 20000)
+	contact := security.SafeSingleLine(fmt.Sprintf("%v", body["contact"]), 254)
 
 	if title == "" {
 		utils.SendError(w, 400, "Title is required.", "invalid_title")

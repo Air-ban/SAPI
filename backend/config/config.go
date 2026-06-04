@@ -10,21 +10,30 @@ import (
 )
 
 type Config struct {
-	Port                         int
-	AdminUser                    string
-	AdminPassword                string
-	PublicBaseURL                string
-	DataFile                     string
-	TencentCaptchaAppID          string
-	TencentCaptchaAppSecretKey   string
-	TencentSecretID              string
-	TencentSecretKey             string
-	SmtpHost                     string
-	SmtpPort                     int
-	SmtpSecure                   bool
-	SmtpUser                     string
-	SmtpPass                     string
-	SmtpFrom                     string
+	Port                       int
+	AdminUser                  string
+	AdminPassword              string
+	PublicBaseURL              string
+	DataFile                   string
+	PostgresURL                string
+	PostgresMaxConns           int
+	RedisURL                   string
+	RedisPoolSize              int
+	RedisKeyPrefix             string
+	RequestBodyLimitBytes      int64
+	ProxyBodyLimitBytes        int64
+	TrustProxyHeaders          bool
+	TrustedProxyCIDRs          []string
+	TencentCaptchaAppID        string
+	TencentCaptchaAppSecretKey string
+	TencentSecretID            string
+	TencentSecretKey           string
+	SmtpHost                   string
+	SmtpPort                   int
+	SmtpSecure                 bool
+	SmtpUser                   string
+	SmtpPass                   string
+	SmtpFrom                   string
 }
 
 var HopByHopHeaders = map[string]bool{
@@ -51,6 +60,15 @@ func Load() *Config {
 		AdminPassword:              getEnv("SAPI_ADMIN_PASSWORD", "sapi-admin"),
 		PublicBaseURL:              getEnv("SAPI_PUBLIC_BASE_URL", "http://localhost:"+strconv.Itoa(port)),
 		DataFile:                   getEnv("SAPI_DATA_FILE", ""),
+		PostgresURL:                getEnv("SAPI_POSTGRES_URL", getEnv("DATABASE_URL", "")),
+		PostgresMaxConns:           intEnv("SAPI_POSTGRES_MAX_CONNS", 20),
+		RedisURL:                   getEnv("SAPI_REDIS_URL", getEnv("REDIS_URL", "")),
+		RedisPoolSize:              intEnv("SAPI_REDIS_POOL_SIZE", 64),
+		RedisKeyPrefix:             getEnv("SAPI_REDIS_KEY_PREFIX", "sapi"),
+		RequestBodyLimitBytes:      int64Env("SAPI_REQUEST_BODY_LIMIT_BYTES", 1<<20),
+		ProxyBodyLimitBytes:        int64Env("SAPI_PROXY_BODY_LIMIT_BYTES", 32<<20),
+		TrustProxyHeaders:          boolEnv("SAPI_TRUST_PROXY_HEADERS", false),
+		TrustedProxyCIDRs:          splitCSV(getEnv("SAPI_TRUSTED_PROXY_CIDRS", "")),
 		TencentCaptchaAppID:        getEnv("SAPI_TENCENT_CAPTCHA_APP_ID", ""),
 		TencentCaptchaAppSecretKey: getEnv("SAPI_TENCENT_CAPTCHA_APP_SECRET_KEY", ""),
 		TencentSecretID:            getEnv("SAPI_TENCENT_SECRET_ID", ""),
@@ -108,7 +126,7 @@ func loadDotenv() {
 			key := strings.TrimSpace(line[:idx])
 			val := strings.TrimSpace(line[idx+1:])
 			val = strings.Trim(val, `"`)
-			val = strings.Trim(val, `'`) 
+			val = strings.Trim(val, `'`)
 			if os.Getenv(key) == "" {
 				os.Setenv(key, val)
 			}
@@ -134,4 +152,38 @@ func intEnv(key string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+func int64Env(key string, fallback int64) int64 {
+	val := os.Getenv(key)
+	if val == "" {
+		return fallback
+	}
+	n, err := strconv.ParseInt(val, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return n
+}
+
+func boolEnv(key string, fallback bool) bool {
+	val := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	if val == "" {
+		return fallback
+	}
+	return val == "1" || val == "true" || val == "yes" || val == "on"
+}
+
+func splitCSV(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if item := strings.TrimSpace(part); item != "" {
+			result = append(result, item)
+		}
+	}
+	return result
 }

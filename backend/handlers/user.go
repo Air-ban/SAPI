@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"sapi/auth"
 	"sapi/middleware"
 	"sapi/models"
+	"sapi/security"
 	"sapi/store"
 	"sapi/usage"
 	"sapi/utils"
@@ -41,14 +41,18 @@ func handleUserMe(w http.ResponseWriter, r *http.Request) {
 
 func handleUserCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r)
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
-	name, _ := body["name"].(string)
+	name := security.SafeSingleLine(toString(body["name"]), 120)
 	allowedModels := []string{}
 	if am, ok := body["allowedModels"].([]interface{}); ok {
 		for _, m := range am {
-			allowedModels = append(allowedModels, toString(m))
+			if item := security.SafeSingleLine(toString(m), 200); item != "" {
+				allowedModels = append(allowedModels, item)
+			}
 		}
 	}
 	rpmLimit := 0
@@ -80,8 +84,10 @@ func handleUserCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 
 func handleUserRotateAPIKey(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r)
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
 	result := store.MutateDB(func(db *models.Database) interface{} {
 		for i := range db.Users {
@@ -177,8 +183,10 @@ func handleUserRotateSpecificKey(w http.ResponseWriter, r *http.Request) {
 func handleUserUpdateAPIKey(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r)
 	keyID := r.PathValue("id")
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
 	result := store.MutateDB(func(db *models.Database) interface{} {
 		for i := range db.Users {
@@ -188,7 +196,7 @@ func handleUserUpdateAPIKey(w http.ResponseWriter, r *http.Request) {
 					if u.APIKeys[j].ID == keyID {
 						k := &u.APIKeys[j]
 						if name, ok := body["name"].(string); ok {
-							k.Name = strings.TrimSpace(name)
+							k.Name = security.SafeSingleLine(name, 120)
 						}
 						if enabled, ok := body["enabled"].(bool); ok {
 							k.Enabled = enabled
@@ -196,7 +204,9 @@ func handleUserUpdateAPIKey(w http.ResponseWriter, r *http.Request) {
 						if am, ok := body["allowedModels"].([]interface{}); ok {
 							models := make([]string, 0)
 							for _, m := range am {
-								models = append(models, toString(m))
+								if item := security.SafeSingleLine(toString(m), 200); item != "" {
+									models = append(models, item)
+								}
 							}
 							k.AllowedModels = models
 						}
@@ -271,8 +281,10 @@ func handleUserDeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 
 func handleUserSettings(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r)
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
 	result := store.MutateDB(func(db *models.Database) interface{} {
 		for i := range db.Users {
@@ -329,7 +341,7 @@ func handleUserSuggestions(w http.ResponseWriter, r *http.Request) {
 
 func createUserAPIKeyRecord(user *models.User, name string, allowedModels []string, rpmLimit int) *models.APIKeyRecord {
 	now := store.Now()
-	keyName := strings.TrimSpace(name)
+	keyName := security.SafeSingleLine(name, 120)
 	if keyName == "" {
 		keyName = "API Key " + toString(len(user.APIKeys)+1)
 	}
@@ -354,6 +366,9 @@ func createUserAPIKeyRecord(user *models.User, name string, allowedModels []stri
 }
 
 func toString(v interface{}) string {
+	if v == nil {
+		return ""
+	}
 	if s, ok := v.(string); ok {
 		return s
 	}

@@ -65,3 +65,15 @@ curl http://localhost:3000/v1/chat/completions \
 ## 数据存储
 
 配置默认保存到 `data/sapi.json`。该文件会包含上游 API Key 和用户 API Key，请不要提交到代码仓库。
+
+生产环境可选启用 Redis 和 PostgreSQL：
+
+- `SAPI_REDIS_URL`：启用跨实例登录失败、验证码请求、API Key 失败和 RPM 滑窗限流。
+- `SAPI_POSTGRES_URL`：启用 PostgreSQL 状态存储，并将高频请求日志写入独立表。
+- `SAPI_TRUST_PROXY_HEADERS=false` 默认不信任 `X-Forwarded-For`/`CF-Connecting-IP`；只有在 `SAPI_TRUSTED_PROXY_CIDRS` 配置可信代理网段后才会读取代理头。
+- `SAPI_REQUEST_BODY_LIMIT_BYTES` 和 `SAPI_PROXY_BODY_LIMIT_BYTES` 用于限制控制面和代理接口请求体大小。
+
+健康检查：
+
+- `GET /api/health`：进程存活。
+- `GET /api/ready`：返回 Redis/PostgreSQL 等依赖状态。

@@ -11,6 +11,7 @@ import (
 	"sapi/config"
 	"sapi/middleware"
 	"sapi/models"
+	"sapi/security"
 	"sapi/store"
 	"sapi/usage"
 	"sapi/utils"
@@ -105,22 +106,24 @@ func handleAdminGetSMTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAdminUpdateSMTP(w http.ResponseWriter, r *http.Request) {
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
 	updated := store.MutateDB(func(db *models.Database) interface{} {
-		pass := strings.TrimSpace(toString(body["pass"]))
+		pass := security.SafeSingleLine(toString(body["pass"]), 512)
 		if pass == "" && db.SMTPConfig != nil {
 			pass = db.SMTPConfig.Pass
 		}
 
 		db.SMTPConfig = &models.SMTPConfig{
-			Host:   strings.TrimSpace(toString(body["host"])),
+			Host:   security.SafeSingleLine(toString(body["host"]), 255),
 			Port:   int(toFloat(body["port"])),
 			Secure: toBool(body["secure"]),
-			User:   strings.TrimSpace(toString(body["user"])),
+			User:   security.SafeSingleLine(toString(body["user"]), 255),
 			Pass:   pass,
-			From:   strings.TrimSpace(toString(body["from"])),
+			From:   security.SafeSingleLine(toString(body["from"]), 255),
 		}
 		if db.SMTPConfig.Port == 0 {
 			db.SMTPConfig.Port = 587
@@ -140,10 +143,12 @@ func handleAdminUpdateSMTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAdminTestSMTP(w http.ResponseWriter, r *http.Request) {
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
-	to := strings.TrimSpace(toString(body["to"]))
+	to := security.SafeSingleLine(toString(body["to"]), 254)
 	if to == "" {
 		utils.SendError(w, 400, "Recipient email is required.", "invalid_email")
 		return
@@ -171,12 +176,14 @@ func handleAdminListInvCodes(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAdminCreateInvCode(w http.ResponseWriter, r *http.Request) {
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
-	code := strings.TrimSpace(toString(body["code"]))
-	note := strings.TrimSpace(toString(body["note"]))
-	expiresAt := strings.TrimSpace(toString(body["expiresAt"]))
+	code := security.SafeSingleLine(toString(body["code"]), 128)
+	note := security.SafeSingleLine(toString(body["note"]), 500)
+	expiresAt := security.SafeSingleLine(toString(body["expiresAt"]), 64)
 	maxUses := int(toFloat(body["maxUses"]))
 
 	if code == "" {
@@ -233,12 +240,14 @@ func handleAdminDeleteInvCode(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAdminSendInvitation(w http.ResponseWriter, r *http.Request) {
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
-	email := strings.TrimSpace(toString(body["email"]))
-	codeID := strings.TrimSpace(toString(body["codeId"]))
-	customCode := strings.TrimSpace(toString(body["code"]))
+	email := security.SafeSingleLine(toString(body["email"]), 254)
+	codeID := security.SafeSingleLine(toString(body["codeId"]), 128)
+	customCode := security.SafeSingleLine(toString(body["code"]), 128)
 
 	if email == "" || !strings.Contains(email, "@") {
 		utils.SendError(w, 400, "Valid email address is required.", "invalid_email")
@@ -296,9 +305,11 @@ func handleAdminListAPIKeys(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAdminCreateAPIKey(w http.ResponseWriter, r *http.Request) {
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
-	name := strings.TrimSpace(toString(body["name"]))
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
+	name := security.SafeSingleLine(toString(body["name"]), 120)
 
 	record := store.MutateDB(func(db *models.Database) interface{} {
 		if db.AdminAPIKeys == nil {
@@ -356,15 +367,17 @@ func handleAdminRotateAPIKey(w http.ResponseWriter, r *http.Request) {
 
 func handleAdminUpdateAPIKey(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
 	result := store.MutateDB(func(db *models.Database) interface{} {
 		for i := range db.AdminAPIKeys {
 			if db.AdminAPIKeys[i].ID == id {
 				k := &db.AdminAPIKeys[i]
 				if name, ok := body["name"].(string); ok {
-					k.Name = strings.TrimSpace(name)
+					k.Name = security.SafeSingleLine(name, 120)
 				}
 				if enabled, ok := body["enabled"].(bool); ok {
 					k.Enabled = enabled
@@ -409,14 +422,16 @@ func handleAdminDeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAdminCreateProvider(w http.ResponseWriter, r *http.Request) {
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
-	name := strings.TrimSpace(toString(body["name"]))
-	baseURL := strings.TrimSpace(toString(body["baseUrl"]))
-	apiKey := strings.TrimSpace(toString(body["apiKey"]))
+	name := security.SafeSingleLine(toString(body["name"]), 120)
+	baseURL := security.SafeSingleLine(toString(body["baseUrl"]), 2048)
+	apiKey := security.SafeSingleLine(toString(body["apiKey"]), 2048)
 
-	if name == "" || baseURL == "" || apiKey == "" {
+	if name == "" || baseURL == "" || apiKey == "" || !security.ValidHTTPBaseURL(baseURL) {
 		utils.SendError(w, 400, "Provider name, base URL and API key are required.", "invalid_provider")
 		return
 	}
@@ -449,21 +464,32 @@ func handleAdminCreateProvider(w http.ResponseWriter, r *http.Request) {
 
 func handleAdminUpdateProvider(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
+
+	if baseURL, ok := body["baseUrl"].(string); ok && strings.TrimSpace(baseURL) != "" {
+		cleaned := security.SafeSingleLine(baseURL, 2048)
+		if !security.ValidHTTPBaseURL(cleaned) {
+			utils.SendError(w, 400, "Provider base URL is invalid.", "invalid_provider")
+			return
+		}
+		body["baseUrl"] = cleaned
+	}
 
 	result := store.MutateDB(func(db *models.Database) interface{} {
 		for i := range db.Providers {
 			if db.Providers[i].ID == id {
 				p := &db.Providers[i]
 				if name, ok := body["name"].(string); ok && name != "" {
-					p.Name = strings.TrimSpace(name)
+					p.Name = security.SafeSingleLine(name, 120)
 				}
 				if baseURL, ok := body["baseUrl"].(string); ok && baseURL != "" {
-					p.BaseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+					p.BaseURL = strings.TrimRight(baseURL, "/")
 				}
 				if apiKey, ok := body["apiKey"].(string); ok && apiKey != "" {
-					p.APIKey = strings.TrimSpace(apiKey)
+					p.APIKey = security.SafeSingleLine(apiKey, 2048)
 				}
 				if models, ok := body["models"]; ok {
 					p.Models = normalizeModelList(models)
@@ -518,13 +544,15 @@ func handleAdminDeleteProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAdminFetchProviderModels(w http.ResponseWriter, r *http.Request) {
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
-	baseURL := strings.TrimSpace(toString(body["baseUrl"]))
-	apiKey := strings.TrimSpace(toString(body["apiKey"]))
+	baseURL := security.SafeSingleLine(toString(body["baseUrl"]), 2048)
+	apiKey := security.SafeSingleLine(toString(body["apiKey"]), 2048)
 
-	if baseURL == "" || apiKey == "" {
+	if baseURL == "" || apiKey == "" || !security.ValidHTTPBaseURL(baseURL) {
 		utils.SendError(w, 400, "Provider base URL and API key are required.", "invalid_provider")
 		return
 	}
@@ -562,15 +590,17 @@ func handleAdminFetchProviderModels(w http.ResponseWriter, r *http.Request) {
 
 func handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
 	result := store.MutateDB(func(db *models.Database) interface{} {
 		for i := range db.Users {
 			if db.Users[i].ID == id {
 				u := &db.Users[i]
 				if name, ok := body["name"].(string); ok {
-					u.Name = strings.TrimSpace(name)
+					u.Name = security.SafeSingleLine(name, 120)
 				}
 				if enabled, ok := body["enabled"].(bool); ok {
 					u.Enabled = enabled
@@ -614,8 +644,10 @@ func handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 
 func handleAdminResetUserPassword(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
 	password, _ := body["password"].(string)
 	if len(password) < 8 {
@@ -645,8 +677,10 @@ func handleAdminResetUserPassword(w http.ResponseWriter, r *http.Request) {
 func handleAdminUpdateUserAPIKey(w http.ResponseWriter, r *http.Request) {
 	userID := r.PathValue("userId")
 	keyID := r.PathValue("keyId")
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
 	result := store.MutateDB(func(db *models.Database) interface{} {
 		for i := range db.Users {
@@ -692,12 +726,14 @@ func handleAdminListAnnouncements(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAdminCreateAnnouncement(w http.ResponseWriter, r *http.Request) {
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
-	title := strings.TrimSpace(toString(body["title"]))
-	content := strings.TrimSpace(toString(body["content"]))
-	annType, _ := body["type"].(string)
+	title := security.SafeSingleLine(toString(body["title"]), 160)
+	content := security.SafeText(toString(body["content"]), 20000)
+	annType := security.SafeSingleLine(toString(body["type"]), 20)
 	sendEmail := toBool(body["sendEmail"])
 
 	if title == "" {
@@ -752,20 +788,23 @@ func handleAdminCreateAnnouncement(w http.ResponseWriter, r *http.Request) {
 
 func handleAdminUpdateAnnouncement(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
 	result := store.MutateDB(func(db *models.Database) interface{} {
 		for i := range db.Announcements {
 			if db.Announcements[i].ID == id {
 				a := &db.Announcements[i]
 				if title, ok := body["title"].(string); ok {
-					a.Title = strings.TrimSpace(title)
+					a.Title = security.SafeSingleLine(title, 160)
 				}
 				if content, ok := body["content"].(string); ok {
-					a.Content = strings.TrimSpace(content)
+					a.Content = security.SafeText(content, 20000)
 				}
 				if annType, ok := body["type"].(string); ok {
+					annType = security.SafeSingleLine(annType, 20)
 					validTypes := map[string]bool{"info": true, "warning": true, "success": true, "error": true}
 					if validTypes[annType] {
 						a.Type = annType
@@ -830,9 +869,11 @@ func handleAdminListSuggestions(w http.ResponseWriter, r *http.Request) {
 
 func handleAdminReplySuggestion(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
-	reply := strings.TrimSpace(toString(body["reply"]))
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
+	reply := security.SafeText(toString(body["reply"]), 20000)
 
 	result := store.MutateDB(func(db *models.Database) interface{} {
 		for i := range db.Suggestions {
@@ -891,10 +932,12 @@ func handleAdminGetSiteEmail(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAdminUpdateSiteEmail(w http.ResponseWriter, r *http.Request) {
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
-	email := strings.TrimSpace(toString(body["siteEmail"]))
+	email := security.SafeSingleLine(toString(body["siteEmail"]), 254)
 	if email != "" && !strings.Contains(email, "@") {
 		utils.SendError(w, 400, "Valid email address is required.", "invalid_email")
 		return
@@ -909,8 +952,10 @@ func handleAdminUpdateSiteEmail(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAdminUpdateRPMLimit(w http.ResponseWriter, r *http.Request) {
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
 	limit := int(toFloat(body["defaultRpmLimit"]))
 	if limit < 1 {
@@ -927,10 +972,12 @@ func handleAdminUpdateRPMLimit(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAdminUpdateBanner(w http.ResponseWriter, r *http.Request) {
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
-	content := strings.TrimSpace(toString(body["content"]))
+	content := security.SafeText(toString(body["content"]), 20000)
 	updatedAt := store.Now()
 
 	store.MutateDB(func(db *models.Database) interface{} {
@@ -948,11 +995,13 @@ func handleAdminUpdateBanner(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAdminUpdateMaintenance(w http.ResponseWriter, r *http.Request) {
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
 	enabled := toBool(body["maintenanceMode"])
-	endTime := strings.TrimSpace(toString(body["maintenanceEndTime"]))
+	endTime := security.SafeSingleLine(toString(body["maintenanceEndTime"]), 64)
 
 	store.MutateDB(func(db *models.Database) interface{} {
 		db.MaintenanceMode = enabled
