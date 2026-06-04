@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -114,6 +115,25 @@ func BuildUpstreamURL(baseURL, originalURL string) string {
 		return baseURL + "/" + incomingWithoutVersion
 	}
 	return baseURL + "/" + incomingPath
+}
+
+func BuildGeminiGenerateContentURL(baseURL, model, action, apiKey string) string {
+	baseURL = strings.TrimRight(baseURL, "/")
+	escapedModel := url.PathEscape(model)
+	escapedKey := url.QueryEscape(apiKey)
+	if strings.Contains(baseURL, "/models/") {
+		if strings.Contains(baseURL, ":") {
+			if strings.Contains(baseURL, "?") {
+				return baseURL + "&key=" + escapedKey
+			}
+			return baseURL + "?key=" + escapedKey
+		}
+		return baseURL + ":" + url.PathEscape(action) + "?key=" + escapedKey
+	}
+	if strings.HasSuffix(baseURL, "/v1beta") || strings.HasSuffix(baseURL, "/v1") {
+		return baseURL + "/models/" + escapedModel + ":" + url.PathEscape(action) + "?key=" + escapedKey
+	}
+	return baseURL + "/v1beta/models/" + escapedModel + ":" + url.PathEscape(action) + "?key=" + escapedKey
 }
 
 func ExtractTextFromContent(content interface{}) string {

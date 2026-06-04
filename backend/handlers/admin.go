@@ -1,16 +1,19 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"sapi/auth"
 	"sapi/config"
 	"sapi/middleware"
 	"sapi/models"
+	"sapi/proxy"
 	"sapi/security"
 	"sapi/store"
 	"sapi/usage"
@@ -558,7 +561,10 @@ func handleAdminFetchProviderModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	url := utils.BuildUpstreamURL(baseURL, "/v1/models")
-	req, err := http.NewRequest("GET", url, nil)
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		utils.SendError(w, 400, "Invalid provider URL.", "invalid_provider")
 		return
@@ -566,7 +572,7 @@ func handleAdminFetchProviderModels(w http.ResponseWriter, r *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := proxy.DoUpstream(req)
 	if err != nil {
 		utils.SendError(w, 502, "Failed to fetch upstream models: "+err.Error(), "models_fetch_failed")
 		return

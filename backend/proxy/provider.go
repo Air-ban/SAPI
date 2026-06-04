@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"net/http"
 	"sync"
 	"time"
@@ -208,14 +209,16 @@ func checkProviderHealth(provider models.Provider) {
 	status := "fail"
 	var latency int
 
-	req, err := http.NewRequest("GET", url, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		latency = int(time.Since(startedAt).Milliseconds())
 	} else {
 		req.Header.Set("Authorization", "Bearer "+provider.APIKey)
 		req.Header.Set("Accept", "application/json")
-		client := &http.Client{Timeout: 30 * time.Second}
-		resp, err := client.Do(req)
+		resp, err := DoUpstream(req)
 		if err != nil {
 			latency = int(time.Since(startedAt).Milliseconds())
 		} else {

@@ -7,86 +7,93 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"time"
 
 	"sapi/utils"
 )
 
 func RelayUpstreamResponse(upstreamResp *http.Response, w http.ResponseWriter) {
 	body, _ := io.ReadAll(upstreamResp.Body)
-	w.WriteHeader(upstreamResp.StatusCode)
 	utils.CopyUpstreamHeaders(upstreamResp.Header, w, nil)
+	w.WriteHeader(upstreamResp.StatusCode)
 	w.Write(body)
 }
 
 func WriteUpstreamStreamToResponse(upstreamResp *http.Response, w http.ResponseWriter) interface{} {
-	reader := bufio.NewReader(upstreamResp.Body)
-
 	usageCollector := &streamUsageCollector{}
-	var buf strings.Builder
-	lineCount := 0
-	dataLineCount := 0
-	emptyLineCount := 0
-	doneSeen := false
+	buf := make([]byte, 16*1024)
+	chunkCount := 0
+	byteCount := 0
 	var lastErr error
 
 	for {
-		line, err := readSSELine(reader, &buf)
+		n, err := upstreamResp.Body.Read(buf)
+		if n > 0 {
+			chunk := buf[:n]
+			usageCollector.inspectChunk(chunk)
+			if _, writeErr := w.Write(chunk); writeErr != nil {
+				lastErr = writeErr
+				break
+			}
+			chunkCount++
+			byteCount += n
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+		}
 		if err != nil {
-			lastErr = err
+			if err != io.EOF {
+				lastErr = err
+			}
 			break
 		}
-		lineCount++
-
-		if line == "" {
-			emptyLineCount++
-		} else {
-			if strings.Contains(line, "[DONE]") {
-				doneSeen = true
-			}
-			if strings.HasPrefix(strings.TrimSpace(line), "data:") {
-				dataLineCount++
-			}
-		}
-
-		usageCollector.inspect(line)
-		w.Write([]byte(line + "\n"))
-		if flusher, ok := w.(http.Flusher); ok {
-			flusher.Flush()
-		}
 	}
+	usageCollector.finishChunk()
 
-	log.Printf("[V1CHAT] SSE_STREAM_END total_lines=%d data_lines=%d empty_lines=%d done=%v err=%v",
-		lineCount, dataLineCount, emptyLineCount, doneSeen, lastErr)
+	log.Printf("[V1CHAT] SSE_STREAM_END chunks=%d bytes=%d err=%v", chunkCount, byteCount, lastErr)
 
 	return usageCollector.finish()
 }
 
 func readSSELine(reader *bufio.Reader, buf *strings.Builder) (string, error) {
-	for {
-		b, err := reader.ReadByte()
-		if err != nil {
-			if buf.Len() > 0 {
-				result := buf.String()
-				buf.Reset()
-				return result, nil
-			}
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		if len(line) == 0 && buf.Len() == 0 {
 			return "", err
 		}
-		if b == '\n' {
-			result := buf.String()
-			buf.Reset()
-			return result, nil
-		}
-		if b != '\r' {
-			buf.WriteByte(b)
-		}
+		buf.WriteString(line)
+		result := strings.TrimRight(buf.String(), "\r\n")
+		buf.Reset()
+		return result, nil
 	}
+	buf.WriteString(line)
+	result := strings.TrimRight(buf.String(), "\r\n")
+	buf.Reset()
+	return result, nil
 }
 
 type streamUsageCollector struct {
-	buffer string
+	buffer strings.Builder
 	usage  interface{}
+}
+
+func (c *streamUsageCollector) inspectChunk(chunk []byte) {
+	for _, b := range chunk {
+		if b == '\n' {
+			line := strings.TrimRight(c.buffer.String(), "\r")
+			c.buffer.Reset()
+			c.inspect(line)
+			continue
+		}
+		c.buffer.WriteByte(b)
+	}
+}
+
+func (c *streamUsageCollector) finishChunk() {
+	if c.buffer.Len() == 0 {
+		return
+	}
+	c.inspect(strings.TrimRight(c.buffer.String(), "\r"))
+	c.buffer.Reset()
 }
 
 func (c *streamUsageCollector) inspect(line string) {
@@ -116,26 +123,24 @@ func (c *streamUsageCollector) finish() interface{} {
 }
 
 func RelayStreamToAnthropic(upstreamResp *http.Response, w http.ResponseWriter) {
-	reader := bufio.NewReader(upstreamResp.Body)
-	var buf strings.Builder
-
+	buf := make([]byte, 16*1024)
 	for {
-		line, err := readSSELine(reader, &buf)
+		n, err := upstreamResp.Body.Read(buf)
+		if n > 0 {
+			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+				break
+			}
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+		}
 		if err != nil {
 			break
-		}
-		w.Write([]byte(line + "\n"))
-		if flusher, ok := w.(http.Flusher); ok {
-			flusher.Flush()
 		}
 	}
 }
 
 func ProxyRequest(method, url string, headers http.Header, body io.Reader) (*http.Response, error) {
-	client := &http.Client{
-		Timeout: 5 * time.Minute,
-	}
-
 	req, err := http.NewRequest(method, url, body)
 	if err != nil {
 		return nil, err
@@ -147,5 +152,5 @@ func ProxyRequest(method, url string, headers http.Header, body io.Reader) (*htt
 		}
 	}
 
-	return client.Do(req)
+	return DoUpstream(req)
 }
