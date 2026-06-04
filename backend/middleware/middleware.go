@@ -8,6 +8,7 @@ import (
 
 	"sapi/auth"
 	"sapi/models"
+	"sapi/security"
 	"sapi/store"
 	"sapi/utils"
 )
@@ -15,6 +16,13 @@ import (
 type contextKey string
 
 const userContextKey contextKey = "user"
+
+const (
+	apiKeyFailureLimit  = 60
+	apiKeyFailureWindow = 5 * time.Minute
+	apiKeyBlockDuration = 10 * time.Minute
+	rpmWindowDuration   = time.Minute
+)
 
 func CORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -105,7 +113,7 @@ func FindUserByKey(apiKey string) *FindUserByKeyResult {
 
 		if len(u.APIKeys) == 0 && u.APIKey != "" && auth.SafeEqual(u.APIKey, apiKey) {
 			return &FindUserByKeyResult{
-				DB: db,
+				DB:   db,
 				User: u,
 				APIKeyRecord: &models.APIKeyRecord{
 					ID:      "legacy",
@@ -136,6 +144,29 @@ func FindUserByKey(apiKey string) *FindUserByKeyResult {
 	return &FindUserByKeyResult{DB: db, User: nil, APIKeyRecord: nil}
 }
 
+func CheckAPIKeyFailureLimit(r *http.Request) (bool, time.Duration) {
+	key := "api-key-ip:" + security.SensitiveKey(security.ClientIP(r))
+	blocked, retryAfter, err := security.RedisCheckBlocked(r.Context(), []string{key})
+	if err == nil {
+		return !blocked, retryAfter
+	}
+	return apiKeyFailureLimiter.Allow(key)
+}
+
+func RecordAPIKeyFailure(r *http.Request) {
+	key := "api-key-ip:" + security.SensitiveKey(security.ClientIP(r))
+	if err := security.RedisRecordFailure(r.Context(), key, apiKeyFailureLimit, apiKeyFailureWindow, apiKeyBlockDuration); err == nil {
+		return
+	}
+	apiKeyFailureLimiter.RecordFailure(key)
+}
+
+func ClearAPIKeyFailures(r *http.Request) {
+	key := "api-key-ip:" + security.SensitiveKey(security.ClientIP(r))
+	_ = security.RedisClearFailures(r.Context(), []string{key})
+	apiKeyFailureLimiter.Clear(key)
+}
+
 var rpmWindows sync.Map
 
 type rpmWindow struct {
@@ -158,6 +189,10 @@ func CheckRPMLimit(apiKeyRecord *models.APIKeyRecord, db *models.Database) (bool
 	}
 	if key == "" || limit <= 0 {
 		return true, limit, 0
+	}
+
+	if allowed, current, _, err := security.RedisSlidingWindowAllow(context.Background(), "rpm:"+security.SensitiveKey(key), limit, rpmWindowDuration); err == nil {
+		return allowed, limit, current
 	}
 
 	now := time.Now().UnixMilli()
@@ -188,6 +223,65 @@ func CheckRPMLimit(apiKeyRecord *models.APIKeyRecord, db *models.Database) (bool
 
 	w.timestamps = append(w.timestamps, now)
 	return true, limit, len(w.timestamps)
+}
+
+type failureLimiter struct {
+	mu      sync.Mutex
+	records map[string]*failureRecord
+}
+
+type failureRecord struct {
+	count        int
+	firstFailure time.Time
+	blockedUntil time.Time
+}
+
+var apiKeyFailureLimiter = &failureLimiter{records: map[string]*failureRecord{}}
+
+func (l *failureLimiter) Allow(key string) (bool, time.Duration) {
+	now := time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	record := l.records[key]
+	if record == nil {
+		return true, 0
+	}
+	if record.blockedUntil.After(now) {
+		return false, record.blockedUntil.Sub(now)
+	}
+	if now.Sub(record.firstFailure) > apiKeyFailureWindow {
+		delete(l.records, key)
+	}
+	return true, 0
+}
+
+func (l *failureLimiter) RecordFailure(key string) {
+	now := time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	record := l.records[key]
+	if record == nil || now.Sub(record.firstFailure) > apiKeyFailureWindow {
+		record = &failureRecord{firstFailure: now}
+		l.records[key] = record
+	}
+	record.count++
+	if record.count >= apiKeyFailureLimit {
+		record.blockedUntil = now.Add(apiKeyBlockDuration)
+	}
+}
+
+func (l *failureLimiter) Clear(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.records, key)
+}
+
+func ResetSecurityStateForTest() {
+	apiKeyFailureLimiter.mu.Lock()
+	defer apiKeyFailureLimiter.mu.Unlock()
+	apiKeyFailureLimiter.records = map[string]*failureRecord{}
+	rpmWindows = sync.Map{}
 }
 
 func CheckMaintenanceMode(db *models.Database, w http.ResponseWriter) bool {

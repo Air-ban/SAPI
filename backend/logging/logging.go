@@ -82,84 +82,58 @@ func RecordRequestLog(params RequestLogParams) {
 		normalized.PromptTokens, normalized.CompletionTokens, params.FinishReason,
 	)
 
-	store.MutateDB(func(db *models.Database) interface{} {
-		if db.RequestLogs == nil {
-			db.RequestLogs = []models.RequestLog{}
-		}
-
-		timestamp := store.Now()
-
-		if params.APIKeyID != "" {
-			for i := range db.Users {
-				if db.Users[i].ID == params.UserID {
-					for j := range db.Users[i].APIKeys {
-						if db.Users[i].APIKeys[j].ID == params.APIKeyID {
-							db.Users[i].APIKeys[j].LastUsedAt = timestamp
-							db.Users[i].APIKeys[j].UpdatedAt = timestamp
-						}
-					}
-				}
-			}
-		}
-
-		db.RequestLogs = append(db.RequestLogs, models.RequestLog{
-			ID:                  auth.RandomID("req"),
-			UserID:              params.UserID,
-			UserName:            params.UserName,
-			Username:            params.Username,
-			APIKeyID:            params.APIKeyID,
-			APIKeyName:          params.APIKeyName,
-			APIKeyPreview:       params.APIKeyPreview,
-			ProviderID:          params.ProviderID,
-			ProviderName:        params.ProviderName,
-			Model:               params.Model,
-			UpstreamModel:       params.UpstreamModel,
-			Endpoint:            params.Endpoint,
-			Method:              params.Method,
-			Status:              params.Status,
-			OK:                  params.OK,
-			Stream:              params.Stream,
-			DurationMs:          params.DurationMs,
-			PromptTokens:        normalized.PromptTokens,
-			CompletionTokens:    normalized.CompletionTokens,
-			TotalTokens:         normalized.TotalTokens,
-			CachedTokens:        normalized.CachedTokens,
-			CacheCreationTokens: normalized.CacheCreationTokens,
-			CacheMissTokens:     normalized.CacheMissTokens,
-			ReasoningTokens:     normalized.ReasoningTokens,
-			ErrorCode:           params.ErrorCode,
-			ErrorMessage:        params.ErrorMessage,
-			Timestamp:           timestamp,
-		})
-
-		if len(db.RequestLogs) > 50000 {
-			db.RequestLogs = db.RequestLogs[len(db.RequestLogs)-50000:]
-		}
-		return nil
+	store.AppendRequestLog(models.RequestLog{
+		ID:                  auth.RandomID("req"),
+		UserID:              params.UserID,
+		UserName:            params.UserName,
+		Username:            params.Username,
+		APIKeyID:            params.APIKeyID,
+		APIKeyName:          params.APIKeyName,
+		APIKeyPreview:       params.APIKeyPreview,
+		ProviderID:          params.ProviderID,
+		ProviderName:        params.ProviderName,
+		Model:               params.Model,
+		UpstreamModel:       params.UpstreamModel,
+		Endpoint:            params.Endpoint,
+		Method:              params.Method,
+		Status:              params.Status,
+		OK:                  params.OK,
+		Stream:              params.Stream,
+		DurationMs:          params.DurationMs,
+		PromptTokens:        normalized.PromptTokens,
+		CompletionTokens:    normalized.CompletionTokens,
+		TotalTokens:         normalized.TotalTokens,
+		CachedTokens:        normalized.CachedTokens,
+		CacheCreationTokens: normalized.CacheCreationTokens,
+		CacheMissTokens:     normalized.CacheMissTokens,
+		ReasoningTokens:     normalized.ReasoningTokens,
+		ErrorCode:           params.ErrorCode,
+		ErrorMessage:        params.ErrorMessage,
+		Timestamp:           store.Now(),
 	})
 }
 
 type RequestLogParams struct {
-	UserID              string
-	UserName            string
-	Username            string
-	APIKeyID            string
-	APIKeyName          string
-	APIKeyPreview       string
-	ProviderID          string
-	ProviderName        string
-	Model               string
-	UpstreamModel       string
-	Endpoint            string
-	Method              string
-	Status              int
-	OK                  bool
-	Stream              bool
-	DurationMs          int
-	Usage               interface{}
-	ErrorCode           string
-	ErrorMessage        string
-	FinishReason        string
+	UserID        string
+	UserName      string
+	Username      string
+	APIKeyID      string
+	APIKeyName    string
+	APIKeyPreview string
+	ProviderID    string
+	ProviderName  string
+	Model         string
+	UpstreamModel string
+	Endpoint      string
+	Method        string
+	Status        int
+	OK            bool
+	Stream        bool
+	DurationMs    int
+	Usage         interface{}
+	ErrorCode     string
+	ErrorMessage  string
+	FinishReason  string
 }
 
 type simpleUsage struct {

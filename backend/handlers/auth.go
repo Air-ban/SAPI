@@ -10,6 +10,7 @@ import (
 	"sapi/auth"
 	"sapi/config"
 	"sapi/models"
+	"sapi/security"
 	"sapi/store"
 	"sapi/utils"
 )
@@ -25,10 +26,12 @@ func MountAuthRoutes(mux *http.ServeMux) {
 
 func handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	cfg := config.Load()
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
-	username, _ := body["username"].(string)
+	username := security.SafeSingleLine(toString(body["username"]), 128)
 	password, _ := body["password"].(string)
 
 	if !checkLoginRateLimit(w, r, username) {
@@ -53,10 +56,12 @@ func handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 
 func handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	cfg := config.Load()
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
-	identifier := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", body["username"])))
+	identifier := strings.ToLower(security.SafeSingleLine(fmt.Sprintf("%v", body["username"]), 128))
 	password, _ := body["password"].(string)
 
 	if !checkLoginRateLimit(w, r, identifier) {
@@ -115,13 +120,19 @@ func handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleSendVerificationCode(w http.ResponseWriter, r *http.Request) {
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
-	email := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", body["email"])))
-	purpose := strings.TrimSpace(fmt.Sprintf("%v", body["purpose"]))
+	email := strings.ToLower(security.SafeSingleLine(fmt.Sprintf("%v", body["email"]), 254))
+	purpose := security.SafeSingleLine(fmt.Sprintf("%v", body["purpose"]), 64)
 	if purpose == "" {
 		purpose = "register"
+	}
+
+	if !checkVerificationRequestLimit(w, r) {
+		return
 	}
 
 	if email == "" || !strings.Contains(email, "@") {
@@ -179,14 +190,16 @@ func handleSendVerificationCode(w http.ResponseWriter, r *http.Request) {
 
 func handleRegister(w http.ResponseWriter, r *http.Request) {
 	cfg := config.Load()
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
-	username := normalizeUsername(fmt.Sprintf("%v", body["username"]))
-	email := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", body["email"])))
+	username := normalizeUsername(security.SafeSingleLine(fmt.Sprintf("%v", body["username"]), 64))
+	email := strings.ToLower(security.SafeSingleLine(fmt.Sprintf("%v", body["email"]), 254))
 	password, _ := body["password"].(string)
-	verificationCode := strings.TrimSpace(fmt.Sprintf("%v", body["verificationCode"]))
-	invitationCode := strings.TrimSpace(fmt.Sprintf("%v", body["invitationCode"]))
+	verificationCode := security.SafeSingleLine(fmt.Sprintf("%v", body["verificationCode"]), 16)
+	invitationCode := security.SafeSingleLine(fmt.Sprintf("%v", body["invitationCode"]), 128)
 	isEduEmail := strings.HasSuffix(email, ".edu.cn")
 
 	if !isEduEmail && invitationCode == "" {
@@ -209,17 +222,9 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if len(username) < 3 || len(username) > 64 {
-		matched := false
-		for _, c := range username {
-			if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '@' || c == '-' {
-				matched = true
-			}
-		}
-		if !matched || len(username) < 3 {
-			utils.SendError(w, 400, "Username must be 3-64 characters.", "invalid_username")
-			return
-		}
+	if !validUsername(username) {
+		utils.SendError(w, 400, "Username must be 3-64 characters and contain only letters, numbers, dot, underscore or hyphen.", "invalid_username")
+		return
 	}
 
 	if email == "" || !strings.Contains(email, "@") {
@@ -300,12 +305,18 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleForgotPasswordSendCode(w http.ResponseWriter, r *http.Request) {
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
-	email := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", body["email"])))
+	email := strings.ToLower(security.SafeSingleLine(fmt.Sprintf("%v", body["email"]), 254))
 	if email == "" || !strings.Contains(email, "@") {
 		utils.SendError(w, 400, "Valid email address is required.", "invalid_email")
+		return
+	}
+
+	if !checkVerificationRequestLimit(w, r) {
 		return
 	}
 
@@ -361,11 +372,13 @@ func handleForgotPasswordSendCode(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleForgotPasswordReset(w http.ResponseWriter, r *http.Request) {
-	var body map[string]interface{}
-	json.NewDecoder(r.Body).Decode(&body)
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
 
-	email := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", body["email"])))
-	verificationCode := strings.TrimSpace(fmt.Sprintf("%v", body["verificationCode"]))
+	email := strings.ToLower(security.SafeSingleLine(fmt.Sprintf("%v", body["email"]), 254))
+	verificationCode := security.SafeSingleLine(fmt.Sprintf("%v", body["verificationCode"]), 16)
 	newPassword, _ := body["password"].(string)
 
 	if email == "" || !strings.Contains(email, "@") {
@@ -476,6 +489,19 @@ func cleanupExpiredVerificationCodes(db *models.Database) {
 
 func normalizeUsername(v string) string {
 	return strings.ToLower(strings.TrimSpace(v))
+}
+
+func validUsername(username string) bool {
+	if len(username) < 3 || len(username) > 64 {
+		return false
+	}
+	for _, c := range username {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func sanitizeUser(user *models.User) map[string]interface{} {

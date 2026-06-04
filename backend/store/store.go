@@ -1,8 +1,10 @@
 package store
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,9 +18,31 @@ import (
 )
 
 var (
-	mu      sync.RWMutex
-	dataDir string
+	mu       sync.RWMutex
+	cachedDB *models.Database
 )
+
+func Init(ctx context.Context, cfg *config.Config) error {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if cfg != nil && strings.TrimSpace(cfg.PostgresURL) != "" {
+		if err := initPostgres(ctx, cfg); err != nil {
+			return err
+		}
+	}
+	return loadCacheLocked(ctx, true)
+}
+
+func Close() {
+	closePostgres()
+}
+
+func Health(ctx context.Context) map[string]interface{} {
+	return map[string]interface{}{
+		"postgres": postgresHealth(ctx),
+	}
+}
 
 func DataFilePath() string {
 	cfg := config.Load()
@@ -39,6 +63,18 @@ func Now() string {
 }
 
 func EnsureDB() {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if cachedDB != nil {
+		return
+	}
+	if err := loadCacheLocked(context.Background(), true); err != nil {
+		log.Printf("[STORE] initialize store failed: %v", err)
+	}
+}
+
+func ensureFileDB() {
 	filePath := DataFilePath()
 	if _, err := os.Stat(filePath); err == nil {
 		return
@@ -62,26 +98,22 @@ func EnsureDB() {
 
 func ReadDB() *models.Database {
 	mu.RLock()
-	defer mu.RUnlock()
-
-	EnsureDB()
-	filePath := DataFilePath()
-
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return newDefaultDB()
+	if cachedDB != nil {
+		db := cloneDatabase(cachedDB)
+		mu.RUnlock()
+		return db
 	}
+	mu.RUnlock()
 
-	var db models.Database
-	if err := json.Unmarshal(data, &db); err != nil {
-		return newDefaultDB()
+	mu.Lock()
+	defer mu.Unlock()
+	if cachedDB == nil {
+		if err := loadCacheLocked(context.Background(), true); err != nil {
+			log.Printf("[STORE] read store failed: %v", err)
+			cachedDB = newDefaultDB()
+		}
 	}
-
-	changed := normalizeDB(&db)
-	if changed {
-		writeDB(&db)
-	}
-	return &db
+	return cloneDatabase(cachedDB)
 }
 
 func writeDB(db *models.Database) {
@@ -109,14 +141,92 @@ func MutateDB(mutator func(*models.Database) interface{}) interface{} {
 	mu.Lock()
 	defer mu.Unlock()
 
-	db := ReadDBInternal()
+	if cachedDB == nil {
+		if err := loadCacheLocked(context.Background(), true); err != nil {
+			log.Printf("[STORE] mutate load failed: %v", err)
+			cachedDB = newDefaultDB()
+		}
+	}
+
+	db := cloneDatabase(cachedDB)
 	result := mutator(db)
-	writeDB(db)
+	normalizeDB(db)
+	if err := persistStateLocked(context.Background(), db); err != nil {
+		log.Printf("[STORE] persist state failed: %v", err)
+	}
+	cachedDB = cloneDatabase(db)
 	return result
 }
 
 func ReadDBInternal() *models.Database {
-	EnsureDB()
+	if cachedDB != nil {
+		return cloneDatabase(cachedDB)
+	}
+	if err := loadCacheLocked(context.Background(), true); err != nil {
+		log.Printf("[STORE] internal read failed: %v", err)
+		cachedDB = newDefaultDB()
+	}
+	return cloneDatabase(cachedDB)
+}
+
+func loadCacheLocked(ctx context.Context, createIfMissing bool) error {
+	if postgresEnabled() {
+		if db, ok, err := loadPostgresState(ctx); err != nil {
+			return err
+		} else if ok {
+			if normalizeDB(db) {
+				if err := savePostgresState(ctx, db); err != nil {
+					return err
+				}
+			}
+			cachedDB = cloneDatabase(db)
+			return nil
+		}
+	}
+
+	db := readFileDB(createIfMissing)
+	if db == nil {
+		db = newDefaultDB()
+	}
+	if normalizeDB(db) {
+		if postgresEnabled() {
+			if err := savePostgresState(ctx, db); err != nil {
+				return err
+			}
+		} else {
+			writeDB(db)
+		}
+	}
+	if postgresEnabled() {
+		for _, item := range db.RequestLogs {
+			if item.ID != "" {
+				if err := insertPostgresRequestLog(ctx, item); err != nil {
+					log.Printf("[STORE] migrate request log to postgres failed: %v", err)
+				}
+			}
+		}
+		db.RequestLogs = []models.RequestLog{}
+		if err := savePostgresState(ctx, db); err != nil {
+			return err
+		}
+	}
+	cachedDB = cloneDatabase(db)
+	return nil
+}
+
+func persistStateLocked(ctx context.Context, db *models.Database) error {
+	db.UpdatedAt = Now()
+	if postgresEnabled() {
+		return savePostgresState(ctx, db)
+	}
+	writeDBDirect(db)
+	return nil
+}
+
+func readFileDB(createIfMissing bool) *models.Database {
+	if createIfMissing {
+		ensureFileDB()
+	}
 	filePath := DataFilePath()
 
 	data, err := os.ReadFile(filePath)
@@ -131,6 +241,96 @@ func ReadDBInternal() *models.Database {
 
 	normalizeDB(&db)
 	return &db
+}
+
+func cloneDatabase(db *models.Database) *models.Database {
+	if db == nil {
+		return nil
+	}
+	data, err := json.Marshal(db)
+	if err != nil {
+		return newDefaultDB()
+	}
+	var cloned models.Database
+	if err := json.Unmarshal(data, &cloned); err != nil {
+		return newDefaultDB()
+	}
+	return &cloned
+}
+
+func AppendRequestLog(item models.RequestLog) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if cachedDB == nil {
+		if err := loadCacheLocked(context.Background(), true); err != nil {
+			log.Printf("[STORE] request log load failed: %v", err)
+			cachedDB = newDefaultDB()
+		}
+	}
+
+	timestamp := item.Timestamp
+	if timestamp == "" {
+		timestamp = Now()
+		item.Timestamp = timestamp
+	}
+
+	if item.APIKeyID != "" {
+		for i := range cachedDB.Users {
+			if cachedDB.Users[i].ID == item.UserID {
+				for j := range cachedDB.Users[i].APIKeys {
+					if cachedDB.Users[i].APIKeys[j].ID == item.APIKeyID {
+						cachedDB.Users[i].APIKeys[j].LastUsedAt = timestamp
+						cachedDB.Users[i].APIKeys[j].UpdatedAt = timestamp
+					}
+				}
+			}
+		}
+	}
+
+	if postgresEnabled() {
+		if err := insertPostgresRequestLog(context.Background(), item); err != nil {
+			log.Printf("[STORE] insert postgres request log failed: %v", err)
+		}
+		cachedDB.RequestLogs = []models.RequestLog{}
+		return
+	}
+
+	cachedDB.RequestLogs = append(cachedDB.RequestLogs, item)
+	if len(cachedDB.RequestLogs) > 50000 {
+		cachedDB.RequestLogs = cachedDB.RequestLogs[len(cachedDB.RequestLogs)-50000:]
+	}
+	if err := persistStateLocked(context.Background(), cachedDB); err != nil {
+		log.Printf("[STORE] persist request log failed: %v", err)
+	}
+}
+
+func RequestLogsSince(db *models.Database, since time.Time, userID string, limit int) []models.RequestLog {
+	if postgresEnabled() {
+		items, err := queryPostgresRequestLogs(context.Background(), since, userID, limit)
+		if err == nil {
+			return items
+		}
+		log.Printf("[STORE] query postgres request logs failed: %v", err)
+	}
+
+	if db == nil {
+		db = ReadDB()
+	}
+	sinceIso := since.UTC().Format(time.RFC3339)
+	result := make([]models.RequestLog, 0)
+	for _, item := range db.RequestLogs {
+		if userID != "" && item.UserID != userID {
+			continue
+		}
+		if item.Timestamp >= sinceIso {
+			result = append(result, item)
+		}
+	}
+	if limit > 0 && len(result) > limit {
+		result = result[len(result)-limit:]
+	}
+	return result
 }
 
 func newDefaultDB() *models.Database {
@@ -347,22 +547,22 @@ func normalizeDB(db *models.Database) bool {
 
 func RedactProvider(p models.Provider) map[string]interface{} {
 	result := map[string]interface{}{
-		"id":                  p.ID,
-		"name":                p.Name,
-		"baseUrl":             p.BaseURL,
-		"models":              p.Models,
-		"modelMappings":       p.ModelMappings,
-		"enabled":             p.Enabled,
-		"failoverThreshold":   p.FailoverThreshold,
-		"priority":            p.Priority,
-		"healthStatus":        p.HealthStatus,
-		"latency":             p.Latency,
-		"ping":                p.Ping,
-		"availability7d":      p.Availability7d,
-		"healthHistory":       p.HealthHistory,
-		"lastHealthCheck":     p.LastHealthCheck,
-		"createdAt":           p.CreatedAt,
-		"updatedAt":           p.UpdatedAt,
+		"id":                p.ID,
+		"name":              p.Name,
+		"baseUrl":           p.BaseURL,
+		"models":            p.Models,
+		"modelMappings":     p.ModelMappings,
+		"enabled":           p.Enabled,
+		"failoverThreshold": p.FailoverThreshold,
+		"priority":          p.Priority,
+		"healthStatus":      p.HealthStatus,
+		"latency":           p.Latency,
+		"ping":              p.Ping,
+		"availability7d":    p.Availability7d,
+		"healthHistory":     p.HealthHistory,
+		"lastHealthCheck":   p.LastHealthCheck,
+		"createdAt":         p.CreatedAt,
+		"updatedAt":         p.UpdatedAt,
 	}
 	if p.APIKey != "" {
 		result["apiKey"] = "••••" + p.APIKey[len(p.APIKey)-min(4, len(p.APIKey)):]
@@ -403,8 +603,6 @@ func NormalizeModel(item interface{}) models.Model {
 		return models.Model{ID: id, Name: id}
 	}
 }
-
-
 
 func RedactProviders(providers []models.Provider) []map[string]interface{} {
 	result := make([]map[string]interface{}, len(providers))

@@ -5,97 +5,97 @@ import (
 	"time"
 
 	"sapi/models"
+	"sapi/store"
 )
 
 type UsageStats struct {
-	TotalPromptTokens      int                      `json:"totalPromptTokens"`
-	TotalCompletionTokens  int                      `json:"totalCompletionTokens"`
-	TotalTokens            int                      `json:"totalTokens"`
-	TotalCachedTokens      int                      `json:"totalCachedTokens"`
-	TotalCacheCreationTokens int                    `json:"totalCacheCreationTokens"`
-	TotalCacheMissTokens   int                      `json:"totalCacheMissTokens"`
-	TotalReasoningTokens   int                      `json:"totalReasoningTokens"`
-	Requests               int                      `json:"requests"`
-	FailedRequests         int                      `json:"failedRequests"`
-	ByUser                 []UserUsageStats         `json:"byUser"`
-	ByAPIKey               []APIKeyUsageStats       `json:"byApiKey"`
-	ByModel                []ModelUsageStats        `json:"byModel"`
-	ByDay                  []DayUsageStats          `json:"byDay"`
-	ByHour                 []HourUsageStats         `json:"byHour"`
-	Recent                 []models.RequestLog      `json:"recent"`
-	RecentRequests         []models.RequestLog      `json:"recentRequests"`
+	TotalPromptTokens        int                 `json:"totalPromptTokens"`
+	TotalCompletionTokens    int                 `json:"totalCompletionTokens"`
+	TotalTokens              int                 `json:"totalTokens"`
+	TotalCachedTokens        int                 `json:"totalCachedTokens"`
+	TotalCacheCreationTokens int                 `json:"totalCacheCreationTokens"`
+	TotalCacheMissTokens     int                 `json:"totalCacheMissTokens"`
+	TotalReasoningTokens     int                 `json:"totalReasoningTokens"`
+	Requests                 int                 `json:"requests"`
+	FailedRequests           int                 `json:"failedRequests"`
+	ByUser                   []UserUsageStats    `json:"byUser"`
+	ByAPIKey                 []APIKeyUsageStats  `json:"byApiKey"`
+	ByModel                  []ModelUsageStats   `json:"byModel"`
+	ByDay                    []DayUsageStats     `json:"byDay"`
+	ByHour                   []HourUsageStats    `json:"byHour"`
+	Recent                   []models.RequestLog `json:"recent"`
+	RecentRequests           []models.RequestLog `json:"recentRequests"`
 }
 
 type UserUsageStats struct {
-	UserID               string `json:"userId"`
-	UserName             string `json:"userName"`
-	Username             string `json:"username"`
-	PromptTokens         int    `json:"promptTokens"`
-	CompletionTokens     int    `json:"completionTokens"`
-	TotalTokens          int    `json:"totalTokens"`
-	CachedTokens         int    `json:"cachedTokens"`
-	CacheCreationTokens  int    `json:"cacheCreationTokens"`
-	CacheMissTokens      int    `json:"cacheMissTokens"`
-	ReasoningTokens      int    `json:"reasoningTokens"`
-	Requests             int    `json:"requests"`
-	FailedRequests       int    `json:"failedRequests"`
+	UserID              string `json:"userId"`
+	UserName            string `json:"userName"`
+	Username            string `json:"username"`
+	PromptTokens        int    `json:"promptTokens"`
+	CompletionTokens    int    `json:"completionTokens"`
+	TotalTokens         int    `json:"totalTokens"`
+	CachedTokens        int    `json:"cachedTokens"`
+	CacheCreationTokens int    `json:"cacheCreationTokens"`
+	CacheMissTokens     int    `json:"cacheMissTokens"`
+	ReasoningTokens     int    `json:"reasoningTokens"`
+	Requests            int    `json:"requests"`
+	FailedRequests      int    `json:"failedRequests"`
 }
 
 type APIKeyUsageStats struct {
-	UserID               string `json:"userId"`
-	UserName             string `json:"userName"`
-	Username             string `json:"username"`
-	APIKeyID             string `json:"apiKeyId"`
-	APIKeyName           string `json:"apiKeyName"`
-	APIKeyPreview        string `json:"apiKeyPreview"`
-	PromptTokens         int    `json:"promptTokens"`
-	CompletionTokens     int    `json:"completionTokens"`
-	TotalTokens          int    `json:"totalTokens"`
-	CachedTokens         int    `json:"cachedTokens"`
-	CacheCreationTokens  int    `json:"cacheCreationTokens"`
-	CacheMissTokens      int    `json:"cacheMissTokens"`
-	ReasoningTokens      int    `json:"reasoningTokens"`
-	Requests             int    `json:"requests"`
-	FailedRequests       int    `json:"failedRequests"`
+	UserID              string `json:"userId"`
+	UserName            string `json:"userName"`
+	Username            string `json:"username"`
+	APIKeyID            string `json:"apiKeyId"`
+	APIKeyName          string `json:"apiKeyName"`
+	APIKeyPreview       string `json:"apiKeyPreview"`
+	PromptTokens        int    `json:"promptTokens"`
+	CompletionTokens    int    `json:"completionTokens"`
+	TotalTokens         int    `json:"totalTokens"`
+	CachedTokens        int    `json:"cachedTokens"`
+	CacheCreationTokens int    `json:"cacheCreationTokens"`
+	CacheMissTokens     int    `json:"cacheMissTokens"`
+	ReasoningTokens     int    `json:"reasoningTokens"`
+	Requests            int    `json:"requests"`
+	FailedRequests      int    `json:"failedRequests"`
 }
 
 type ModelUsageStats struct {
-	Model                string `json:"model"`
-	PromptTokens         int    `json:"promptTokens"`
-	CompletionTokens     int    `json:"completionTokens"`
-	TotalTokens          int    `json:"totalTokens"`
-	CachedTokens         int    `json:"cachedTokens"`
-	CacheCreationTokens  int    `json:"cacheCreationTokens"`
-	CacheMissTokens      int    `json:"cacheMissTokens"`
-	ReasoningTokens      int    `json:"reasoningTokens"`
-	Requests             int    `json:"requests"`
-	FailedRequests       int    `json:"failedRequests"`
+	Model               string `json:"model"`
+	PromptTokens        int    `json:"promptTokens"`
+	CompletionTokens    int    `json:"completionTokens"`
+	TotalTokens         int    `json:"totalTokens"`
+	CachedTokens        int    `json:"cachedTokens"`
+	CacheCreationTokens int    `json:"cacheCreationTokens"`
+	CacheMissTokens     int    `json:"cacheMissTokens"`
+	ReasoningTokens     int    `json:"reasoningTokens"`
+	Requests            int    `json:"requests"`
+	FailedRequests      int    `json:"failedRequests"`
 }
 
 type DayUsageStats struct {
-	Day                  string `json:"day"`
-	PromptTokens         int    `json:"promptTokens"`
-	CompletionTokens     int    `json:"completionTokens"`
-	TotalTokens          int    `json:"totalTokens"`
-	CachedTokens         int    `json:"cachedTokens"`
-	CacheCreationTokens  int    `json:"cacheCreationTokens"`
-	CacheMissTokens      int    `json:"cacheMissTokens"`
-	ReasoningTokens      int    `json:"reasoningTokens"`
-	Requests             int    `json:"requests"`
-	FailedRequests       int    `json:"failedRequests"`
+	Day                 string `json:"day"`
+	PromptTokens        int    `json:"promptTokens"`
+	CompletionTokens    int    `json:"completionTokens"`
+	TotalTokens         int    `json:"totalTokens"`
+	CachedTokens        int    `json:"cachedTokens"`
+	CacheCreationTokens int    `json:"cacheCreationTokens"`
+	CacheMissTokens     int    `json:"cacheMissTokens"`
+	ReasoningTokens     int    `json:"reasoningTokens"`
+	Requests            int    `json:"requests"`
+	FailedRequests      int    `json:"failedRequests"`
 }
 
 type HourUsageStats struct {
-	Hour                 string `json:"hour"`
-	PromptTokens         int    `json:"promptTokens"`
-	CompletionTokens     int    `json:"completionTokens"`
-	TotalTokens          int    `json:"totalTokens"`
-	Requests             int    `json:"requests"`
+	Hour             string `json:"hour"`
+	PromptTokens     int    `json:"promptTokens"`
+	CompletionTokens int    `json:"completionTokens"`
+	TotalTokens      int    `json:"totalTokens"`
+	Requests         int    `json:"requests"`
 }
 
 func GetUsageStats(db *models.Database, userID string, days int) *UsageStats {
 	since := time.Now().AddDate(0, 0, -days)
-	sinceIso := since.UTC().Format(time.RFC3339)
 
 	usersByID := make(map[string]*models.User)
 	for i := range db.Users {
@@ -105,19 +105,7 @@ func GetUsageStats(db *models.Database, userID string, days int) *UsageStats {
 		ID: "__admin__", Name: "Administrator", Username: "admin",
 	}
 
-	inRange := func(item models.RequestLog) bool {
-		if userID != "" && item.UserID != userID {
-			return false
-		}
-		return item.Timestamp >= sinceIso
-	}
-
-	var records []models.RequestLog
-	for _, item := range db.RequestLogs {
-		if inRange(item) {
-			records = append(records, item)
-		}
-	}
+	records := store.RequestLogsSince(db, since, userID, 50000)
 
 	sort.Slice(records, func(i, j int) bool {
 		return records[i].Timestamp < records[j].Timestamp
