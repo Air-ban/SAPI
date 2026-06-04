@@ -260,6 +260,142 @@ func AnthropicToOpenAI(body map[string]interface{}) map[string]interface{} {
 	return payload
 }
 
+func OpenAIChatToAnthropic(body map[string]interface{}) map[string]interface{} {
+	messages := make([]interface{}, 0)
+	var systemParts []string
+
+	if msgs, ok := body["messages"].([]interface{}); ok {
+		for _, item := range msgs {
+			msg, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			role, _ := msg["role"].(string)
+			text := utils.ExtractTextFromContent(msg["content"])
+			if role == "system" || role == "developer" {
+				if text != "" {
+					systemParts = append(systemParts, text)
+				}
+				continue
+			}
+			if role == "tool" {
+				messages = append(messages, map[string]interface{}{
+					"role": "user",
+					"content": []interface{}{
+						map[string]interface{}{
+							"type":        "tool_result",
+							"tool_use_id": firstString(msg, "tool_call_id"),
+							"content":     text,
+						},
+					},
+				})
+				continue
+			}
+			if role != "assistant" {
+				role = "user"
+			}
+
+			content := []interface{}{}
+			if text != "" {
+				content = append(content, map[string]interface{}{"type": "text", "text": text})
+			}
+			if role == "assistant" {
+				if toolCalls, ok := msg["tool_calls"].([]interface{}); ok {
+					for _, call := range toolCalls {
+						if block := openAIToolCallToAnthropicBlock(call); block != nil {
+							content = append(content, block)
+						}
+					}
+				}
+			}
+			if len(content) > 0 {
+				messages = append(messages, map[string]interface{}{"role": role, "content": content})
+			}
+		}
+	}
+
+	payload := map[string]interface{}{
+		"model":      body["model"],
+		"messages":   messages,
+		"max_tokens": 1024,
+	}
+	if len(systemParts) > 0 {
+		payload["system"] = strings.Join(systemParts, "\n")
+	}
+	if stream, ok := body["stream"].(bool); ok {
+		payload["stream"] = stream
+	}
+	if mt, ok := body["max_tokens"]; ok {
+		payload["max_tokens"] = mt
+	} else if mt, ok := body["max_completion_tokens"]; ok {
+		payload["max_tokens"] = mt
+	} else if mt, ok := body["max_output_tokens"]; ok {
+		payload["max_tokens"] = mt
+	}
+	for _, key := range []string{"temperature", "top_p", "top_k"} {
+		if v, ok := body[key]; ok {
+			payload[key] = v
+		}
+	}
+	if stop, ok := body["stop"]; ok {
+		payload["stop_sequences"] = stop
+	}
+	if tools, ok := body["tools"].([]interface{}); ok {
+		if converted := convertOpenAIToolsToAnthropic(tools); len(converted) > 0 {
+			payload["tools"] = converted
+		}
+	}
+	return payload
+}
+
+func openAIToolCallToAnthropicBlock(call interface{}) map[string]interface{} {
+	tc, ok := call.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	fn, _ := tc["function"].(map[string]interface{})
+	name := firstString(fn, "name")
+	if name == "" {
+		return nil
+	}
+	var input interface{} = map[string]interface{}{}
+	if args, ok := fn["arguments"].(string); ok && strings.TrimSpace(args) != "" {
+		if json.Unmarshal([]byte(args), &input) != nil {
+			input = map[string]interface{}{}
+		}
+	}
+	return map[string]interface{}{
+		"type":  "tool_use",
+		"id":    firstString(tc, "id"),
+		"name":  name,
+		"input": input,
+	}
+}
+
+func convertOpenAIToolsToAnthropic(tools []interface{}) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0)
+	for _, tool := range tools {
+		t, ok := tool.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		fn, _ := t["function"].(map[string]interface{})
+		if fn == nil {
+			continue
+		}
+		name := firstString(fn, "name")
+		if name == "" {
+			continue
+		}
+		result = append(result, map[string]interface{}{
+			"name":         name,
+			"description":  fn["description"],
+			"input_schema": fn["parameters"],
+		})
+	}
+	return result
+}
+
 func OpenAIToAnthropicNonStreaming(payload map[string]interface{}, model string) map[string]interface{} {
 	choices, _ := payload["choices"].([]interface{})
 	var choice map[string]interface{}
@@ -360,13 +496,131 @@ func OpenAIToAnthropicNonStreaming(payload map[string]interface{}, model string)
 	}
 }
 
+func AnthropicToOpenAIChat(payload map[string]interface{}, model string) map[string]interface{} {
+	text := ""
+	if content, ok := payload["content"].([]interface{}); ok {
+		var parts []string
+		for _, item := range content {
+			block, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if blockType, _ := block["type"].(string); blockType == "text" {
+				if t, ok := block["text"].(string); ok {
+					parts = append(parts, t)
+				}
+			}
+		}
+		text = strings.Join(parts, "")
+	}
+	stopReason := firstString(payload, "stop_reason")
+	return map[string]interface{}{
+		"id":      firstString(payload, "id"),
+		"object":  "chat.completion",
+		"created": utils.GenerateTimestamp(),
+		"model":   model,
+		"choices": []interface{}{
+			map[string]interface{}{
+				"index": 0,
+				"message": map[string]interface{}{
+					"role":    "assistant",
+					"content": text,
+				},
+				"finish_reason": anthropicStopReasonToOpenAI(stopReason),
+			},
+		},
+		"usage": anthropicUsageToOpenAI(payload["usage"]),
+	}
+}
+
+func anthropicUsageToOpenAI(usage interface{}) interface{} {
+	normalized := utils.NormalizeUsage(usage)
+	if normalized == nil {
+		return nil
+	}
+	return map[string]interface{}{
+		"prompt_tokens":     normalized.PromptTokens,
+		"completion_tokens": normalized.CompletionTokens,
+		"total_tokens":      normalized.TotalTokens,
+	}
+}
+
+func anthropicStopReasonToOpenAI(reason string) string {
+	switch reason {
+	case "", "end_turn", "stop_sequence":
+		return "stop"
+	case "max_tokens":
+		return "length"
+	case "tool_use":
+		return "tool_calls"
+	default:
+		return reason
+	}
+}
+
+func AnthropicStreamLineToOpenAI(line string, model string) string {
+	item := strings.TrimSpace(line)
+	if strings.HasPrefix(item, "data:") {
+		item = strings.TrimSpace(item[5:])
+	}
+	if item == "" || item == "[DONE]" || !strings.HasPrefix(item, "{") {
+		return ""
+	}
+
+	var payload map[string]interface{}
+	if json.Unmarshal([]byte(item), &payload) != nil {
+		return ""
+	}
+
+	eventType, _ := payload["type"].(string)
+	deltaText := ""
+	finishReason := ""
+	switch eventType {
+	case "content_block_delta":
+		if delta, ok := payload["delta"].(map[string]interface{}); ok {
+			if t, ok := delta["text"].(string); ok {
+				deltaText = t
+			} else if t, ok := delta["thinking"].(string); ok {
+				deltaText = t
+			}
+		}
+	case "message_delta":
+		if delta, ok := payload["delta"].(map[string]interface{}); ok {
+			finishReason = anthropicStopReasonToOpenAI(firstString(delta, "stop_reason"))
+		}
+	default:
+		return ""
+	}
+
+	chunk := map[string]interface{}{
+		"id":      utils.GenerateID("chatcmpl"),
+		"object":  "chat.completion.chunk",
+		"created": utils.GenerateTimestamp(),
+		"model":   model,
+		"choices": []interface{}{
+			map[string]interface{}{
+				"index": 0,
+				"delta": map[string]interface{}{
+					"content": deltaText,
+				},
+				"finish_reason": nullableString(finishReason),
+			},
+		},
+	}
+	if usage := anthropicUsageToOpenAI(payload["usage"]); usage != nil {
+		chunk["usage"] = usage
+	}
+	out, _ := json.Marshal(chunk)
+	return fmt.Sprintf("data: %s\n\n", string(out))
+}
+
 func buildAnthropicUsage(usage interface{}) map[string]interface{} {
 	normalized := utils.NormalizeUsage(usage)
 	result := map[string]interface{}{
-		"input_tokens":              0,
-		"output_tokens":             0,
+		"input_tokens":                0,
+		"output_tokens":               0,
 		"cache_creation_input_tokens": 0,
-		"cache_read_input_tokens":   0,
+		"cache_read_input_tokens":     0,
 	}
 	if normalized != nil {
 		result["input_tokens"] = normalized.PromptTokens

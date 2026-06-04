@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -116,8 +117,8 @@ func extractProxyModel(w http.ResponseWriter, r *http.Request) (string, bool) {
 		utils.SendError(w, 400, "Request body could not be read.", "invalid_request")
 		return "", false
 	}
-	r.Body = io.NopCloser(strings.NewReader(string(bodyBytes)))
-	if len(strings.TrimSpace(string(bodyBytes))) == 0 {
+	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	if len(bytes.TrimSpace(bodyBytes)) == 0 {
 		return "", true
 	}
 	var body map[string]interface{}
@@ -173,7 +174,7 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 		upstreamURL := utils.BuildUpstreamURL(candidate.Provider.BaseURL, "/v1/chat/completions")
 		reqBody, _ := json.Marshal(responseRequest)
 
-		req, err := http.NewRequest("POST", upstreamURL, strings.NewReader(string(reqBody)))
+		req, err := http.NewRequestWithContext(r.Context(), "POST", upstreamURL, bytes.NewReader(reqBody))
 		if err != nil {
 			lastError = err
 			continue
@@ -185,8 +186,7 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 			req.Header.Set("Accept", accept)
 		}
 
-		client := &http.Client{Timeout: 10 * time.Minute}
-		resp, err := client.Do(req)
+		resp, err := proxy.DoUpstream(req)
 		if err != nil {
 			proxy.RecordProviderFailure(candidate.Provider.ID)
 			lastError = err
@@ -582,7 +582,7 @@ func handleAnthropicMessagesProxyHandler(w http.ResponseWriter, r *http.Request)
 		upstreamURL := utils.BuildUpstreamURL(candidate.Provider.BaseURL, "/v1/chat/completions")
 		reqBody, _ := json.Marshal(openAIBody)
 
-		req, err := http.NewRequest("POST", upstreamURL, strings.NewReader(string(reqBody)))
+		req, err := http.NewRequestWithContext(r.Context(), "POST", upstreamURL, bytes.NewReader(reqBody))
 		if err != nil {
 			lastError = err
 			continue
@@ -591,8 +591,7 @@ func handleAnthropicMessagesProxyHandler(w http.ResponseWriter, r *http.Request)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Accept-Encoding", "identity")
 
-		client := &http.Client{Timeout: 10 * time.Minute}
-		resp, err := client.Do(req)
+		resp, err := proxy.DoUpstream(req)
 		if err != nil {
 			proxy.RecordProviderFailure(candidate.Provider.ID)
 			lastError = err
@@ -981,11 +980,11 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 		info.User.Name, info.User.ID, getKeyID(info.APIKeyRecord), getKeyName(info.APIKeyRecord))
 
 	bodyBytes, _ := io.ReadAll(r.Body)
-	r.Body = io.NopCloser(strings.NewReader(string(bodyBytes)))
+	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 	log.Printf("[V1CHAT] BODY_READ len=%d preview=%s", len(bodyBytes), truncateForLog(string(bodyBytes), 300))
 
 	var body map[string]interface{}
-	if len(strings.TrimSpace(string(bodyBytes))) > 0 {
+	if len(bytes.TrimSpace(bodyBytes)) > 0 {
 		if err := json.Unmarshal(bodyBytes, &body); err != nil {
 			utils.SendError(w, 400, "Request body must be valid JSON.", "invalid_json")
 			return
@@ -1019,22 +1018,28 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[V1CHAT] TRY_CANDIDATE[%d] provider=%s upstream_model=%s",
 			i, candidate.Provider.Name, candidate.UpstreamModel)
 
-		upstreamURL := utils.BuildUpstreamURL(candidate.Provider.BaseURL, r.URL.Path)
-		if r.URL.RawQuery != "" {
-			upstreamURL += "?" + r.URL.RawQuery
+		upstreamURL, upstreamBody, upstreamHeaders, needsChatResponseConversion, err := proxy.BuildChatCompletionsUpstreamRequest(
+			candidate.Provider,
+			r.URL.Path,
+			r.URL.RawQuery,
+			body,
+			candidate.UpstreamModel,
+		)
+		if err != nil {
+			log.Printf("[V1CHAT] BUILD_UPSTREAM_REQ_ERROR err=%v", err)
+			lastError = err
+			continue
 		}
 		log.Printf("[V1CHAT] UPSTREAM_URL %s %s", r.Method, upstreamURL)
 
 		var reqBody io.Reader
-		upstreamBody, _ := utils.BuildUpstreamBody(r, candidate.UpstreamModel)
-		r.Body = io.NopCloser(strings.NewReader(string(bodyBytes)))
 		if upstreamBody != nil {
-			reqBody = strings.NewReader(string(upstreamBody))
+			reqBody = bytes.NewReader(upstreamBody)
 		}
 		log.Printf("[V1CHAT] UPSTREAM_BODY len=%d preview=%s",
 			len(upstreamBody), truncateForLog(string(upstreamBody), 200))
 
-		req, err := http.NewRequest(r.Method, upstreamURL, reqBody)
+		req, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL, reqBody)
 		if err != nil {
 			log.Printf("[V1CHAT] CREATE_REQ_ERROR err=%v", err)
 			lastError = err
@@ -1047,16 +1052,19 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 				req.Header.Add(key, v)
 			}
 		}
-		req.Header.Set("Authorization", "Bearer "+candidate.Provider.APIKey)
+		for key, values := range upstreamHeaders {
+			req.Header.Del(key)
+			for _, v := range values {
+				req.Header.Add(key, v)
+			}
+		}
 		if reqBody != nil && req.Header.Get("Content-Type") == "" {
 			req.Header.Set("Content-Type", "application/json")
 		}
-		req.Header.Set("Accept-Encoding", "identity")
 		log.Printf("[V1CHAT] SEND_UPSTREAM content-type=%s auth_prefix=%s...",
 			req.Header.Get("Content-Type"), truncateForLog(candidate.Provider.APIKey, 12))
 
-		client := &http.Client{Timeout: 10 * time.Minute}
-		resp, err := client.Do(req)
+		resp, err := proxy.DoUpstream(req)
 		if err != nil {
 			log.Printf("[V1CHAT] UPSTREAM_ERR err=%v", err)
 			proxy.RecordProviderFailure(candidate.Provider.ID)
@@ -1098,8 +1106,8 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 			bodyBytes, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			log.Printf("[V1CHAT] ERROR_BODY len=%d preview=%s", len(bodyBytes), truncateForLog(string(bodyBytes), 300))
-			w.WriteHeader(resp.StatusCode)
 			utils.CopyUpstreamHeaders(resp.Header, w, nil)
+			w.WriteHeader(resp.StatusCode)
 			w.Write(bodyBytes)
 			return
 		}
@@ -1110,16 +1118,23 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 
 		if isStream {
 			log.Printf("[V1CHAT] STREAM_START")
-			w.WriteHeader(resp.StatusCode)
 			utils.CopyUpstreamHeaders(resp.Header, w, map[string]string{
 				"Cache-Control":     "no-cache, no-transform",
 				"X-Accel-Buffering": "no",
 			})
+			w.WriteHeader(resp.StatusCode)
 			if flusher, ok := w.(http.Flusher); ok {
 				flusher.Flush()
 			}
 
-			usage := proxy.WriteUpstreamStreamToResponse(resp, w)
+			var usage interface{}
+			if needsChatResponseConversion && proxy.DetectUpstreamKind(candidate.Provider) == proxy.UpstreamGemini {
+				usage = writeGeminiStreamAsOpenAI(resp, w, model)
+			} else if needsChatResponseConversion && proxy.DetectUpstreamKind(candidate.Provider) == proxy.UpstreamAnthropic {
+				usage = writeAnthropicStreamAsOpenAI(resp, w, model)
+			} else {
+				usage = proxy.WriteUpstreamStreamToResponse(resp, w)
+			}
 			log.Printf("[V1CHAT] STREAM_END usage=%v", usage)
 
 			logging.RecordRequestLog(logging.RequestLogParams{
@@ -1152,9 +1167,24 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 		resp.Body.Close()
 		log.Printf("[V1CHAT] NONSTREAM_BODY len=%d preview=%s", len(bodyBytes), truncateForLog(string(bodyBytes), 300))
 		usage := utils.ExtractUsageFromResponseText(string(bodyBytes))
+		if needsChatResponseConversion {
+			var payload map[string]interface{}
+			if json.Unmarshal(bodyBytes, &payload) == nil {
+				switch proxy.DetectUpstreamKind(candidate.Provider) {
+				case proxy.UpstreamAnthropic:
+					converted := proxy.AnthropicToOpenAIChat(payload, model)
+					bodyBytes, _ = json.Marshal(converted)
+					usage = utils.FindUsagePayload(converted)
+				case proxy.UpstreamGemini:
+					converted := proxy.GeminiToOpenAIChat(payload, model)
+					bodyBytes, _ = json.Marshal(converted)
+					usage = utils.FindUsagePayload(converted)
+				}
+			}
+		}
 
-		w.WriteHeader(resp.StatusCode)
 		utils.CopyUpstreamHeaders(resp.Header, w, nil)
+		w.WriteHeader(resp.StatusCode)
 		w.Write(bodyBytes)
 
 		logging.RecordRequestLog(logging.RequestLogParams{
@@ -1237,6 +1267,60 @@ func readLine(reader *bufio.Reader, buf *strings.Builder) (string, error) {
 			buf.WriteByte(b)
 		}
 	}
+}
+
+func writeGeminiStreamAsOpenAI(upstreamResp *http.Response, w http.ResponseWriter, model string) interface{} {
+	reader := bufio.NewReader(upstreamResp.Body)
+	var buf strings.Builder
+	var usage interface{}
+
+	for {
+		line, err := readLine(reader, &buf)
+		if err != nil {
+			break
+		}
+		chunk := proxy.GeminiStreamChunkToOpenAI(line, model)
+		if chunk == "" {
+			continue
+		}
+		w.Write([]byte(chunk))
+		usage = utils.ExtractUsageFromResponseText(chunk)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+	}
+	w.Write([]byte("data: [DONE]\n\n"))
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+	return usage
+}
+
+func writeAnthropicStreamAsOpenAI(upstreamResp *http.Response, w http.ResponseWriter, model string) interface{} {
+	reader := bufio.NewReader(upstreamResp.Body)
+	var buf strings.Builder
+	var usage interface{}
+
+	for {
+		line, err := readLine(reader, &buf)
+		if err != nil {
+			break
+		}
+		chunk := proxy.AnthropicStreamLineToOpenAI(line, model)
+		if chunk == "" {
+			continue
+		}
+		w.Write([]byte(chunk))
+		usage = utils.ExtractUsageFromResponseText(chunk)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+	}
+	w.Write([]byte("data: [DONE]\n\n"))
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+	return usage
 }
 
 func isOK(statusCode int) bool {
