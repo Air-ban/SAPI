@@ -186,7 +186,8 @@ func publicConfig() map[string]interface{} {
 			"appId":   cfg.TencentCaptchaAppID,
 		},
 		"github": map[string]interface{}{
-			"enabled": cfg.GitHubClientID != "" && cfg.GitHubClientSecret != "",
+			"enabled":              cfg.GitHubClientID != "" && cfg.GitHubClientSecret != "",
+			"requiredFollowTarget": cfg.GitHubRequiredFollowTarget,
 		},
 	}
 }

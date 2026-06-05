@@ -22,6 +22,11 @@ import (
 
 const githubStateCookieName = "sapi_github_oauth_state"
 
+var (
+	githubAPIBaseURL = "https://api.github.com"
+	githubHTTPClient = http.DefaultClient
+)
+
 type githubUserProfile struct {
 	ID        int64  `json:"id"`
 	Login     string `json:"login"`
@@ -105,7 +110,17 @@ func handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userResult := upsertGitHubUser(profile, emails, cfg)
+	followAllowed := true
+	if shouldCheckGitHubFollowRequirement(profile, cfg) {
+		var err error
+		followAllowed, err = checkGitHubFollowRequirement(ctx, accessToken, profile, cfg)
+		if err != nil {
+			redirectGitHubAuth(w, r, cfg, "", "github_follow_check_failed")
+			return
+		}
+	}
+
+	userResult := upsertGitHubUser(profile, emails, cfg, followAllowed)
 	if errCode, ok := userResult.(string); ok {
 		redirectGitHubAuth(w, r, cfg, "", errCode)
 		return
@@ -132,7 +147,7 @@ func exchangeGitHubCode(ctx context.Context, cfg *config.Config, code string) (s
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", "SAPI")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := githubHTTPClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -154,12 +169,12 @@ func exchangeGitHubCode(ctx context.Context, cfg *config.Config, code string) (s
 
 func fetchGitHubProfile(ctx context.Context, token string) (*githubUserProfile, []githubEmailRecord, error) {
 	var profile githubUserProfile
-	if err := getGitHubJSON(ctx, token, "https://api.github.com/user", &profile); err != nil {
+	if err := getGitHubJSON(ctx, token, githubAPIURL("/user"), &profile); err != nil {
 		return nil, nil, err
 	}
 
 	var emails []githubEmailRecord
-	if err := getGitHubJSON(ctx, token, "https://api.github.com/user/emails", &emails); err != nil {
+	if err := getGitHubJSON(ctx, token, githubAPIURL("/user/emails"), &emails); err != nil {
 		emails = []githubEmailRecord{}
 	}
 
@@ -175,7 +190,7 @@ func getGitHubJSON(ctx context.Context, token, endpoint string, target interface
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "SAPI")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := githubHTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -188,7 +203,83 @@ func getGitHubJSON(ctx context.Context, token, endpoint string, target interface
 	return decoder.Decode(target)
 }
 
-func upsertGitHubUser(profile *githubUserProfile, emails []githubEmailRecord, cfg *config.Config) interface{} {
+func checkGitHubFollowRequirement(ctx context.Context, token string, profile *githubUserProfile, cfg *config.Config) (bool, error) {
+	target := ""
+	if cfg != nil {
+		target = strings.TrimSpace(strings.TrimPrefix(cfg.GitHubRequiredFollowTarget, "@"))
+	}
+	if target == "" {
+		return true, nil
+	}
+	if profile == nil || strings.TrimSpace(profile.Login) == "" {
+		return false, fmt.Errorf("github profile login is empty")
+	}
+	login := strings.TrimSpace(profile.Login)
+	if strings.EqualFold(login, target) {
+		return true, nil
+	}
+	return isGitHubUserFollowing(ctx, token, login, target)
+}
+
+func shouldCheckGitHubFollowRequirement(profile *githubUserProfile, cfg *config.Config) bool {
+	if cfg == nil || strings.TrimSpace(cfg.GitHubRequiredFollowTarget) == "" {
+		return false
+	}
+	if profile == nil {
+		return true
+	}
+	githubID := strconv.FormatInt(profile.ID, 10)
+	if githubID == "" || githubID == "0" {
+		return true
+	}
+	db := store.ReadDB()
+	for _, user := range db.Users {
+		if user.GitHubID != "" && auth.SafeEqual(user.GitHubID, githubID) {
+			return false
+		}
+	}
+	return true
+}
+
+func isGitHubUserFollowing(ctx context.Context, token, username, target string) (bool, error) {
+	endpoint := fmt.Sprintf("%s/users/%s/following/%s",
+		strings.TrimRight(githubAPIBaseURL, "/"),
+		url.PathEscape(strings.TrimSpace(username)),
+		url.PathEscape(strings.TrimSpace(target)),
+	)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return false, err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", "SAPI")
+
+	resp, err := githubHTTPClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusNoContent:
+		return true, nil
+	case http.StatusNotFound:
+		return false, nil
+	default:
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return false, fmt.Errorf("github follow check returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+}
+
+func githubAPIURL(path string) string {
+	return strings.TrimRight(githubAPIBaseURL, "/") + path
+}
+
+func upsertGitHubUser(profile *githubUserProfile, emails []githubEmailRecord, cfg *config.Config, allowGitHubRegistration bool) interface{} {
 	githubID := strconv.FormatInt(profile.ID, 10)
 	if githubID == "" || githubID == "0" {
 		return "invalid_profile"
@@ -227,6 +318,9 @@ func upsertGitHubUser(profile *githubUserProfile, emails []githubEmailRecord, cf
 			if u.GitHubID != "" && !auth.SafeEqual(u.GitHubID, githubID) {
 				return "github_account_conflict"
 			}
+			if u.GitHubID == "" && !allowGitHubRegistration {
+				return "github_follow_required"
+			}
 			u.GitHubID = githubID
 			u.GitHubLogin = login
 			u.GitHubAvatarURL = avatar
@@ -247,6 +341,10 @@ func upsertGitHubUser(profile *githubUserProfile, emails []githubEmailRecord, cf
 			}
 			u.UpdatedAt = now
 			return u
+		}
+
+		if !allowGitHubRegistration {
+			return "github_follow_required"
 		}
 
 		username := uniqueGitHubUsername(db, login, githubID, cfg.AdminUser)

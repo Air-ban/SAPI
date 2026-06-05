@@ -41,6 +41,27 @@ import { AnnouncementDialog } from "./admin/AnnouncementDialog";
 
 setupMarked();
 
+const GITHUB_AUTH_ERROR_MESSAGES = {
+  github_follow_check_failed: "暂时无法校验 GitHub 关注状态，请稍后再试",
+  github_account_conflict: "该邮箱已绑定其他 GitHub 账号",
+  github_not_configured: "GitHub 登录暂未配置",
+  invalid_state: "GitHub 登录状态已过期，请重试",
+  missing_code: "GitHub 登录授权失败，请重试",
+  token_exchange_failed: "GitHub 授权换取令牌失败，请重试",
+  profile_fetch_failed: "无法读取 GitHub 账号信息，请重试",
+  invalid_profile: "GitHub 账号信息不完整",
+  user_disabled: "账号已被禁用"
+};
+
+function githubAuthErrorMessage(code, followTarget = "") {
+  if (code === "github_follow_required") {
+    return followTarget
+      ? `请先关注 @${followTarget} 后再使用 GitHub 注册`
+      : "请先关注指定 GitHub 账号后再使用 GitHub 注册";
+  }
+  return GITHUB_AUTH_ERROR_MESSAGES[code] || code || "GitHub 登录失败";
+}
+
 function getInitialThemeMode() {
   const saved = localStorage.getItem("sapiThemeMode");
   if (saved === "light" || saved === "dark") return saved;
@@ -271,7 +292,12 @@ function App() {
       const error = params.get("error") || "";
 
       if (error || !token) {
-        showToast(error ? `GitHub 登录失败：${error}` : "GitHub 登录失败", "error");
+        showToast(
+          error
+            ? `GitHub 登录失败：${githubAuthErrorMessage(error, publicConfig?.github?.requiredFollowTarget || "")}`
+            : "GitHub 登录失败",
+          "error"
+        );
         navigate("login");
         return;
       }
@@ -302,7 +328,7 @@ function App() {
     };
 
     run();
-  }, [loadUserUsage, route, showToast]);
+  }, [loadUserUsage, publicConfig, route, showToast]);
 
   const navigate = (nextRoute) => {
     window.location.hash = `#${nextRoute}`;

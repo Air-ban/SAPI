@@ -31,6 +31,7 @@ type Config struct {
 	GitHubClientID             string
 	GitHubClientSecret         string
 	GitHubRedirectURL          string
+	GitHubRequiredFollowTarget string
 	SmtpHost                   string
 	SmtpPort                   int
 	SmtpSecure                 bool
@@ -79,6 +80,7 @@ func Load() *Config {
 		GitHubClientID:             getEnv("SAPI_GITHUB_CLIENT_ID", ""),
 		GitHubClientSecret:         getEnv("SAPI_GITHUB_CLIENT_SECRET", ""),
 		GitHubRedirectURL:          getEnv("SAPI_GITHUB_REDIRECT_URL", ""),
+		GitHubRequiredFollowTarget: strings.TrimPrefix(strings.TrimSpace(getEnv("SAPI_GITHUB_REQUIRED_FOLLOW_TARGET", "")), "@"),
 		SmtpHost:                   getEnv("SAPI_SMTP_HOST", ""),
 		SmtpPort:                   intEnv("SAPI_SMTP_PORT", 587),
 		SmtpSecure:                 getEnv("SAPI_SMTP_SECURE", "false") == "true",

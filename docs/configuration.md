@@ -143,6 +143,7 @@ SAPI_TENCENT_SECRET_KEY=
 SAPI_GITHUB_CLIENT_ID=
 SAPI_GITHUB_CLIENT_SECRET=
 SAPI_GITHUB_REDIRECT_URL=
+SAPI_GITHUB_REQUIRED_FOLLOW_TARGET=
 ```
 
 | 变量 | 默认值 | 说明 |
@@ -150,6 +151,7 @@ SAPI_GITHUB_REDIRECT_URL=
 | `SAPI_GITHUB_CLIENT_ID` | 空 | GitHub OAuth App Client ID。 |
 | `SAPI_GITHUB_CLIENT_SECRET` | 空 | GitHub OAuth App Client Secret。 |
 | `SAPI_GITHUB_REDIRECT_URL` | `SAPI_PUBLIC_BASE_URL/api/auth/github/callback` | GitHub OAuth 回调地址。 |
+| `SAPI_GITHUB_REQUIRED_FOLLOW_TARGET` | 空 | 非空时，首次 GitHub 注册或绑定账号必须关注该 GitHub 用户，例如 `EterUltimate`。已绑定的 GitHub 用户可继续登录。 |
 
 `SAPI_GITHUB_CLIENT_ID` 和 `SAPI_GITHUB_CLIENT_SECRET` 同时存在时，登录页显示 GitHub 登录入口。
 

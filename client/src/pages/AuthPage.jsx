@@ -38,6 +38,7 @@ export function AuthPage({
 }) {
   const isRegister = mode === "register";
   const githubEnabled = Boolean(publicConfig?.github?.enabled);
+  const githubRequiredFollowTarget = publicConfig?.github?.requiredFollowTarget || "";
   const [form, setForm] = useState({
     username: "",
     email: "",
@@ -316,16 +317,23 @@ export function AuthPage({
                   {isRegister ? "注册" : "登录"}
                 </Button>
                 {githubEnabled ? (
-                  <Button
-                    variant="outlined"
-                    size="large"
-                    startIcon={<GitHubIcon />}
-                    onClick={() => {
-                      window.location.href = "/api/auth/github/start";
-                    }}
-                  >
-                    使用 GitHub 登录
-                  </Button>
+                  <Stack spacing={0.75}>
+                    <Button
+                      variant="outlined"
+                      size="large"
+                      startIcon={<GitHubIcon />}
+                      onClick={() => {
+                        window.location.href = "/api/auth/github/start";
+                      }}
+                    >
+                      使用 GitHub 登录
+                    </Button>
+                    {githubRequiredFollowTarget ? (
+                      <Typography variant="caption" color="text.secondary" textAlign="center">
+                        仅限关注 @{githubRequiredFollowTarget} 的 GitHub 账号注册。
+                      </Typography>
+                    ) : null}
+                  </Stack>
                 ) : null}
                 {!isRegister ? (
                   <Box sx={{ textAlign: "center" }}>
