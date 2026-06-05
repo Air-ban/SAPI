@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -135,6 +136,7 @@ func FindUserByKey(apiKey string) *FindUserByKeyResult {
 					Name:     "Administrator",
 					Username: "admin",
 					Enabled:  true,
+					Source:   "admin",
 				},
 				APIKeyRecord: k,
 			}
@@ -174,11 +176,12 @@ type rpmWindow struct {
 	timestamps []int64
 }
 
-func CheckRPMLimit(apiKeyRecord *models.APIKeyRecord, db *models.Database) (bool, int, int) {
-	limit := 30
-	if db != nil && db.DefaultRPMLimit > 0 {
-		limit = db.DefaultRPMLimit
+func CheckRPMLimit(user *models.User, apiKeyRecord *models.APIKeyRecord, db *models.Database) (bool, int, int) {
+	if user != nil && user.ID == "__admin__" {
+		return true, 0, 0
 	}
+
+	limit := defaultRPMLimitForUser(user, db)
 	if apiKeyRecord != nil && apiKeyRecord.RPMLimit > 0 {
 		limit = apiKeyRecord.RPMLimit
 	}
@@ -223,6 +226,19 @@ func CheckRPMLimit(apiKeyRecord *models.APIKeyRecord, db *models.Database) (bool
 
 	w.timestamps = append(w.timestamps, now)
 	return true, limit, len(w.timestamps)
+}
+
+func defaultRPMLimitForUser(user *models.User, db *models.Database) int {
+	if user != nil && (user.Source == "github" || user.GitHubID != "") {
+		return 100
+	}
+	if user != nil && (user.Source == "edu" || strings.HasSuffix(strings.ToLower(strings.TrimSpace(user.Email)), ".edu.cn")) {
+		return 30
+	}
+	if db != nil && db.DefaultRPMLimit > 0 {
+		return db.DefaultRPMLimit
+	}
+	return 30
 }
 
 type failureLimiter struct {

@@ -79,8 +79,11 @@ CREATE TABLE IF NOT EXISTS sapi_request_logs (
   reasoning_tokens integer NOT NULL DEFAULT 0,
   error_code text NOT NULL DEFAULT '',
   error_message text NOT NULL DEFAULT '',
+  request_content jsonb NOT NULL DEFAULT '{}'::jsonb,
   timestamp timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE sapi_request_logs ADD COLUMN IF NOT EXISTS request_content jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE INDEX IF NOT EXISTS sapi_request_logs_timestamp_idx ON sapi_request_logs (timestamp DESC);
 CREATE INDEX IF NOT EXISTS sapi_request_logs_user_timestamp_idx ON sapi_request_logs (user_id, timestamp DESC);
@@ -175,6 +178,14 @@ func insertPostgresRequestLog(ctx context.Context, item models.RequestLog) error
 	if err != nil {
 		ts = time.Now().UTC()
 	}
+	requestContent := item.RequestContent
+	if requestContent == nil {
+		requestContent = map[string]interface{}{}
+	}
+	requestContentRaw, err := json.Marshal(requestContent)
+	if err != nil {
+		requestContentRaw = []byte(`{}`)
+	}
 
 	_, err = pgPool.Exec(ctx, `
 INSERT INTO sapi_request_logs (
@@ -182,17 +193,25 @@ INSERT INTO sapi_request_logs (
   provider_id, provider_name, model, upstream_model, endpoint, method, status,
   ok, stream, duration_ms, prompt_tokens, completion_tokens, total_tokens,
   cached_tokens, cache_creation_tokens, cache_miss_tokens, reasoning_tokens,
-  error_code, error_message, timestamp
+  error_code, error_message, request_content, timestamp
 ) VALUES (
   $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
-  $15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27
+  $15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28
 )
 ON CONFLICT (id) DO NOTHING
 `, item.ID, item.UserID, item.UserName, item.Username, item.APIKeyID, item.APIKeyName, item.APIKeyPreview,
 		item.ProviderID, item.ProviderName, item.Model, item.UpstreamModel, item.Endpoint, item.Method, item.Status,
 		item.OK, item.Stream, item.DurationMs, item.PromptTokens, item.CompletionTokens, item.TotalTokens,
 		item.CachedTokens, item.CacheCreationTokens, item.CacheMissTokens, item.ReasoningTokens,
-		item.ErrorCode, item.ErrorMessage, ts)
+		item.ErrorCode, item.ErrorMessage, requestContentRaw, ts)
+	return err
+}
+
+func prunePostgresRequestLogs(ctx context.Context, cutoff time.Time) error {
+	if pgPool == nil {
+		return nil
+	}
+	_, err := pgPool.Exec(ctx, `DELETE FROM sapi_request_logs WHERE timestamp < $1`, cutoff)
 	return err
 }
 
@@ -209,7 +228,7 @@ SELECT id, user_id, user_name, username, api_key_id, api_key_name, api_key_previ
   provider_id, provider_name, model, upstream_model, endpoint, method, status,
   ok, stream, duration_ms, prompt_tokens, completion_tokens, total_tokens,
   cached_tokens, cache_creation_tokens, cache_miss_tokens, reasoning_tokens,
-  error_code, error_message, timestamp
+  error_code, error_message, request_content, timestamp
 FROM sapi_request_logs
 WHERE timestamp >= $1`
 	args := []interface{}{since}
@@ -230,14 +249,18 @@ WHERE timestamp >= $1`
 	for rows.Next() {
 		var item models.RequestLog
 		var ts time.Time
+		var requestContentRaw []byte
 		if err := rows.Scan(
 			&item.ID, &item.UserID, &item.UserName, &item.Username, &item.APIKeyID, &item.APIKeyName, &item.APIKeyPreview,
 			&item.ProviderID, &item.ProviderName, &item.Model, &item.UpstreamModel, &item.Endpoint, &item.Method, &item.Status,
 			&item.OK, &item.Stream, &item.DurationMs, &item.PromptTokens, &item.CompletionTokens, &item.TotalTokens,
 			&item.CachedTokens, &item.CacheCreationTokens, &item.CacheMissTokens, &item.ReasoningTokens,
-			&item.ErrorCode, &item.ErrorMessage, &ts,
+			&item.ErrorCode, &item.ErrorMessage, &requestContentRaw, &ts,
 		); err != nil {
 			return nil, err
+		}
+		if len(requestContentRaw) > 0 {
+			_ = json.Unmarshal(requestContentRaw, &item.RequestContent)
 		}
 		item.Timestamp = ts.UTC().Format(time.RFC3339)
 		result = append(result, item)

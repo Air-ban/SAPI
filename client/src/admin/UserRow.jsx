@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Button,
   CircularProgress,
@@ -6,7 +6,9 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
   IconButton,
+  Switch,
   Stack,
   TextField,
   Tooltip,
@@ -14,6 +16,7 @@ import {
 } from "@mui/material";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
+import EditIcon from "@mui/icons-material/Edit";
 import KeyIcon from "@mui/icons-material/Key";
 import SettingsIcon from "@mui/icons-material/Settings";
 import VpnKeyIcon from "@mui/icons-material/VpnKey";
@@ -27,6 +30,27 @@ export function UserRow({ user, usage, afterChange, onConfirm, onCopy, onToast }
   const [newPassword, setNewPassword] = useState("");
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editLoading, setEditLoading] = useState(false);
+  const [editForm, setEditForm] = useState({
+    name: user.name || "",
+    username: user.username || "",
+    email: user.email || "",
+    enabled: Boolean(user.enabled),
+    receiveAnnouncementEmail: Boolean(user.receiveAnnouncementEmail)
+  });
+
+  useEffect(() => {
+    if (!editOpen) {
+      setEditForm({
+        name: user.name || "",
+        username: user.username || "",
+        email: user.email || "",
+        enabled: Boolean(user.enabled),
+        receiveAnnouncementEmail: Boolean(user.receiveAnnouncementEmail)
+      });
+    }
+  }, [editOpen, user]);
 
   const toggle = async () => {
     await request(`/api/admin/users/${user.id}`, {
@@ -70,13 +94,46 @@ export function UserRow({ user, usage, afterChange, onConfirm, onCopy, onToast }
     }
   };
 
+  const saveEdit = async () => {
+    setEditLoading(true);
+    try {
+      await request(`/api/admin/users/${user.id}`, {
+        method: "PUT",
+        body: {
+          name: editForm.name,
+          username: editForm.username,
+          email: editForm.email,
+          enabled: editForm.enabled,
+          receiveAnnouncementEmail: editForm.receiveAnnouncementEmail
+        }
+      });
+      setEditOpen(false);
+      await afterChange("用户已更新");
+    } catch (error) {
+      onToast(error.message, "error");
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
   const apiKeys = getUserApiKeys(user);
+  const sourceLabel = user.source === "github"
+    ? "GitHub"
+    : user.source === "edu"
+      ? "教育邮箱"
+      : user.source === "admin"
+        ? "管理员"
+        : "邮箱";
   const meta = [
     ["API Key", apiKeys.length ? `${apiKeys.length} 个` : "未创建"],
     ["账号", user.username || "-"],
     ["邮箱", user.email || "-"],
+    ["来源", sourceLabel],
     ["创建时间", formatDate(user.createdAt)]
   ];
+  if (user.githubLogin) {
+    meta.splice(4, 0, ["GitHub", user.githubLogin]);
+  }
 
   if (usage) {
     meta.push(["用量", `请求 ${usage.requests} 次 / ${usage.totalTokens.toLocaleString()} tokens`]);
@@ -105,6 +162,11 @@ export function UserRow({ user, usage, afterChange, onConfirm, onCopy, onToast }
                 </IconButton>
               </Tooltip>
             ) : null}
+            <Tooltip title="编辑用户">
+              <IconButton size="small" onClick={() => setEditOpen(true)}>
+                <EditIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
             <Tooltip title="重置密码">
               <IconButton size="small" onClick={() => setPasswordDialogOpen(true)}>
                 <VpnKeyIcon fontSize="small" />
@@ -166,6 +228,63 @@ export function UserRow({ user, usage, afterChange, onConfirm, onCopy, onToast }
             startIcon={passwordLoading ? <CircularProgress size={16} /> : null}
           >
             确认重置
+          </Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog open={editOpen} onClose={() => setEditOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>编辑用户</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <TextField
+              label="名称"
+              value={editForm.name}
+              onChange={(e) => setEditForm((current) => ({ ...current, name: e.target.value }))}
+              fullWidth
+            />
+            <TextField
+              label="用户名"
+              value={editForm.username}
+              onChange={(e) => setEditForm((current) => ({ ...current, username: e.target.value }))}
+              fullWidth
+            />
+            <TextField
+              label="邮箱"
+              type="email"
+              value={editForm.email}
+              onChange={(e) => setEditForm((current) => ({ ...current, email: e.target.value }))}
+              fullWidth
+            />
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={editForm.enabled}
+                    onChange={(e) => setEditForm((current) => ({ ...current, enabled: e.target.checked }))}
+                  />
+                }
+                label="启用账号"
+              />
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={editForm.receiveAnnouncementEmail}
+                    onChange={(e) => setEditForm((current) => ({ ...current, receiveAnnouncementEmail: e.target.checked }))}
+                  />
+                }
+                label="接收公告邮件"
+              />
+            </Stack>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditOpen(false)} color="inherit" disabled={editLoading}>取消</Button>
+          <Button
+            variant="contained"
+            onClick={saveEdit}
+            disabled={editLoading}
+            startIcon={editLoading ? <CircularProgress size={16} /> : null}
+          >
+            保存
           </Button>
         </DialogActions>
       </Dialog>

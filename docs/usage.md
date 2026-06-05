@@ -88,11 +88,23 @@ http://localhost:3000/#register
 http://localhost:3000/#login
 ```
 
+如果管理员配置了 GitHub OAuth，登录页会显示 GitHub 登录入口。首次通过 GitHub 登录会自动创建用户账号，GitHub 账号默认 API Key RPM 为 100。
+
 用户控制台接口使用:
 
 ```text
 Authorization: Bearer <user-jwt>
 ```
+
+## 账号 RPM 策略
+默认创建 API Key 时会按账号来源设置 RPM:
+
+- `.edu.cn` 教育邮箱注册账号: 30 RPM。
+- GitHub 登录创建或绑定账号: 100 RPM。
+- 管理员 API Key: 不限速。
+- 其他普通账号: 使用管理后台设置的全局默认 RPM。
+
+管理后台可以继续对单个用户 API Key 设置独立 RPM。
 
 ## 创建 API Key
 用户控制台创建自己的 API Key，管理端也可以创建和管理 API Key。
@@ -235,6 +247,15 @@ curl http://localhost:3000/api/suggestions \
   -H "Content-Type: application/json" \
   -d '{"title":"问题标题","content":"问题内容"}'
 ```
+
+## 请求内容留存
+模型转发请求会把用户提交的请求 JSON 内容写入请求日志，保留 7 天:
+
+- JSON 存储模式: 写入 `data/sapi.json` 的 `requestLogs[].requestContent`。
+- PostgreSQL 存储模式: 写入 `sapi_request_logs.request_content` JSONB 字段。
+- 响应正文不会被持久化保存。
+
+管理后台和用户控制台的最近请求记录中可以展开查看请求 JSON。
 
 ## 错误格式
 统一错误响应:

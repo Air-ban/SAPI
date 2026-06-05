@@ -120,7 +120,7 @@ store.MutateDB(func(db *models.Database) interface{} {
 store.AppendRequestLog(item)
 ```
 
-PostgreSQL 启用时，请求日志进入 `sapi_request_logs`，主状态中的 `RequestLogs` 不再承载高频日志。
+PostgreSQL 启用时，请求日志进入 `sapi_request_logs`，主状态中的 `RequestLogs` 不再承载高频日志。代理请求日志需要填充 `RequestContent`，用于保存用户请求 JSON 内容 7 天；不要写入上游响应正文。
 
 ## 代理开发
 代理入口:
@@ -143,6 +143,7 @@ PostgreSQL 启用时，请求日志进入 `sapi_request_logs`，主状态中的 
 5. 检查 RPM。
 6. 选择可用上游 Provider。
 7. 重写上游模型和授权 Header。
+8. 请求完成后写入结构化请求日志，包括请求 JSON 内容、状态、耗时和 token 用量。
 
 新增上游适配时，优先放在 `backend/proxy/`，并保持 `handlers/proxy.go` 只处理请求边界和响应转发。
 

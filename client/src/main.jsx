@@ -260,6 +260,50 @@ function App() {
     }
   }, [loadUserSession, loadUserUsage, showToast, userLogout, userToken]);
 
+  useEffect(() => {
+    if (route !== "github-auth") return;
+
+    const run = async () => {
+      const hash = window.location.hash || "";
+      const queryIndex = hash.indexOf("?");
+      const params = new URLSearchParams(queryIndex >= 0 ? hash.slice(queryIndex + 1) : "");
+      const token = params.get("token") || "";
+      const error = params.get("error") || "";
+
+      if (error || !token) {
+        showToast(error ? `GitHub 登录失败：${error}` : "GitHub 登录失败", "error");
+        navigate("login");
+        return;
+      }
+
+      localStorage.setItem(USER_TOKEN_KEY, token);
+      localStorage.removeItem(ADMIN_TOKEN_KEY);
+      setUserToken(token);
+      setAdminToken("");
+      setAdminState(null);
+
+      try {
+        const session = await request("/api/user/me", {
+          admin: false,
+          token
+        });
+        setUserSession(session);
+        setSelectedKey(session.user.apiKey || "");
+        await loadUserUsage().catch(() => setUserUsage(null));
+        showToast("已通过 GitHub 登录");
+        navigate("portal");
+      } catch (err) {
+        localStorage.removeItem(USER_TOKEN_KEY);
+        setUserToken("");
+        setUserSession(null);
+        showToast(err.message, "error");
+        navigate("login");
+      }
+    };
+
+    run();
+  }, [loadUserUsage, route, showToast]);
+
   const navigate = (nextRoute) => {
     window.location.hash = `#${nextRoute}`;
     setRoute(nextRoute);
@@ -530,7 +574,18 @@ function App() {
           onToast={showToast}
           themeMode={themeMode}
           onToggleThemeMode={toggleThemeMode}
+          publicConfig={publicConfig}
         />
+        {snackbar}
+      </ThemeProvider>
+    );
+  }
+
+  if (route === "github-auth") {
+    return (
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <LoadingPage text="正在完成 GitHub 登录" />
         {snackbar}
       </ThemeProvider>
     );

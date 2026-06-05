@@ -66,6 +66,11 @@ type User struct {
 	APIKeys                  []APIKeyRecord `json:"apiKeys"`
 	Enabled                  bool           `json:"enabled"`
 	ReceiveAnnouncementEmail bool           `json:"receiveAnnouncementEmail"`
+	Source                   string         `json:"source"`
+	GitHubID                 string         `json:"githubId"`
+	GitHubLogin              string         `json:"githubLogin"`
+	GitHubAvatarURL          string         `json:"githubAvatarUrl"`
+	GitHubLinkedAt           string         `json:"githubLinkedAt"`
 	CreatedAt                string         `json:"createdAt"`
 	UpdatedAt                string         `json:"updatedAt"`
 }
@@ -83,33 +88,34 @@ type APIKeyRecord struct {
 }
 
 type RequestLog struct {
-	ID                  string `json:"id"`
-	UserID              string `json:"userId"`
-	UserName            string `json:"userName"`
-	Username            string `json:"username"`
-	APIKeyID            string `json:"apiKeyId"`
-	APIKeyName          string `json:"apiKeyName"`
-	APIKeyPreview       string `json:"apiKeyPreview"`
-	ProviderID          string `json:"providerId"`
-	ProviderName        string `json:"providerName"`
-	Model               string `json:"model"`
-	UpstreamModel       string `json:"upstreamModel"`
-	Endpoint            string `json:"endpoint"`
-	Method              string `json:"method"`
-	Status              int    `json:"status"`
-	OK                  bool   `json:"ok"`
-	Stream              bool   `json:"stream"`
-	DurationMs          int    `json:"durationMs"`
-	PromptTokens        int    `json:"promptTokens"`
-	CompletionTokens    int    `json:"completionTokens"`
-	TotalTokens         int    `json:"totalTokens"`
-	CachedTokens        int    `json:"cachedTokens"`
-	CacheCreationTokens int    `json:"cacheCreationTokens"`
-	CacheMissTokens     int    `json:"cacheMissTokens"`
-	ReasoningTokens     int    `json:"reasoningTokens"`
-	ErrorCode           string `json:"errorCode"`
-	ErrorMessage        string `json:"errorMessage"`
-	Timestamp           string `json:"timestamp"`
+	ID                  string                 `json:"id"`
+	UserID              string                 `json:"userId"`
+	UserName            string                 `json:"userName"`
+	Username            string                 `json:"username"`
+	APIKeyID            string                 `json:"apiKeyId"`
+	APIKeyName          string                 `json:"apiKeyName"`
+	APIKeyPreview       string                 `json:"apiKeyPreview"`
+	ProviderID          string                 `json:"providerId"`
+	ProviderName        string                 `json:"providerName"`
+	Model               string                 `json:"model"`
+	UpstreamModel       string                 `json:"upstreamModel"`
+	Endpoint            string                 `json:"endpoint"`
+	Method              string                 `json:"method"`
+	Status              int                    `json:"status"`
+	OK                  bool                   `json:"ok"`
+	Stream              bool                   `json:"stream"`
+	DurationMs          int                    `json:"durationMs"`
+	PromptTokens        int                    `json:"promptTokens"`
+	CompletionTokens    int                    `json:"completionTokens"`
+	TotalTokens         int                    `json:"totalTokens"`
+	CachedTokens        int                    `json:"cachedTokens"`
+	CacheCreationTokens int                    `json:"cacheCreationTokens"`
+	CacheMissTokens     int                    `json:"cacheMissTokens"`
+	ReasoningTokens     int                    `json:"reasoningTokens"`
+	ErrorCode           string                 `json:"errorCode"`
+	ErrorMessage        string                 `json:"errorMessage"`
+	RequestContent      map[string]interface{} `json:"requestContent,omitempty"`
+	Timestamp           string                 `json:"timestamp"`
 }
 
 type InvitationCode struct {

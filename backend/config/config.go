@@ -28,6 +28,9 @@ type Config struct {
 	TencentCaptchaAppSecretKey string
 	TencentSecretID            string
 	TencentSecretKey           string
+	GitHubClientID             string
+	GitHubClientSecret         string
+	GitHubRedirectURL          string
 	SmtpHost                   string
 	SmtpPort                   int
 	SmtpSecure                 bool
@@ -73,6 +76,9 @@ func Load() *Config {
 		TencentCaptchaAppSecretKey: getEnv("SAPI_TENCENT_CAPTCHA_APP_SECRET_KEY", ""),
 		TencentSecretID:            getEnv("SAPI_TENCENT_SECRET_ID", ""),
 		TencentSecretKey:           getEnv("SAPI_TENCENT_SECRET_KEY", ""),
+		GitHubClientID:             getEnv("SAPI_GITHUB_CLIENT_ID", ""),
+		GitHubClientSecret:         getEnv("SAPI_GITHUB_CLIENT_SECRET", ""),
+		GitHubRedirectURL:          getEnv("SAPI_GITHUB_REDIRECT_URL", ""),
 		SmtpHost:                   getEnv("SAPI_SMTP_HOST", ""),
 		SmtpPort:                   intEnv("SAPI_SMTP_PORT", 587),
 		SmtpSecure:                 getEnv("SAPI_SMTP_SECURE", "false") == "true",
@@ -83,6 +89,9 @@ func Load() *Config {
 
 	if cfg.PublicBaseURL == "" {
 		cfg.PublicBaseURL = "http://localhost:" + strconv.Itoa(port)
+	}
+	if cfg.GitHubRedirectURL == "" && cfg.PublicBaseURL != "" {
+		cfg.GitHubRedirectURL = strings.TrimRight(cfg.PublicBaseURL, "/") + "/api/auth/github/callback"
 	}
 
 	return cfg

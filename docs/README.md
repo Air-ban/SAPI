@@ -2,10 +2,10 @@
 面向配置、开发、使用和维护的最小文档集。
 
 ## 目录
-- [配置](configuration.md): 环境变量、Redis、PostgreSQL、代理可信头、SMTP、验证码。
+- [配置](configuration.md): 环境变量、Redis、PostgreSQL、代理可信头、GitHub 登录、SMTP、验证码。
 - [开发](development.md): 本地启动、目录结构、路由开发、测试和构建。
-- [使用](usage.md): 管理端、用户端、API Key、OpenAI/Anthropic 兼容调用。
-- [维护](maintenance.md): 健康检查、备份、限流、日志、密钥轮换和故障处理。
+- [使用](usage.md): 管理端、用户端、API Key、RPM 策略、OpenAI/Anthropic 兼容调用。
+- [维护](maintenance.md): 健康检查、备份、限流、7 天请求日志留存、密钥轮换和故障处理。
 
 ## 快速命令
 ```bash

@@ -1,5 +1,5 @@
 # 配置
-SAPI 通过 `.env` 和系统环境变量配置后端、存储、限流、代理头、SMTP 和验证码。
+SAPI 通过 `.env` 和系统环境变量配置后端、存储、限流、代理头、GitHub 登录、SMTP 和验证码。
 
 ## 配置加载
 `backend/config/config.go` 会按顺序查找第一个存在的 `.env`:
@@ -52,7 +52,7 @@ SAPI_POSTGRES_MAX_CONNS=20
 PostgreSQL 启用后自动创建:
 
 - `sapi_state`: 保存主状态 JSONB，不保存高频请求日志。
-- `sapi_request_logs`: 保存请求日志。
+- `sapi_request_logs`: 保存请求日志和请求 JSON 内容，自动保留 7 天。
 - `sapi_request_logs_timestamp_idx`
 - `sapi_request_logs_user_timestamp_idx`
 - `sapi_request_logs_api_key_idx`
@@ -80,7 +80,7 @@ Redis 保护范围:
 - 登录失败: IP 维度 30 次/10 分钟，账号维度 8 次/15 分钟，封禁 15 分钟。
 - 验证码请求: IP 维度 20 次/分钟。
 - API Key 失败: IP 维度 60 次/5 分钟，封禁 10 分钟。
-- API Key RPM: 按 Key 做 1 分钟滑窗，默认 30 RPM，可在管理端或 Key 级别调整。
+- API Key RPM: 按 Key 做 1 分钟滑窗，教育邮箱账号默认 30 RPM，GitHub 账号默认 100 RPM，管理员 Key 不限速；普通账号可使用全局默认或 Key 级别调整。
 
 ## 请求体限制
 ```bash
@@ -137,6 +137,21 @@ SAPI_TENCENT_SECRET_KEY=
 | `SAPI_TENCENT_SECRET_KEY` | 腾讯云 API 3.0 签名 Secret Key。 |
 
 `SAPI_TENCENT_CAPTCHA_APP_ID` 和 `SAPI_TENCENT_CAPTCHA_APP_SECRET_KEY` 同时存在时，公开配置显示验证码启用。
+
+## GitHub OAuth
+```bash
+SAPI_GITHUB_CLIENT_ID=
+SAPI_GITHUB_CLIENT_SECRET=
+SAPI_GITHUB_REDIRECT_URL=
+```
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `SAPI_GITHUB_CLIENT_ID` | 空 | GitHub OAuth App Client ID。 |
+| `SAPI_GITHUB_CLIENT_SECRET` | 空 | GitHub OAuth App Client Secret。 |
+| `SAPI_GITHUB_REDIRECT_URL` | `SAPI_PUBLIC_BASE_URL/api/auth/github/callback` | GitHub OAuth 回调地址。 |
+
+`SAPI_GITHUB_CLIENT_ID` 和 `SAPI_GITHUB_CLIENT_SECRET` 同时存在时，登录页显示 GitHub 登录入口。
 
 ## SMTP
 ```bash

@@ -68,7 +68,8 @@ export function requestStatusColor(request) {
 
 export function getInitialRoute() {
   const route = window.location.hash.replace("#", "");
-  return ["home", "admin", "login", "register", "portal"].includes(route) ? route : "home";
+  const name = route.split("?")[0];
+  return ["home", "admin", "login", "register", "portal", "github-auth"].includes(name) ? name : "home";
 }
 
 export function getUserApiKeys(user) {

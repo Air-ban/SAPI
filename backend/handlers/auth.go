@@ -18,6 +18,8 @@ import (
 func MountAuthRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/login", handleAdminLogin)
 	mux.HandleFunc("POST /api/auth/login", handleAuthLogin)
+	mux.HandleFunc("GET /api/auth/github/start", handleGitHubStart)
+	mux.HandleFunc("GET /api/auth/github/callback", handleGitHubCallback)
 	mux.HandleFunc("POST /api/auth/send-verification-code", handleSendVerificationCode)
 	mux.HandleFunc("POST /api/auth/register", handleRegister)
 	mux.HandleFunc("POST /api/auth/forgot-password/send-code", handleForgotPasswordSendCode)
@@ -267,16 +269,18 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 
 		createdAt := store.Now()
 		user := models.User{
-			ID:           auth.RandomID("usr"),
-			Username:     username,
-			Email:        email,
-			Name:         username,
-			PasswordHash: auth.HashPassword(password),
-			APIKey:       "",
-			APIKeys:      []models.APIKeyRecord{},
-			Enabled:      true,
-			CreatedAt:    createdAt,
-			UpdatedAt:    createdAt,
+			ID:                       auth.RandomID("usr"),
+			Username:                 username,
+			Email:                    email,
+			Name:                     username,
+			PasswordHash:             auth.HashPassword(password),
+			APIKey:                   "",
+			APIKeys:                  []models.APIKeyRecord{},
+			Enabled:                  true,
+			ReceiveAnnouncementEmail: true,
+			Source:                   userSourceForEmail(email),
+			CreatedAt:                createdAt,
+			UpdatedAt:                createdAt,
 		}
 		db.Users = append(db.Users, user)
 		return &user
@@ -523,9 +527,22 @@ func sanitizeUser(user *models.User) map[string]interface{} {
 		"hasApiKey":                len(apiKeys) > 0 || primaryKey != "",
 		"enabled":                  user.Enabled,
 		"receiveAnnouncementEmail": user.ReceiveAnnouncementEmail,
+		"source":                   user.Source,
+		"githubId":                 user.GitHubID,
+		"githubLogin":              user.GitHubLogin,
+		"githubAvatarUrl":          user.GitHubAvatarURL,
+		"githubLinkedAt":           user.GitHubLinkedAt,
+		"defaultRpmLimit":          defaultRPMLimitForUser(user, nil),
 		"createdAt":                user.CreatedAt,
 		"updatedAt":                user.UpdatedAt,
 	}
+}
+
+func userSourceForEmail(email string) string {
+	if strings.HasSuffix(strings.ToLower(strings.TrimSpace(email)), ".edu.cn") {
+		return "edu"
+	}
+	return "email"
 }
 
 func getAPIKeys(user *models.User) []models.APIKeyRecord {

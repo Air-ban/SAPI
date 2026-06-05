@@ -93,6 +93,7 @@ backend/logs/v1chat-YYYY-MM-DD.log
 
 - JSON 模式: 写入状态文件中的请求日志字段。
 - PostgreSQL 模式: 写入 `sapi_request_logs`。
+- 请求 JSON 内容随请求日志保存，自动保留 7 天；响应正文不持久化保存。
 
 查看最近错误:
 
@@ -150,10 +151,10 @@ psql "$SAPI_POSTGRES_URL" -c "\dt sapi_*"
 psql "$SAPI_POSTGRES_URL" -c "select count(*) from sapi_request_logs;"
 ```
 
-按时间清理旧日志:
+按时间清理 7 天前旧日志:
 
 ```bash
-psql "$SAPI_POSTGRES_URL" -c "delete from sapi_request_logs where timestamp < now() - interval '90 days';"
+psql "$SAPI_POSTGRES_URL" -c "delete from sapi_request_logs where timestamp < now() - interval '7 days';"
 ```
 
 清理后建议:
@@ -180,6 +181,7 @@ SAPI_TRUSTED_PROXY_CIDRS=10.0.0.0/8
 
 - 多实例部署必须配置 Redis，保证登录、防爆破、API Key 失败、RPM 限流跨实例生效。
 - 高请求日志量必须配置 PostgreSQL，避免 JSON 文件成为写入瓶颈。
+- PostgreSQL 请求日志自动清理 7 天前数据，清理动作最多每分钟触发一次，避免高并发请求逐条执行清理。
 - 只在可信代理 CIDR 内启用代理头读取。
 - 根据业务上限调小或调大 `SAPI_PROXY_BODY_LIMIT_BYTES`。
 - 为 Provider 设置合理的模型白名单和 Key 级 RPM。

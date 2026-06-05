@@ -601,25 +601,103 @@ func handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cfg := config.Load()
+	username, usernameSet := "", false
+	if raw, ok := body["username"].(string); ok {
+		usernameSet = true
+		username = normalizeUsername(security.SafeSingleLine(raw, 64))
+		if !validUsername(username) {
+			utils.SendError(w, 400, "Username must be 3-64 characters and contain only letters, numbers, dot, underscore or hyphen.", "invalid_username")
+			return
+		}
+		if auth.SafeEqual(username, normalizeUsername(cfg.AdminUser)) {
+			utils.SendError(w, 409, "Username is reserved.", "username_reserved")
+			return
+		}
+	}
+
+	email, emailSet := "", false
+	if raw, ok := body["email"].(string); ok {
+		emailSet = true
+		email = strings.ToLower(security.SafeSingleLine(raw, 254))
+		if email != "" && !strings.Contains(email, "@") {
+			utils.SendError(w, 400, "Valid email address is required.", "invalid_email")
+			return
+		}
+	}
+
 	result := store.MutateDB(func(db *models.Database) interface{} {
+		targetIdx := -1
 		for i := range db.Users {
 			if db.Users[i].ID == id {
-				u := &db.Users[i]
-				if name, ok := body["name"].(string); ok {
-					u.Name = security.SafeSingleLine(name, 120)
-				}
-				if enabled, ok := body["enabled"].(bool); ok {
-					u.Enabled = enabled
-				}
-				u.UpdatedAt = store.Now()
-				return u
+				targetIdx = i
+				break
 			}
 		}
-		return nil
+		if targetIdx < 0 {
+			return nil
+		}
+
+		if usernameSet {
+			for i := range db.Users {
+				if i == targetIdx {
+					continue
+				}
+				if normalizeUsername(db.Users[i].Username) == username {
+					return "username_exists"
+				}
+				if db.Users[i].Username == "" && normalizeUsername(db.Users[i].Name) == username {
+					return "username_exists"
+				}
+			}
+		}
+		if emailSet && email != "" {
+			for i := range db.Users {
+				if i == targetIdx {
+					continue
+				}
+				if strings.EqualFold(db.Users[i].Email, email) {
+					return "email_exists"
+				}
+			}
+		}
+
+		u := &db.Users[targetIdx]
+		if name, ok := body["name"].(string); ok {
+			u.Name = security.SafeSingleLine(name, 120)
+		}
+		if usernameSet {
+			u.Username = username
+		}
+		if emailSet {
+			u.Email = email
+			if u.Source == "" {
+				u.Source = userSourceForEmail(email)
+			}
+		}
+		if enabled, ok := body["enabled"].(bool); ok {
+			u.Enabled = enabled
+		}
+		if receiveEmail, ok := body["receiveAnnouncementEmail"].(bool); ok {
+			u.ReceiveAnnouncementEmail = receiveEmail
+		}
+		u.UpdatedAt = store.Now()
+		return u
 	})
 
 	if result == nil {
 		utils.SendError(w, 404, "User not found.", "not_found")
+		return
+	}
+	if errCode, ok := result.(string); ok {
+		switch errCode {
+		case "username_exists":
+			utils.SendError(w, 409, "Username is already registered.", errCode)
+		case "email_exists":
+			utils.SendError(w, 409, "Email is already registered.", errCode)
+		default:
+			utils.SendError(w, 400, "User could not be updated.", errCode)
+		}
 		return
 	}
 

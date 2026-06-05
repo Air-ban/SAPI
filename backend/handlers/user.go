@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"sapi/auth"
 	"sapi/middleware"
@@ -64,7 +65,7 @@ func handleUserCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 		for i := range db.Users {
 			if db.Users[i].ID == user.ID {
 				u := &db.Users[i]
-				createUserAPIKeyRecord(u, name, allowedModels, rpmLimit)
+				createUserAPIKeyRecord(u, db, name, allowedModels, rpmLimit)
 				return u
 			}
 		}
@@ -113,7 +114,7 @@ func handleUserRotateAPIKey(w http.ResponseWriter, r *http.Request) {
 				}
 
 				if target == nil {
-					createUserAPIKeyRecord(u, toString(body["name"]), nil, 0)
+					createUserAPIKeyRecord(u, db, toString(body["name"]), nil, 0)
 					return u
 				}
 
@@ -339,11 +340,14 @@ func handleUserSuggestions(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"suggestions": items})
 }
 
-func createUserAPIKeyRecord(user *models.User, name string, allowedModels []string, rpmLimit int) *models.APIKeyRecord {
+func createUserAPIKeyRecord(user *models.User, db *models.Database, name string, allowedModels []string, rpmLimit int) *models.APIKeyRecord {
 	now := store.Now()
 	keyName := security.SafeSingleLine(name, 120)
 	if keyName == "" {
 		keyName = "API Key " + toString(len(user.APIKeys)+1)
+	}
+	if rpmLimit <= 0 {
+		rpmLimit = defaultRPMLimitForUser(user, db)
 	}
 
 	record := models.APIKeyRecord{
@@ -363,6 +367,19 @@ func createUserAPIKeyRecord(user *models.User, name string, allowedModels []stri
 	}
 	user.UpdatedAt = now
 	return &record
+}
+
+func defaultRPMLimitForUser(user *models.User, db *models.Database) int {
+	if user != nil && (user.Source == "github" || user.GitHubID != "") {
+		return 100
+	}
+	if user != nil && (user.Source == "edu" || strings.HasSuffix(strings.ToLower(strings.TrimSpace(user.Email)), ".edu.cn")) {
+		return 30
+	}
+	if db != nil && db.DefaultRPMLimit > 0 {
+		return db.DefaultRPMLimit
+	}
+	return 30
 }
 
 func toString(v interface{}) string {

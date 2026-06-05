@@ -109,31 +109,33 @@ func RecordRequestLog(params RequestLogParams) {
 		ReasoningTokens:     normalized.ReasoningTokens,
 		ErrorCode:           params.ErrorCode,
 		ErrorMessage:        params.ErrorMessage,
+		RequestContent:      params.RequestContent,
 		Timestamp:           store.Now(),
 	})
 }
 
 type RequestLogParams struct {
-	UserID        string
-	UserName      string
-	Username      string
-	APIKeyID      string
-	APIKeyName    string
-	APIKeyPreview string
-	ProviderID    string
-	ProviderName  string
-	Model         string
-	UpstreamModel string
-	Endpoint      string
-	Method        string
-	Status        int
-	OK            bool
-	Stream        bool
-	DurationMs    int
-	Usage         interface{}
-	ErrorCode     string
-	ErrorMessage  string
-	FinishReason  string
+	UserID         string
+	UserName       string
+	Username       string
+	APIKeyID       string
+	APIKeyName     string
+	APIKeyPreview  string
+	ProviderID     string
+	ProviderName   string
+	Model          string
+	UpstreamModel  string
+	Endpoint       string
+	Method         string
+	Status         int
+	OK             bool
+	Stream         bool
+	DurationMs     int
+	Usage          interface{}
+	ErrorCode      string
+	ErrorMessage   string
+	FinishReason   string
+	RequestContent map[string]interface{}
 }
 
 type simpleUsage struct {

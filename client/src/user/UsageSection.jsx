@@ -1,7 +1,9 @@
 ﻿import React from "react";
 import {
   Box,
+  Button,
   Chip,
+  Collapse,
   Paper,
   Stack,
   Table,
@@ -216,70 +218,133 @@ export function UsageSection({ usage }) {
                       <TableCell align="right">缓存写入</TableCell>
                       <TableCell align="right">总 Tokens</TableCell>
                       <TableCell align="right">耗时</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {recentRequests.map((request) => (
-                      <TableRow key={request.id} hover title={request.errorMessage || ""}>
-                        <TableCell sx={{ whiteSpace: "nowrap" }}>{formatDate(request.timestamp)}</TableCell>
-                        {showUserColumn ? (
-                          <TableCell>
-                            {formatUserName(request)}
-                          </TableCell>
-                        ) : null}
-                        {showKeyColumn ? (
-                          <TableCell>
-                            <Typography variant="body2" sx={{ fontWeight: 760 }} noWrap title={request.apiKeyName}>
-                              {request.apiKeyName || "-"}
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary" noWrap title={request.apiKeyPreview}>
-                              {request.apiKeyPreview || ""}
-                            </Typography>
-                          </TableCell>
-                        ) : null}
-                        <TableCell>
-                          <Chip
-                            size="small"
-                            label={request.status || (request.ok ? "OK" : "ERR")}
-                            color={requestStatusColor(request)}
-                            variant={request.ok ? "outlined" : "filled"}
-                            sx={{ fontWeight: 800, minWidth: 62 }}
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Typography variant="body2" sx={{ fontFamily: 'Consolas, monospace' }} noWrap title={request.upstreamModel ? `${request.model} → ${request.upstreamModel}` : request.model}>
-                            {request.model || "unknown"}
-                            {request.upstreamModel && request.upstreamModel !== request.model ? (
-                              <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 0.5 }}>
-                                → {request.upstreamModel}
-                              </Typography>
-                            ) : null}
-                          </Typography>
-                        </TableCell>
-                        <TableCell>
-                          <Stack direction="row" spacing={0.75} alignItems="center" sx={{ minWidth: 0 }}>
-                            {request.method ? <Chip size="small" label={request.method} variant="outlined" /> : null}
-                            {request.stream ? <Chip size="small" label="stream" color="secondary" variant="outlined" /> : null}
-                            <Typography variant="body2" noWrap title={request.endpoint}>
-                              {request.endpoint || "-"}
-                            </Typography>
-                          </Stack>
-                        </TableCell>
-                        <TableCell align="right">{formatNumber(request.promptTokens)}</TableCell>
-                        <TableCell align="right">{formatNumber(request.completionTokens)}</TableCell>
-                        <TableCell align="right">{cacheHitText(request)}</TableCell>
-                        <TableCell align="right">{formatNumber(request.cacheCreationTokens)}</TableCell>
-                        <TableCell align="right">{formatNumber(request.totalTokens)}</TableCell>
-                        <TableCell align="right">{formatDuration(request.durationMs)}</TableCell>
+                      <TableCell>请求 JSON</TableCell>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
+                    </TableHead>
+                    <TableBody>
+                      {recentRequests.map((request) => (
+                        <RecentRequestRow
+                          key={request.id}
+                          request={request}
+                          showUserColumn={showUserColumn}
+                          showKeyColumn={showKeyColumn}
+                        />
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
             </Paper>
           ) : null}
         </Stack>
       )}
     </Section>
   );
+}
+
+function RecentRequestRow({ request, showUserColumn, showKeyColumn }) {
+  const [open, setOpen] = React.useState(false);
+  const requestJson = stringifyRequestContent(request.requestContent);
+  const hasRequestJson = requestJson !== "";
+
+  return (
+    <>
+      <TableRow hover title={request.errorMessage || ""}>
+        <TableCell sx={{ whiteSpace: "nowrap" }}>{formatDate(request.timestamp)}</TableCell>
+        {showUserColumn ? (
+          <TableCell>
+            {formatUserName(request)}
+          </TableCell>
+        ) : null}
+        {showKeyColumn ? (
+          <TableCell>
+            <Typography variant="body2" sx={{ fontWeight: 760 }} noWrap title={request.apiKeyName}>
+              {request.apiKeyName || "-"}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" noWrap title={request.apiKeyPreview}>
+              {request.apiKeyPreview || ""}
+            </Typography>
+          </TableCell>
+        ) : null}
+        <TableCell>
+          <Chip
+            size="small"
+            label={request.status || (request.ok ? "OK" : "ERR")}
+            color={requestStatusColor(request)}
+            variant={request.ok ? "outlined" : "filled"}
+            sx={{ fontWeight: 800, minWidth: 62 }}
+          />
+        </TableCell>
+        <TableCell>
+          <Typography variant="body2" sx={{ fontFamily: 'Consolas, monospace' }} noWrap title={request.upstreamModel ? `${request.model} -> ${request.upstreamModel}` : request.model}>
+            {request.model || "unknown"}
+            {request.upstreamModel && request.upstreamModel !== request.model ? (
+              <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 0.5 }}>
+                {" -> "}{request.upstreamModel}
+              </Typography>
+            ) : null}
+          </Typography>
+        </TableCell>
+        <TableCell>
+          <Stack direction="row" spacing={0.75} alignItems="center" sx={{ minWidth: 0 }}>
+            {request.method ? <Chip size="small" label={request.method} variant="outlined" /> : null}
+            {request.stream ? <Chip size="small" label="stream" color="secondary" variant="outlined" /> : null}
+            <Typography variant="body2" noWrap title={request.endpoint}>
+              {request.endpoint || "-"}
+            </Typography>
+          </Stack>
+        </TableCell>
+        <TableCell align="right">{formatNumber(request.promptTokens)}</TableCell>
+        <TableCell align="right">{formatNumber(request.completionTokens)}</TableCell>
+        <TableCell align="right">{cacheHitText(request)}</TableCell>
+        <TableCell align="right">{formatNumber(request.cacheCreationTokens)}</TableCell>
+        <TableCell align="right">{formatNumber(request.totalTokens)}</TableCell>
+        <TableCell align="right">{formatDuration(request.durationMs)}</TableCell>
+        <TableCell>
+          {hasRequestJson ? (
+            <Button size="small" variant="outlined" onClick={() => setOpen((current) => !current)}>
+              {open ? "收起" : "查看"}
+            </Button>
+          ) : (
+            <Typography variant="body2" color="text.secondary">-</Typography>
+          )}
+        </TableCell>
+      </TableRow>
+      {hasRequestJson ? (
+        <TableRow>
+          <TableCell colSpan={11 + (showUserColumn ? 1 : 0) + (showKeyColumn ? 1 : 0)} sx={{ p: 0, borderBottom: open ? undefined : 0 }}>
+            <Collapse in={open} timeout="auto" unmountOnExit>
+              <Box
+                component="pre"
+                sx={{
+                  m: 1.5,
+                  p: 1.5,
+                  maxHeight: 260,
+                  overflow: "auto",
+                  borderRadius: 1,
+                  bgcolor: "app.codeBg",
+                  color: "app.codeText",
+                  fontFamily: 'Consolas, "SFMono-Regular", Menlo, monospace',
+                  fontSize: 12,
+                  whiteSpace: "pre-wrap",
+                  overflowWrap: "anywhere"
+                }}
+              >
+                {requestJson}
+              </Box>
+            </Collapse>
+          </TableCell>
+        </TableRow>
+      ) : null}
+    </>
+  );
+}
+
+function stringifyRequestContent(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+  if (!Object.keys(value).length) return "";
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return "";
+  }
 }

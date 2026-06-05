@@ -18,8 +18,9 @@ import (
 )
 
 var (
-	mu       sync.RWMutex
-	cachedDB *models.Database
+	mu                      sync.RWMutex
+	cachedDB                *models.Database
+	lastRequestLogPruneTime time.Time
 )
 
 func Init(ctx context.Context, cfg *config.Config) error {
@@ -292,11 +293,13 @@ func AppendRequestLog(item models.RequestLog) {
 		if err := insertPostgresRequestLog(context.Background(), item); err != nil {
 			log.Printf("[STORE] insert postgres request log failed: %v", err)
 		}
+		prunePostgresRequestLogsIfDue(context.Background())
 		cachedDB.RequestLogs = []models.RequestLog{}
 		return
 	}
 
 	cachedDB.RequestLogs = append(cachedDB.RequestLogs, item)
+	cachedDB.RequestLogs = pruneRequestLogs(cachedDB.RequestLogs, requestLogCutoff())
 	if len(cachedDB.RequestLogs) > 50000 {
 		cachedDB.RequestLogs = cachedDB.RequestLogs[len(cachedDB.RequestLogs)-50000:]
 	}
@@ -329,6 +332,35 @@ func RequestLogsSince(db *models.Database, since time.Time, userID string, limit
 	}
 	if limit > 0 && len(result) > limit {
 		result = result[len(result)-limit:]
+	}
+	return result
+}
+
+func requestLogCutoff() time.Time {
+	return time.Now().UTC().AddDate(0, 0, -7)
+}
+
+func prunePostgresRequestLogsIfDue(ctx context.Context) {
+	now := time.Now().UTC()
+	if now.Sub(lastRequestLogPruneTime) < time.Minute {
+		return
+	}
+	lastRequestLogPruneTime = now
+	if err := prunePostgresRequestLogs(ctx, requestLogCutoff()); err != nil {
+		log.Printf("[STORE] prune postgres request logs failed: %v", err)
+	}
+}
+
+func pruneRequestLogs(items []models.RequestLog, cutoff time.Time) []models.RequestLog {
+	if len(items) == 0 {
+		return items
+	}
+	cutoffIso := cutoff.UTC().Format(time.RFC3339)
+	result := make([]models.RequestLog, 0, len(items))
+	for _, item := range items {
+		if item.Timestamp == "" || item.Timestamp >= cutoffIso {
+			result = append(result, item)
+		}
 	}
 	return result
 }

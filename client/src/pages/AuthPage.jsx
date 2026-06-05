@@ -18,6 +18,7 @@ import {
 } from "@mui/material";
 import LoginIcon from "@mui/icons-material/Login";
 import PersonAddIcon from "@mui/icons-material/PersonAdd";
+import GitHubIcon from "@mui/icons-material/GitHub";
 import { ForgotPasswordDialog } from "../components/ForgotPasswordDialog";
 import { DividerLine } from "../components/DividerLine";
 import { ThemeModeToggle } from "../components/ThemeModeToggle";
@@ -32,9 +33,11 @@ export function AuthPage({
   onNavigate,
   onToast,
   themeMode,
-  onToggleThemeMode
+  onToggleThemeMode,
+  publicConfig
 }) {
   const isRegister = mode === "register";
+  const githubEnabled = Boolean(publicConfig?.github?.enabled);
   const [form, setForm] = useState({
     username: "",
     email: "",
@@ -310,6 +313,18 @@ export function AuthPage({
                 >
                   {isRegister ? "注册" : "登录"}
                 </Button>
+                {githubEnabled ? (
+                  <Button
+                    variant="outlined"
+                    size="large"
+                    startIcon={<GitHubIcon />}
+                    onClick={() => {
+                      window.location.href = "/api/auth/github/start";
+                    }}
+                  >
+                    使用 GitHub 登录
+                  </Button>
+                ) : null}
                 {!isRegister ? (
                   <Box sx={{ textAlign: "center" }}>
                     <Button size="small" onClick={() => setForgotOpen(true)}>
@@ -361,7 +376,7 @@ export function AuthPage({
               1. 信息收集：我们仅收集提供服务所必需的最少信息，包括用户名、邮箱地址、密码哈希及 API 用量统计。
             </Typography>
             <Typography variant="body2" paragraph>
-              2. 隐私保护：我们不会收集、存储或分析用户的 API 请求内容（Prompt 和 Response）。所有请求仅作为代理转发，不做持久化存储。
+              2. 隐私保护：模型转发请求会保存用户提交的请求 JSON 内容 7 天，用于用量核对、故障排查和安全审计；响应正文不会持久化保存。
             </Typography>
             <Typography variant="body2" paragraph>
               3. 数据安全：用户数据采用加密存储，仅用于身份验证、用量统计和服务运营，不会向任何第三方披露或出售。

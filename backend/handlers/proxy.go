@@ -99,7 +99,7 @@ func validateProxyRequest(w http.ResponseWriter, r *http.Request) (*apiKeyInfo, 
 		}
 	}
 
-	allowed, limit, current := middleware.CheckRPMLimit(info.APIKeyRecord, info.DB)
+	allowed, limit, current := middleware.CheckRPMLimit(info.User, info.APIKeyRecord, info.DB)
 	if !allowed {
 		utils.SendError(w, 429, fmt.Sprintf("Rate limit exceeded: %d/%d RPM.", current, limit), "rate_limit_exceeded")
 		return nil, false
@@ -134,6 +134,21 @@ func extractProxyModel(w http.ResponseWriter, r *http.Request) (string, bool) {
 	return model, true
 }
 
+func cloneRequestContent(body map[string]interface{}) map[string]interface{} {
+	if body == nil {
+		return nil
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return nil
+	}
+	var cloned map[string]interface{}
+	if err := json.Unmarshal(raw, &cloned); err != nil {
+		return nil
+	}
+	return cloned
+}
+
 func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 	info, ok := validateProxyRequest(w, r)
 	if !ok {
@@ -146,6 +161,7 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 		utils.SendError(w, 400, "Request body must be valid JSON.", "invalid_json")
 		return
 	}
+	requestContent := cloneRequestContent(body)
 
 	responseRequest := proxy.ConvertToChatCompletionsPayload(body)
 	payload, _ := responseRequest["model"]
@@ -195,22 +211,23 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 
 		if !isOK(resp.StatusCode) && proxy.IsUpstreamProviderError(resp.StatusCode) {
 			logging.RecordRequestLog(logging.RequestLogParams{
-				UserID:        info.User.ID,
-				UserName:      info.User.Name,
-				Username:      info.User.Username,
-				APIKeyID:      getKeyID(info.APIKeyRecord),
-				APIKeyName:    getKeyName(info.APIKeyRecord),
-				APIKeyPreview: maskKeyPreview(info.APIKeyRecord.Key),
-				ProviderID:    candidate.Provider.ID,
-				ProviderName:  candidate.Provider.Name,
-				Model:         model,
-				UpstreamModel: candidate.UpstreamModel,
-				Endpoint:      "/responses",
-				Method:        "POST",
-				Status:        resp.StatusCode,
-				OK:            false,
-				Stream:        stream,
-				DurationMs:    int(time.Since(startedAt).Milliseconds()),
+				UserID:         info.User.ID,
+				UserName:       info.User.Name,
+				Username:       info.User.Username,
+				APIKeyID:       getKeyID(info.APIKeyRecord),
+				APIKeyName:     getKeyName(info.APIKeyRecord),
+				APIKeyPreview:  maskKeyPreview(info.APIKeyRecord.Key),
+				ProviderID:     candidate.Provider.ID,
+				ProviderName:   candidate.Provider.Name,
+				Model:          model,
+				UpstreamModel:  candidate.UpstreamModel,
+				Endpoint:       "/responses",
+				Method:         "POST",
+				Status:         resp.StatusCode,
+				OK:             false,
+				Stream:         stream,
+				DurationMs:     int(time.Since(startedAt).Milliseconds()),
+				RequestContent: requestContent,
 			})
 			proxy.RecordProviderFailure(candidate.Provider.ID)
 			resp.Body.Close()
@@ -274,23 +291,24 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 		})
 
 		logging.RecordRequestLog(logging.RequestLogParams{
-			UserID:        info.User.ID,
-			UserName:      info.User.Name,
-			Username:      info.User.Username,
-			APIKeyID:      getKeyID(info.APIKeyRecord),
-			APIKeyName:    getKeyName(info.APIKeyRecord),
-			APIKeyPreview: maskKeyPreview(info.APIKeyRecord.Key),
-			ProviderID:    provider.Provider.ID,
-			ProviderName:  provider.Provider.Name,
-			Model:         model,
-			UpstreamModel: provider.UpstreamModel,
-			Endpoint:      "/responses",
-			Method:        "POST",
-			Status:        200,
-			OK:            true,
-			Stream:        false,
-			DurationMs:    int(time.Since(startedAt).Milliseconds()),
-			Usage:         usage,
+			UserID:         info.User.ID,
+			UserName:       info.User.Name,
+			Username:       info.User.Username,
+			APIKeyID:       getKeyID(info.APIKeyRecord),
+			APIKeyName:     getKeyName(info.APIKeyRecord),
+			APIKeyPreview:  maskKeyPreview(info.APIKeyRecord.Key),
+			ProviderID:     provider.Provider.ID,
+			ProviderName:   provider.Provider.Name,
+			Model:          model,
+			UpstreamModel:  provider.UpstreamModel,
+			Endpoint:       "/responses",
+			Method:         "POST",
+			Status:         200,
+			OK:             true,
+			Stream:         false,
+			DurationMs:     int(time.Since(startedAt).Milliseconds()),
+			Usage:          usage,
+			RequestContent: requestContent,
 		})
 		proxy.RecordProviderSuccess(provider.Provider.ID)
 
@@ -497,23 +515,24 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 	sseWriter.Write("response.completed", map[string]interface{}{"response": finalResponse})
 
 	logging.RecordRequestLog(logging.RequestLogParams{
-		UserID:        info.User.ID,
-		UserName:      info.User.Name,
-		Username:      info.User.Username,
-		APIKeyID:      getKeyID(info.APIKeyRecord),
-		APIKeyName:    getKeyName(info.APIKeyRecord),
-		APIKeyPreview: maskKeyPreview(info.APIKeyRecord.Key),
-		ProviderID:    provider.Provider.ID,
-		ProviderName:  provider.Provider.Name,
-		Model:         model,
-		UpstreamModel: provider.UpstreamModel,
-		Endpoint:      "/responses",
-		Method:        "POST",
-		Status:        200,
-		OK:            true,
-		Stream:        true,
-		DurationMs:    int(time.Since(startedAt).Milliseconds()),
-		Usage:         usagePayload,
+		UserID:         info.User.ID,
+		UserName:       info.User.Name,
+		Username:       info.User.Username,
+		APIKeyID:       getKeyID(info.APIKeyRecord),
+		APIKeyName:     getKeyName(info.APIKeyRecord),
+		APIKeyPreview:  maskKeyPreview(info.APIKeyRecord.Key),
+		ProviderID:     provider.Provider.ID,
+		ProviderName:   provider.Provider.Name,
+		Model:          model,
+		UpstreamModel:  provider.UpstreamModel,
+		Endpoint:       "/responses",
+		Method:         "POST",
+		Status:         200,
+		OK:             true,
+		Stream:         true,
+		DurationMs:     int(time.Since(startedAt).Milliseconds()),
+		Usage:          usagePayload,
+		RequestContent: requestContent,
 	})
 	proxy.RecordProviderSuccess(provider.Provider.ID)
 }
@@ -530,10 +549,28 @@ func handleAnthropicCountTokensHandler(w http.ResponseWriter, r *http.Request) {
 		utils.SendError(w, 400, "Request body must be valid JSON.", "invalid_json")
 		return
 	}
+	requestContent := cloneRequestContent(body)
 
 	inputTokens := proxy.EstimateAnthropicInputTokens(body)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"input_tokens": inputTokens,
+	})
+	model, _ := body["model"].(string)
+	logging.RecordRequestLog(logging.RequestLogParams{
+		UserID:         info.User.ID,
+		UserName:       info.User.Name,
+		Username:       info.User.Username,
+		APIKeyID:       getKeyID(info.APIKeyRecord),
+		APIKeyName:     getKeyName(info.APIKeyRecord),
+		APIKeyPreview:  maskKeyPreview(info.APIKeyRecord.Key),
+		Model:          model,
+		Endpoint:       r.URL.Path,
+		Method:         r.Method,
+		Status:         200,
+		OK:             true,
+		Stream:         false,
+		Usage:          map[string]interface{}{"input_tokens": float64(inputTokens)},
+		RequestContent: requestContent,
 	})
 	_ = info
 }
@@ -550,6 +587,7 @@ func handleAnthropicMessagesProxyHandler(w http.ResponseWriter, r *http.Request)
 		utils.SendError(w, 400, "Request body must be valid JSON.", "invalid_json")
 		return
 	}
+	requestContent := cloneRequestContent(body)
 
 	model, _ := body["model"].(string)
 	if len(model) > 200 {
@@ -600,22 +638,23 @@ func handleAnthropicMessagesProxyHandler(w http.ResponseWriter, r *http.Request)
 
 		if !isOK(resp.StatusCode) && proxy.IsUpstreamProviderError(resp.StatusCode) {
 			logging.RecordRequestLog(logging.RequestLogParams{
-				UserID:        info.User.ID,
-				UserName:      info.User.Name,
-				Username:      info.User.Username,
-				APIKeyID:      getKeyID(info.APIKeyRecord),
-				APIKeyName:    getKeyName(info.APIKeyRecord),
-				APIKeyPreview: maskKeyPreview(info.APIKeyRecord.Key),
-				ProviderID:    candidate.Provider.ID,
-				ProviderName:  candidate.Provider.Name,
-				Model:         model,
-				UpstreamModel: toStringSafe(openAIBody["model"]),
-				Endpoint:      "/v1/messages",
-				Method:        "POST",
-				Status:        resp.StatusCode,
-				OK:            false,
-				Stream:        wantStream,
-				DurationMs:    int(time.Since(startedAt).Milliseconds()),
+				UserID:         info.User.ID,
+				UserName:       info.User.Name,
+				Username:       info.User.Username,
+				APIKeyID:       getKeyID(info.APIKeyRecord),
+				APIKeyName:     getKeyName(info.APIKeyRecord),
+				APIKeyPreview:  maskKeyPreview(info.APIKeyRecord.Key),
+				ProviderID:     candidate.Provider.ID,
+				ProviderName:   candidate.Provider.Name,
+				Model:          model,
+				UpstreamModel:  toStringSafe(openAIBody["model"]),
+				Endpoint:       "/v1/messages",
+				Method:         "POST",
+				Status:         resp.StatusCode,
+				OK:             false,
+				Stream:         wantStream,
+				DurationMs:     int(time.Since(startedAt).Milliseconds()),
+				RequestContent: requestContent,
 			})
 			proxy.RecordProviderFailure(candidate.Provider.ID)
 			resp.Body.Close()
@@ -668,23 +707,24 @@ func handleAnthropicMessagesProxyHandler(w http.ResponseWriter, r *http.Request)
 		json.NewEncoder(w).Encode(anthropicResp)
 
 		logging.RecordRequestLog(logging.RequestLogParams{
-			UserID:        info.User.ID,
-			UserName:      info.User.Name,
-			Username:      info.User.Username,
-			APIKeyID:      getKeyID(info.APIKeyRecord),
-			APIKeyName:    getKeyName(info.APIKeyRecord),
-			APIKeyPreview: maskKeyPreview(info.APIKeyRecord.Key),
-			ProviderID:    provider.Provider.ID,
-			ProviderName:  provider.Provider.Name,
-			Model:         model,
-			UpstreamModel: toStringSafe(openAIBody["model"]),
-			Endpoint:      "/v1/messages",
-			Method:        "POST",
-			Status:        200,
-			OK:            true,
-			Stream:        false,
-			DurationMs:    int(time.Since(startedAt).Milliseconds()),
-			Usage:         usage,
+			UserID:         info.User.ID,
+			UserName:       info.User.Name,
+			Username:       info.User.Username,
+			APIKeyID:       getKeyID(info.APIKeyRecord),
+			APIKeyName:     getKeyName(info.APIKeyRecord),
+			APIKeyPreview:  maskKeyPreview(info.APIKeyRecord.Key),
+			ProviderID:     provider.Provider.ID,
+			ProviderName:   provider.Provider.Name,
+			Model:          model,
+			UpstreamModel:  toStringSafe(openAIBody["model"]),
+			Endpoint:       "/v1/messages",
+			Method:         "POST",
+			Status:         200,
+			OK:             true,
+			Stream:         false,
+			DurationMs:     int(time.Since(startedAt).Milliseconds()),
+			Usage:          usage,
+			RequestContent: requestContent,
 		})
 		proxy.RecordProviderSuccess(provider.Provider.ID)
 		return
@@ -940,24 +980,25 @@ func handleAnthropicMessagesProxyHandler(w http.ResponseWriter, r *http.Request)
 	writeEvent("message_stop", map[string]interface{}{"type": "message_stop"})
 
 	logging.RecordRequestLog(logging.RequestLogParams{
-		UserID:        info.User.ID,
-		UserName:      info.User.Name,
-		Username:      info.User.Username,
-		APIKeyID:      getKeyID(info.APIKeyRecord),
-		APIKeyName:    getKeyName(info.APIKeyRecord),
-		APIKeyPreview: maskKeyPreview(info.APIKeyRecord.Key),
-		ProviderID:    provider.Provider.ID,
-		ProviderName:  provider.Provider.Name,
-		Model:         model,
-		UpstreamModel: toStringSafe(openAIBody["model"]),
-		Endpoint:      "/v1/messages",
-		Method:        "POST",
-		Status:        200,
-		OK:            true,
-		Stream:        true,
-		DurationMs:    int(time.Since(startedAt).Milliseconds()),
-		Usage:         usagePayload,
-		FinishReason:  finishReason,
+		UserID:         info.User.ID,
+		UserName:       info.User.Name,
+		Username:       info.User.Username,
+		APIKeyID:       getKeyID(info.APIKeyRecord),
+		APIKeyName:     getKeyName(info.APIKeyRecord),
+		APIKeyPreview:  maskKeyPreview(info.APIKeyRecord.Key),
+		ProviderID:     provider.Provider.ID,
+		ProviderName:   provider.Provider.Name,
+		Model:          model,
+		UpstreamModel:  toStringSafe(openAIBody["model"]),
+		Endpoint:       "/v1/messages",
+		Method:         "POST",
+		Status:         200,
+		OK:             true,
+		Stream:         true,
+		DurationMs:     int(time.Since(startedAt).Milliseconds()),
+		Usage:          usagePayload,
+		FinishReason:   finishReason,
+		RequestContent: requestContent,
 	})
 	proxy.RecordProviderSuccess(provider.Provider.ID)
 }
@@ -990,6 +1031,7 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	requestContent := cloneRequestContent(body)
 	model, _ := body["model"].(string)
 	if len(model) > 200 {
 		utils.SendError(w, 400, "Model name is too long.", "invalid_model")
@@ -1078,22 +1120,23 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 		if !isOK(resp.StatusCode) && proxy.IsUpstreamProviderError(resp.StatusCode) {
 			log.Printf("[V1CHAT] UPSTREAM_ERROR_5xx status=%d", resp.StatusCode)
 			logging.RecordRequestLog(logging.RequestLogParams{
-				UserID:        info.User.ID,
-				UserName:      info.User.Name,
-				Username:      info.User.Username,
-				APIKeyID:      getKeyID(info.APIKeyRecord),
-				APIKeyName:    getKeyName(info.APIKeyRecord),
-				APIKeyPreview: maskKeyPreview(info.APIKeyRecord.Key),
-				ProviderID:    candidate.Provider.ID,
-				ProviderName:  candidate.Provider.Name,
-				Model:         model,
-				UpstreamModel: candidate.UpstreamModel,
-				Endpoint:      r.URL.Path,
-				Method:        r.Method,
-				Status:        resp.StatusCode,
-				OK:            false,
-				Stream:        false,
-				DurationMs:    int(time.Since(startedAt).Milliseconds()),
+				UserID:         info.User.ID,
+				UserName:       info.User.Name,
+				Username:       info.User.Username,
+				APIKeyID:       getKeyID(info.APIKeyRecord),
+				APIKeyName:     getKeyName(info.APIKeyRecord),
+				APIKeyPreview:  maskKeyPreview(info.APIKeyRecord.Key),
+				ProviderID:     candidate.Provider.ID,
+				ProviderName:   candidate.Provider.Name,
+				Model:          model,
+				UpstreamModel:  candidate.UpstreamModel,
+				Endpoint:       r.URL.Path,
+				Method:         r.Method,
+				Status:         resp.StatusCode,
+				OK:             false,
+				Stream:         false,
+				DurationMs:     int(time.Since(startedAt).Milliseconds()),
+				RequestContent: requestContent,
 			})
 			proxy.RecordProviderFailure(candidate.Provider.ID)
 			resp.Body.Close()
@@ -1138,23 +1181,24 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[V1CHAT] STREAM_END usage=%v", usage)
 
 			logging.RecordRequestLog(logging.RequestLogParams{
-				UserID:        info.User.ID,
-				UserName:      info.User.Name,
-				Username:      info.User.Username,
-				APIKeyID:      getKeyID(info.APIKeyRecord),
-				APIKeyName:    getKeyName(info.APIKeyRecord),
-				APIKeyPreview: maskKeyPreview(info.APIKeyRecord.Key),
-				ProviderID:    candidate.Provider.ID,
-				ProviderName:  candidate.Provider.Name,
-				Model:         model,
-				UpstreamModel: candidate.UpstreamModel,
-				Endpoint:      r.URL.Path,
-				Method:        r.Method,
-				Status:        resp.StatusCode,
-				OK:            true,
-				Stream:        true,
-				DurationMs:    int(time.Since(startedAt).Milliseconds()),
-				Usage:         usage,
+				UserID:         info.User.ID,
+				UserName:       info.User.Name,
+				Username:       info.User.Username,
+				APIKeyID:       getKeyID(info.APIKeyRecord),
+				APIKeyName:     getKeyName(info.APIKeyRecord),
+				APIKeyPreview:  maskKeyPreview(info.APIKeyRecord.Key),
+				ProviderID:     candidate.Provider.ID,
+				ProviderName:   candidate.Provider.Name,
+				Model:          model,
+				UpstreamModel:  candidate.UpstreamModel,
+				Endpoint:       r.URL.Path,
+				Method:         r.Method,
+				Status:         resp.StatusCode,
+				OK:             true,
+				Stream:         true,
+				DurationMs:     int(time.Since(startedAt).Milliseconds()),
+				Usage:          usage,
+				RequestContent: requestContent,
 			})
 			proxy.RecordProviderSuccess(candidate.Provider.ID)
 			resp.Body.Close()
@@ -1188,23 +1232,24 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 		w.Write(bodyBytes)
 
 		logging.RecordRequestLog(logging.RequestLogParams{
-			UserID:        info.User.ID,
-			UserName:      info.User.Name,
-			Username:      info.User.Username,
-			APIKeyID:      getKeyID(info.APIKeyRecord),
-			APIKeyName:    getKeyName(info.APIKeyRecord),
-			APIKeyPreview: maskKeyPreview(info.APIKeyRecord.Key),
-			ProviderID:    candidate.Provider.ID,
-			ProviderName:  candidate.Provider.Name,
-			Model:         model,
-			UpstreamModel: candidate.UpstreamModel,
-			Endpoint:      r.URL.Path,
-			Method:        r.Method,
-			Status:        resp.StatusCode,
-			OK:            true,
-			Stream:        false,
-			DurationMs:    int(time.Since(startedAt).Milliseconds()),
-			Usage:         usage,
+			UserID:         info.User.ID,
+			UserName:       info.User.Name,
+			Username:       info.User.Username,
+			APIKeyID:       getKeyID(info.APIKeyRecord),
+			APIKeyName:     getKeyName(info.APIKeyRecord),
+			APIKeyPreview:  maskKeyPreview(info.APIKeyRecord.Key),
+			ProviderID:     candidate.Provider.ID,
+			ProviderName:   candidate.Provider.Name,
+			Model:          model,
+			UpstreamModel:  candidate.UpstreamModel,
+			Endpoint:       r.URL.Path,
+			Method:         r.Method,
+			Status:         resp.StatusCode,
+			OK:             true,
+			Stream:         false,
+			DurationMs:     int(time.Since(startedAt).Milliseconds()),
+			Usage:          usage,
+			RequestContent: requestContent,
 		})
 		proxy.RecordProviderSuccess(candidate.Provider.ID)
 		log.Printf("[V1CHAT] === DONE (nonstream) === duration=%dms", int(time.Since(startedAt).Milliseconds()))
