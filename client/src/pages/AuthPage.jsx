@@ -88,7 +88,7 @@ export function AuthPage({
   const submit = async (event) => {
     event.preventDefault();
 
-    if (!agreed) {
+    if (isRegister && !agreed) {
       onToast("请先同意用户协议和隐私政策", "warning");
       return;
     }
@@ -287,23 +287,25 @@ export function AuthPage({
                     )}
                   </>
                 ) : null}
-                <FormControlLabel
-                  control={
-                    <Checkbox
-                      checked={agreed}
-                      onChange={(e) => setAgreed(e.target.checked)}
-                      size="small"
-                    />
-                  }
-                  label={
-                    <Typography variant="body2" color="text.secondary">
-                      我已阅读并同意
-                      <Button size="small" sx={{ p: 0, minWidth: 0, verticalAlign: "baseline" }} onClick={() => setTermsOpen(true)}>
-                        《用户协议与隐私政策》
-                      </Button>
-                    </Typography>
-                  }
-                />
+                {isRegister ? (
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={agreed}
+                        onChange={(e) => setAgreed(e.target.checked)}
+                        size="small"
+                      />
+                    }
+                    label={
+                      <Typography variant="body2" color="text.secondary">
+                        我已阅读并同意
+                        <Button size="small" sx={{ p: 0, minWidth: 0, verticalAlign: "baseline" }} onClick={() => setTermsOpen(true)}>
+                          《用户协议与隐私政策》
+                        </Button>
+                      </Typography>
+                    }
+                  />
+                ) : null}
                 <Button
                   type="submit"
                   variant="contained"

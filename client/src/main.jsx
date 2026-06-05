@@ -502,6 +502,7 @@ function App() {
       admin={Boolean(adminToken)}
       onUserLogout={() => {
         userLogout();
+        navigate("login");
         showToast("已退出");
       }}
       onRefresh={() => {
@@ -691,6 +692,7 @@ function App() {
                 onNavigate={navigate}
                 onUserLogout={() => {
                   userLogout();
+                  navigate("login");
                   showToast("已退出");
                 }}
                 onCreateApiKey={() => setCreateKeyOpen(true)
