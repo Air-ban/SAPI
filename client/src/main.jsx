@@ -191,6 +191,20 @@ function App() {
     setUserUsage(data);
   }, []);
 
+  const loadAdminRequestContent = useCallback(async (id) => {
+    const data = await request(`/api/admin/request-logs/${encodeURIComponent(id)}`);
+    return data?.requestLog?.requestContent || null;
+  }, []);
+
+  const loadUserRequestContent = useCallback(async (id) => {
+    const token = localStorage.getItem(USER_TOKEN_KEY);
+    const data = await request(`/api/user/request-logs/${encodeURIComponent(id)}`, {
+      admin: false,
+      token
+    });
+    return data?.requestLog?.requestContent || null;
+  }, []);
+
   const loadUserSession = useCallback(async () => {
     const token = localStorage.getItem(USER_TOKEN_KEY);
     if (!token) {
@@ -754,6 +768,7 @@ function App() {
                 }
                 onToast={showToast}
                 ModelAvailabilityDashboard={ModelAvailabilityDashboard}
+                onLoadRequestContent={loadUserRequestContent}
               />
             ) : (
               <AdminView
@@ -776,6 +791,7 @@ function App() {
                 onToast={showToast}
                 adminToken={adminToken}
                 ModelAvailabilityDashboard={ModelAvailabilityDashboard}
+                onLoadRequestContent={loadAdminRequestContent}
               />
             )}
           </Box>

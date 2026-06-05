@@ -44,7 +44,7 @@ const tableScrollSx = {
   }
 };
 
-export function UsageSection({ usage }) {
+export function UsageSection({ usage, onLoadRequestContent }) {
   if (!usage) return null;
   const hasData = usage.requests > 0;
   const recentRequests = usage.recentRequests || usage.recent || [];
@@ -228,6 +228,7 @@ export function UsageSection({ usage }) {
                           request={request}
                           showUserColumn={showUserColumn}
                           showKeyColumn={showKeyColumn}
+                          onLoadRequestContent={onLoadRequestContent}
                         />
                       ))}
                     </TableBody>
@@ -241,10 +242,33 @@ export function UsageSection({ usage }) {
   );
 }
 
-function RecentRequestRow({ request, showUserColumn, showKeyColumn }) {
+function RecentRequestRow({ request, showUserColumn, showKeyColumn, onLoadRequestContent }) {
   const [open, setOpen] = React.useState(false);
-  const requestJson = stringifyRequestContent(request.requestContent);
+  const [requestContent, setRequestContent] = React.useState(request.requestContent || null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const requestJson = stringifyRequestContent(requestContent);
   const hasRequestJson = requestJson !== "";
+  const canLoadRequestJson = Boolean(request.hasRequestContent && onLoadRequestContent && request.id);
+
+  const handleToggleRequestJson = async () => {
+    if (hasRequestJson) {
+      setOpen((current) => !current);
+      return;
+    }
+    if (!canLoadRequestJson || loading) return;
+    setLoading(true);
+    setError("");
+    try {
+      const loaded = await onLoadRequestContent(request.id);
+      setRequestContent(loaded || {});
+      setOpen(true);
+    } catch (err) {
+      setError(err.message || "请求 JSON 加载失败");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <>
@@ -300,21 +324,23 @@ function RecentRequestRow({ request, showUserColumn, showKeyColumn }) {
         <TableCell align="right">{formatNumber(request.totalTokens)}</TableCell>
         <TableCell align="right">{formatDuration(request.durationMs)}</TableCell>
         <TableCell>
-          {hasRequestJson ? (
-            <Button size="small" variant="outlined" onClick={() => setOpen((current) => !current)}>
+          {hasRequestJson || canLoadRequestJson ? (
+            <Button size="small" variant="outlined" onClick={handleToggleRequestJson} disabled={loading}>
               {open ? "收起" : "查看"}
             </Button>
+          ) : error ? (
+            <Typography variant="body2" color="error" title={error}>加载失败</Typography>
           ) : (
             <Typography variant="body2" color="text.secondary">-</Typography>
           )}
         </TableCell>
       </TableRow>
-      {hasRequestJson ? (
+      {hasRequestJson || error ? (
         <TableRow>
           <TableCell colSpan={11 + (showUserColumn ? 1 : 0) + (showKeyColumn ? 1 : 0)} sx={{ p: 0, borderBottom: open ? undefined : 0 }}>
-            <Collapse in={open} timeout="auto" unmountOnExit>
+            <Collapse in={open || Boolean(error)} timeout="auto" unmountOnExit>
               <Box
-                component="pre"
+                component={error ? "div" : "pre"}
                 sx={{
                   m: 1.5,
                   p: 1.5,
@@ -329,7 +355,7 @@ function RecentRequestRow({ request, showUserColumn, showKeyColumn }) {
                   overflowWrap: "anywhere"
                 }}
               >
-                {requestJson}
+                {error || requestJson}
               </Box>
             </Collapse>
           </TableCell>

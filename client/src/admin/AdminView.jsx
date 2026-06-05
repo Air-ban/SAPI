@@ -44,7 +44,8 @@ export function AdminView({
   afterChange,
   onToast,
   adminToken,
-  ModelAvailabilityDashboard
+  ModelAvailabilityDashboard,
+  onLoadRequestContent
 }) {
   const [providerDialogOpen, setProviderDialogOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState(null);
@@ -110,7 +111,7 @@ export function AdminView({
         <ProviderHealthSection providers={providerHealth} />
       ) : null}
 
-      {currentPage === "usage" && usage ? <UsageSection usage={usage} /> : null}
+      {currentPage === "usage" && usage ? <UsageSection usage={usage} onLoadRequestContent={onLoadRequestContent} /> : null}
 
       {currentPage === "responses" ? (
         <ProxySettingsSection

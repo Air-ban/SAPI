@@ -23,6 +23,7 @@ import (
 func MountAdminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/state", middleware.RequireAdmin(handleAdminState))
 	mux.HandleFunc("GET /api/admin/usage", middleware.RequireAdmin(handleAdminUsage))
+	mux.HandleFunc("GET /api/admin/request-logs/{id}", middleware.RequireAdmin(handleAdminRequestLog))
 	mux.HandleFunc("GET /api/admin/smtp-config", middleware.RequireAdmin(handleAdminGetSMTP))
 	mux.HandleFunc("PUT /api/admin/smtp-config", middleware.RequireAdmin(handleAdminUpdateSMTP))
 	mux.HandleFunc("POST /api/admin/smtp-config/test", middleware.RequireAdmin(handleAdminTestSMTP))
@@ -93,6 +94,15 @@ func handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 		days = min(max(d, 1), 365)
 	}
 	json.NewEncoder(w).Encode(usage.GetUsageStats(db, "", days))
+}
+
+func handleAdminRequestLog(w http.ResponseWriter, r *http.Request) {
+	item, ok := store.FindRequestLog(r.PathValue("id"), "")
+	if !ok {
+		utils.SendError(w, 404, "Request log not found.", "not_found")
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"requestLog": item})
 }
 
 func handleAdminGetSMTP(w http.ResponseWriter, r *http.Request) {

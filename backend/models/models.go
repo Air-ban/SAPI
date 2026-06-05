@@ -115,6 +115,7 @@ type RequestLog struct {
 	ErrorCode           string                 `json:"errorCode"`
 	ErrorMessage        string                 `json:"errorMessage"`
 	RequestContent      map[string]interface{} `json:"requestContent,omitempty"`
+	HasRequestContent   bool                   `json:"hasRequestContent,omitempty"`
 	Timestamp           string                 `json:"timestamp"`
 }
 

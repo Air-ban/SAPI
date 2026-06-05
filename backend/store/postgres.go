@@ -228,7 +228,7 @@ SELECT id, user_id, user_name, username, api_key_id, api_key_name, api_key_previ
   provider_id, provider_name, model, upstream_model, endpoint, method, status,
   ok, stream, duration_ms, prompt_tokens, completion_tokens, total_tokens,
   cached_tokens, cache_creation_tokens, cache_miss_tokens, reasoning_tokens,
-  error_code, error_message, request_content, timestamp
+  error_code, error_message, request_content <> '{}'::jsonb AS has_request_content, timestamp
 FROM sapi_request_logs
 WHERE timestamp >= $1`
 	args := []interface{}{since}
@@ -249,21 +249,63 @@ WHERE timestamp >= $1`
 	for rows.Next() {
 		var item models.RequestLog
 		var ts time.Time
-		var requestContentRaw []byte
 		if err := rows.Scan(
 			&item.ID, &item.UserID, &item.UserName, &item.Username, &item.APIKeyID, &item.APIKeyName, &item.APIKeyPreview,
 			&item.ProviderID, &item.ProviderName, &item.Model, &item.UpstreamModel, &item.Endpoint, &item.Method, &item.Status,
 			&item.OK, &item.Stream, &item.DurationMs, &item.PromptTokens, &item.CompletionTokens, &item.TotalTokens,
 			&item.CachedTokens, &item.CacheCreationTokens, &item.CacheMissTokens, &item.ReasoningTokens,
-			&item.ErrorCode, &item.ErrorMessage, &requestContentRaw, &ts,
+			&item.ErrorCode, &item.ErrorMessage, &item.HasRequestContent, &ts,
 		); err != nil {
 			return nil, err
-		}
-		if len(requestContentRaw) > 0 {
-			_ = json.Unmarshal(requestContentRaw, &item.RequestContent)
 		}
 		item.Timestamp = ts.UTC().Format(time.RFC3339)
 		result = append(result, item)
 	}
 	return result, rows.Err()
+}
+
+func queryPostgresRequestLog(ctx context.Context, id, userID string) (*models.RequestLog, bool, error) {
+	if pgPool == nil {
+		return nil, false, nil
+	}
+
+	query := `
+SELECT id, user_id, user_name, username, api_key_id, api_key_name, api_key_preview,
+  provider_id, provider_name, model, upstream_model, endpoint, method, status,
+  ok, stream, duration_ms, prompt_tokens, completion_tokens, total_tokens,
+  cached_tokens, cache_creation_tokens, cache_miss_tokens, reasoning_tokens,
+  error_code, error_message, request_content, timestamp
+FROM sapi_request_logs
+WHERE id = $1`
+	args := []interface{}{id}
+	if userID != "" {
+		query += ` AND user_id = $2`
+		args = append(args, userID)
+	}
+	query += ` LIMIT 1`
+
+	var item models.RequestLog
+	var ts time.Time
+	var requestContentRaw []byte
+	err := pgPool.QueryRow(ctx, query, args...).Scan(
+		&item.ID, &item.UserID, &item.UserName, &item.Username, &item.APIKeyID, &item.APIKeyName, &item.APIKeyPreview,
+		&item.ProviderID, &item.ProviderName, &item.Model, &item.UpstreamModel, &item.Endpoint, &item.Method, &item.Status,
+		&item.OK, &item.Stream, &item.DurationMs, &item.PromptTokens, &item.CompletionTokens, &item.TotalTokens,
+		&item.CachedTokens, &item.CacheCreationTokens, &item.CacheMissTokens, &item.ReasoningTokens,
+		&item.ErrorCode, &item.ErrorMessage, &requestContentRaw, &ts,
+	)
+	if err == pgx.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if len(requestContentRaw) > 0 {
+		_ = json.Unmarshal(requestContentRaw, &item.RequestContent)
+	}
+	if requestLogHasContent(item) {
+		item.HasRequestContent = true
+	}
+	item.Timestamp = ts.UTC().Format(time.RFC3339)
+	return &item, true, nil
 }

@@ -25,6 +25,7 @@ func MountUserRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/user/api-keys/{id}", middleware.RequireUserAccount(handleUserDeleteAPIKey))
 	mux.HandleFunc("PUT /api/user/settings", middleware.RequireUserAccount(handleUserSettings))
 	mux.HandleFunc("GET /api/user/usage", middleware.RequireUserAccount(handleUserUsage))
+	mux.HandleFunc("GET /api/user/request-logs/{id}", middleware.RequireUserAccount(handleUserRequestLog))
 	mux.HandleFunc("GET /api/user/suggestions", middleware.RequireUserAccount(handleUserSuggestions))
 }
 
@@ -319,6 +320,20 @@ func handleUserUsage(w http.ResponseWriter, r *http.Request) {
 		days = min(max(d, 1), 365)
 	}
 	json.NewEncoder(w).Encode(usage.GetUsageStats(db, user.ID, days))
+}
+
+func handleUserRequestLog(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r)
+	if user == nil {
+		utils.SendError(w, 401, "User authentication is required.", "unauthorized")
+		return
+	}
+	item, ok := store.FindRequestLog(r.PathValue("id"), user.ID)
+	if !ok {
+		utils.SendError(w, 404, "Request log not found.", "not_found")
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"requestLog": item})
 }
 
 func handleUserSuggestions(w http.ResponseWriter, r *http.Request) {

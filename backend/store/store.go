@@ -100,7 +100,7 @@ func ensureFileDB() {
 func ReadDB() *models.Database {
 	mu.RLock()
 	if cachedDB != nil {
-		db := cloneDatabase(cachedDB)
+		db := cloneDatabaseForRead(cachedDB)
 		mu.RUnlock()
 		return db
 	}
@@ -114,7 +114,7 @@ func ReadDB() *models.Database {
 			cachedDB = newDefaultDB()
 		}
 	}
-	return cloneDatabase(cachedDB)
+	return cloneDatabaseForRead(cachedDB)
 }
 
 func writeDB(db *models.Database) {
@@ -259,6 +259,41 @@ func cloneDatabase(db *models.Database) *models.Database {
 	return &cloned
 }
 
+func cloneDatabaseForRead(db *models.Database) *models.Database {
+	if db == nil {
+		return nil
+	}
+	slim := *db
+	if db.RequestLogs != nil {
+		slim.RequestLogs = make([]models.RequestLog, len(db.RequestLogs))
+		for i := range db.RequestLogs {
+			slim.RequestLogs[i] = requestLogForList(db.RequestLogs[i])
+		}
+	}
+	return cloneDatabase(&slim)
+}
+
+func stripRequestLogContent(db *models.Database) {
+	if db == nil {
+		return
+	}
+	for i := range db.RequestLogs {
+		db.RequestLogs[i] = requestLogForList(db.RequestLogs[i])
+	}
+}
+
+func requestLogHasContent(item models.RequestLog) bool {
+	return item.HasRequestContent || len(item.RequestContent) > 0
+}
+
+func requestLogForList(item models.RequestLog) models.RequestLog {
+	if requestLogHasContent(item) {
+		item.HasRequestContent = true
+	}
+	item.RequestContent = nil
+	return item
+}
+
 func AppendRequestLog(item models.RequestLog) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -327,13 +362,59 @@ func RequestLogsSince(db *models.Database, since time.Time, userID string, limit
 			continue
 		}
 		if item.Timestamp >= sinceIso {
-			result = append(result, item)
+			result = append(result, requestLogForList(item))
 		}
 	}
 	if limit > 0 && len(result) > limit {
 		result = result[len(result)-limit:]
 	}
 	return result
+}
+
+func FindRequestLog(id, userID string) (*models.RequestLog, bool) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, false
+	}
+	if postgresEnabled() {
+		item, ok, err := queryPostgresRequestLog(context.Background(), id, userID)
+		if err == nil {
+			return item, ok
+		}
+		log.Printf("[STORE] query postgres request log failed: %v", err)
+	}
+
+	mu.RLock()
+	defer mu.RUnlock()
+	if cachedDB == nil {
+		return nil, false
+	}
+	for _, item := range cachedDB.RequestLogs {
+		if item.ID != id {
+			continue
+		}
+		if userID != "" && item.UserID != userID {
+			return nil, false
+		}
+		cloned := cloneRequestLog(item)
+		return &cloned, true
+	}
+	return nil, false
+}
+
+func cloneRequestLog(item models.RequestLog) models.RequestLog {
+	raw, err := json.Marshal(item)
+	if err != nil {
+		return item
+	}
+	var cloned models.RequestLog
+	if err := json.Unmarshal(raw, &cloned); err != nil {
+		return item
+	}
+	if requestLogHasContent(cloned) {
+		cloned.HasRequestContent = true
+	}
+	return cloned
 }
 
 func requestLogCutoff() time.Time {

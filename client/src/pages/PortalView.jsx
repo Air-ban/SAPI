@@ -74,6 +74,7 @@ export function PortalView({
   onUpdateSettings,
   onToast,
   ModelAvailabilityDashboard,
+  onLoadRequestContent,
   AnnouncementTimeline
 }) {
   const effectiveConfig = config || {
@@ -353,7 +354,7 @@ export function PortalView({
       ) : null}
 
       {currentPage === "usage" && usage ? (
-        <UsageSection usage={usage} />
+        <UsageSection usage={usage} onLoadRequestContent={onLoadRequestContent} />
       ) : null}
 
       {currentPage === "models" ? (

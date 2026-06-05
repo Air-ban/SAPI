@@ -1,0 +1,116 @@
+package handlers
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"sapi/auth"
+	"sapi/config"
+	"sapi/middleware"
+	"sapi/models"
+	"sapi/security"
+	"sapi/store"
+)
+
+func setupRequestLogTest(t *testing.T) (*http.ServeMux, string, string, string) {
+	t.Helper()
+	middleware.ResetSecurityStateForTest()
+	t.Setenv("SAPI_DATA_FILE", filepath.Join(t.TempDir(), "sapi.json"))
+	t.Setenv("SAPI_POSTGRES_URL", " ")
+	t.Setenv("DATABASE_URL", " ")
+	t.Setenv("SAPI_REDIS_URL", " ")
+	t.Setenv("REDIS_URL", " ")
+	t.Setenv("SAPI_ADMIN_USER", "admin")
+	t.Setenv("SAPI_ADMIN_PASSWORD", "secret-password")
+
+	cfg := config.Load()
+	security.Configure(cfg)
+	if err := store.Init(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	store.MutateDB(func(db *models.Database) interface{} {
+		db.Users = append(db.Users,
+			models.User{ID: "usr_owner", Name: "Owner", Username: "owner", Enabled: true},
+			models.User{ID: "usr_other", Name: "Other", Username: "other", Enabled: true},
+		)
+		return nil
+	})
+	store.AppendRequestLog(models.RequestLog{
+		ID:             "log_with_content",
+		UserID:         "usr_owner",
+		UserName:       "Owner",
+		Username:       "owner",
+		Model:          "test-model",
+		Endpoint:       "/v1/chat/completions",
+		Method:         http.MethodPost,
+		Status:         http.StatusOK,
+		OK:             true,
+		PromptTokens:   3,
+		TotalTokens:    5,
+		RequestContent: map[string]interface{}{"messages": []interface{}{"large-secret-payload"}},
+		Timestamp:      store.Now(),
+	})
+
+	db := store.ReadDB()
+	adminToken := auth.SignTokenString(auth.TokenPayload{Role: "admin", Sub: "admin"}, db.AppSecret)
+	ownerToken := auth.SignTokenString(auth.TokenPayload{Role: "user", Sub: "usr_owner"}, db.AppSecret)
+	otherToken := auth.SignTokenString(auth.TokenPayload{Role: "user", Sub: "usr_other"}, db.AppSecret)
+
+	mux := http.NewServeMux()
+	MountAdminRoutes(mux)
+	MountUserRoutes(mux)
+	return mux, adminToken, ownerToken, otherToken
+}
+
+func TestAdminStateOmitsRequestContentButKeepsMarker(t *testing.T) {
+	mux, adminToken, _, _ := setupRequestLogTest(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/state", nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected admin state to return 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "requestContent") || strings.Contains(body, "large-secret-payload") {
+		t.Fatalf("admin state should not include full request content, body=%s", body)
+	}
+	if !strings.Contains(body, `"hasRequestContent":true`) {
+		t.Fatalf("admin state should include request content marker, body=%s", body)
+	}
+}
+
+func TestRequestLogDetailReturnsContentWithAccessControl(t *testing.T) {
+	mux, adminToken, ownerToken, otherToken := setupRequestLogTest(t)
+
+	adminReq := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs/log_with_content", nil)
+	adminReq.Header.Set("Authorization", "Bearer "+adminToken)
+	adminRec := httptest.NewRecorder()
+	mux.ServeHTTP(adminRec, adminReq)
+	if adminRec.Code != http.StatusOK || !strings.Contains(adminRec.Body.String(), "large-secret-payload") {
+		t.Fatalf("expected admin detail to include request content, got %d body=%s", adminRec.Code, adminRec.Body.String())
+	}
+
+	ownerReq := httptest.NewRequest(http.MethodGet, "/api/user/request-logs/log_with_content", nil)
+	ownerReq.Header.Set("Authorization", "Bearer "+ownerToken)
+	ownerRec := httptest.NewRecorder()
+	mux.ServeHTTP(ownerRec, ownerReq)
+	if ownerRec.Code != http.StatusOK || !strings.Contains(ownerRec.Body.String(), "large-secret-payload") {
+		t.Fatalf("expected owner detail to include request content, got %d body=%s", ownerRec.Code, ownerRec.Body.String())
+	}
+
+	otherReq := httptest.NewRequest(http.MethodGet, "/api/user/request-logs/log_with_content", nil)
+	otherReq.Header.Set("Authorization", "Bearer "+otherToken)
+	otherRec := httptest.NewRecorder()
+	mux.ServeHTTP(otherRec, otherReq)
+	if otherRec.Code != http.StatusNotFound {
+		t.Fatalf("expected other user to get 404, got %d body=%s", otherRec.Code, otherRec.Body.String())
+	}
+}
