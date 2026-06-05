@@ -106,7 +106,7 @@ export const inlineCodeSx = {
   py: 0.15,
   mx: 0.25,
   borderRadius: 0.75,
-  bgcolor: "rgba(15,23,42,0.06)",
+  bgcolor: "app.paperAlt",
   color: "text.primary",
   fontFamily: 'Consolas, "SFMono-Regular", Menlo, monospace',
   fontSize: "0.92em",

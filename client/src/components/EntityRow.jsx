@@ -11,12 +11,12 @@ export const EntityRow = React.memo(function EntityRow({ title, enabled, icon, m
         gridTemplateColumns: { xs: "1fr", md: "minmax(0, 1fr) auto" },
         gap: 1.5,
         alignItems: "center",
-        bgcolor: "#fafbfc",
+        bgcolor: "app.paperAlt",
         transition: "all 0.15s ease",
         "&:hover": {
-          bgcolor: "#f5f7fa",
-          boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
-          borderColor: "#cbd5e1"
+          bgcolor: "background.paper",
+          boxShadow: (theme) => theme.palette.app.shadow,
+          borderColor: "app.borderStrong"
         }
       }}
     >
@@ -28,7 +28,7 @@ export const EntityRow = React.memo(function EntityRow({ title, enabled, icon, m
             borderRadius: 1.5,
             display: "grid",
             placeItems: "center",
-            bgcolor: "rgba(13,115,119,0.09)",
+            bgcolor: "app.primarySoft",
             color: "primary.main",
             flexShrink: 0
           }}

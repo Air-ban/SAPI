@@ -6,4 +6,5 @@ npm-debug.log*
 backend/*.exe
 backend/sapi
 backend/logs/
+user_export_*/
 

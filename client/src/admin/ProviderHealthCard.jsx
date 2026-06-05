@@ -7,7 +7,7 @@ import {
   Tooltip,
   Typography
 } from "@mui/material";
-import { inferVendor, statusColor, statusLabel } from "../utils/helpers";
+import { inferVendor, statusLabel } from "../utils/helpers";
 
 export function ProviderHealthCard({ provider }) {
   const vendor = inferVendor(provider.name, provider.baseUrl);
@@ -71,7 +71,7 @@ export function ProviderHealthCard({ provider }) {
       ) : null}
 
       <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1.5 }}>
-        <Paper variant="outlined" sx={{ p: 1.25, bgcolor: "rgba(15,118,110,0.04)" }}>
+        <Paper variant="outlined" sx={{ p: 1.25, bgcolor: "app.successSoft" }}>
           <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.25 }}>
             对话延迟
           </Typography>
@@ -82,7 +82,7 @@ export function ProviderHealthCard({ provider }) {
             </Typography>
           </Typography>
         </Paper>
-        <Paper variant="outlined" sx={{ p: 1.25, bgcolor: "rgba(37,99,235,0.04)" }}>
+        <Paper variant="outlined" sx={{ p: 1.25, bgcolor: "app.primarySoft" }}>
           <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.25 }}>
             端点 PING
           </Typography>

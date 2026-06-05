@@ -116,7 +116,7 @@ export function InvitationCodesSection({ codes, afterChange, onConfirm, onCopy, 
                     gridTemplateColumns: { xs: "1fr", md: "minmax(0, 1fr) auto" },
                     gap: 1.5,
                     alignItems: "center",
-                    bgcolor: isActive ? "#fbfcfe" : "action.hover",
+                    bgcolor: isActive ? "app.paperAlt" : "action.hover",
                     opacity: isActive ? 1 : 0.85
                   }}
                 >
@@ -128,7 +128,7 @@ export function InvitationCodesSection({ codes, afterChange, onConfirm, onCopy, 
                         borderRadius: 1,
                         display: "grid",
                         placeItems: "center",
-                        bgcolor: isActive ? "rgba(15,118,110,0.1)" : "rgba(120,120,120,0.1)",
+                        bgcolor: isActive ? "app.primarySoft" : "action.selected",
                         color: isActive ? "primary.main" : "text.disabled",
                         flexShrink: 0
                       }}
@@ -237,7 +237,7 @@ export function InvitationCodesSection({ codes, afterChange, onConfirm, onCopy, 
         <DialogTitle>发送邀请邮件</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
-            <Paper variant="outlined" sx={{ p: 1.5, bgcolor: 'rgba(15,118,110,0.04)', display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "app.primarySoft", display: "flex", alignItems: "center", gap: 1 }}>
               <VpnKeyIcon fontSize="small" color="action" />
               <Typography variant="body2" sx={{ fontFamily: 'Consolas, monospace', fontWeight: 700 }}>
                 {sendForm.customCode}

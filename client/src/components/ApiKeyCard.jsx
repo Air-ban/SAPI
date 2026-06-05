@@ -32,8 +32,10 @@ const inlineCodeSx = {
   py: 0.15,
   mx: 0.25,
   borderRadius: 0.75,
-  bgcolor: "rgba(15,23,42,0.06)",
-  color: "text.primary",
+  bgcolor: "app.codeBg",
+  color: "app.codeText",
+  border: "1px solid",
+  borderColor: "app.borderStrong",
   fontFamily: 'Consolas, "SFMono-Regular", Menlo, monospace',
   fontSize: "0.92em",
   overflowWrap: "anywhere"
@@ -49,7 +51,7 @@ export const ApiKeyCard = React.memo(function ApiKeyCard({ apiKey, usage, onCopy
         gridTemplateColumns: { xs: "1fr", md: "minmax(0, 1fr) auto" },
         gap: 1.5,
         alignItems: "center",
-        bgcolor: "#fbfcfe"
+        bgcolor: "app.paperAlt"
       }}
     >
       <Stack spacing={1} sx={{ minWidth: 0 }}>

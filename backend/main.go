@@ -1,15 +1,20 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"sapi/config"
@@ -18,6 +23,18 @@ import (
 	"sapi/proxy"
 	"sapi/security"
 	"sapi/store"
+)
+
+type gzipStaticEntry struct {
+	modTime     time.Time
+	size        int64
+	contentType string
+	data        []byte
+}
+
+var (
+	gzipStaticMu    sync.RWMutex
+	gzipStaticCache = map[string]gzipStaticEntry{}
 )
 
 func main() {
@@ -98,14 +115,18 @@ func buildSpaHandler(publicDir string) http.HandlerFunc {
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !isAPIPath(r.URL.Path) && r.URL.Path != "/swagger" && r.URL.Path != "/models" {
-			w.Header().Set("Cache-Control", "no-store")
 			path := filepath.Join(publicDir, filepath.Clean(r.URL.Path))
 			if info, err := os.Stat(path); err == nil && !info.IsDir() {
+				setStaticCacheHeader(w, r.URL.Path)
+				if serveGzipStaticFile(w, r, path, info) {
+					return
+				}
 				fs.ServeHTTP(w, r)
 				return
 			}
 
 			if indexErr == nil {
+				w.Header().Set("Cache-Control", "no-store")
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				w.Write(indexHTML)
 				return
@@ -114,6 +135,128 @@ func buildSpaHandler(publicDir string) http.HandlerFunc {
 
 		fs.ServeHTTP(w, r)
 	}
+}
+
+func setStaticCacheHeader(w http.ResponseWriter, requestPath string) {
+	if strings.HasPrefix(requestPath, "/assets/") {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+}
+
+func serveGzipStaticFile(w http.ResponseWriter, r *http.Request, filePath string, info os.FileInfo) bool {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	if r.Header.Get("Range") != "" || !acceptsGzip(r.Header.Get("Accept-Encoding")) {
+		return false
+	}
+	if !isCompressibleStaticFile(filePath) {
+		return false
+	}
+
+	entry, ok := getGzipStaticEntry(filePath, info)
+	if !ok {
+		return false
+	}
+
+	w.Header().Set("Content-Encoding", "gzip")
+	w.Header().Set("Content-Length", strconv.Itoa(len(entry.data)))
+	w.Header().Set("Content-Type", entry.contentType)
+	addVaryHeader(w.Header(), "Accept-Encoding")
+	http.ServeContent(w, r, filepath.Base(filePath), entry.modTime, bytes.NewReader(entry.data))
+	return true
+}
+
+func getGzipStaticEntry(filePath string, info os.FileInfo) (gzipStaticEntry, bool) {
+	gzipStaticMu.RLock()
+	entry, ok := gzipStaticCache[filePath]
+	gzipStaticMu.RUnlock()
+	if ok && entry.size == info.Size() && entry.modTime.Equal(info.ModTime()) {
+		return entry, true
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return gzipStaticEntry{}, false
+	}
+
+	var buf bytes.Buffer
+	zw, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+	if err != nil {
+		return gzipStaticEntry{}, false
+	}
+	if _, err := zw.Write(data); err != nil {
+		_ = zw.Close()
+		return gzipStaticEntry{}, false
+	}
+	if err := zw.Close(); err != nil {
+		return gzipStaticEntry{}, false
+	}
+	if buf.Len() >= len(data) {
+		return gzipStaticEntry{}, false
+	}
+
+	entry = gzipStaticEntry{
+		modTime:     info.ModTime(),
+		size:        info.Size(),
+		contentType: staticContentType(filePath, data),
+		data:        buf.Bytes(),
+	}
+
+	gzipStaticMu.Lock()
+	gzipStaticCache[filePath] = entry
+	gzipStaticMu.Unlock()
+
+	return entry, true
+}
+
+func acceptsGzip(header string) bool {
+	for _, part := range strings.Split(header, ",") {
+		items := strings.Split(strings.TrimSpace(strings.ToLower(part)), ";")
+		if len(items) == 0 || strings.TrimSpace(items[0]) != "gzip" {
+			continue
+		}
+		for _, param := range items[1:] {
+			param = strings.TrimSpace(param)
+			if param == "q=0" || param == "q=0.0" || param == "q=0.00" {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func isCompressibleStaticFile(filePath string) bool {
+	switch strings.ToLower(filepath.Ext(filePath)) {
+	case ".css", ".html", ".js", ".json", ".map", ".mjs", ".svg", ".txt", ".wasm", ".xml":
+		return true
+	default:
+		return false
+	}
+}
+
+func staticContentType(filePath string, data []byte) string {
+	if contentType := mime.TypeByExtension(strings.ToLower(filepath.Ext(filePath))); contentType != "" {
+		return contentType
+	}
+	if len(data) > 512 {
+		data = data[:512]
+	}
+	return http.DetectContentType(data)
+}
+
+func addVaryHeader(header http.Header, value string) {
+	for _, existing := range header.Values("Vary") {
+		for _, part := range strings.Split(existing, ",") {
+			if strings.EqualFold(strings.TrimSpace(part), value) {
+				return
+			}
+		}
+	}
+	header.Add("Vary", value)
 }
 
 func loggingMiddleware(next http.Handler) http.Handler {

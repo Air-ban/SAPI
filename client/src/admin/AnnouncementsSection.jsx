@@ -127,7 +127,7 @@ export function AnnouncementsSection({ announcements, afterChange, onConfirm, on
                   gridTemplateColumns: { xs: "1fr", md: "minmax(0, 1fr) auto" },
                   gap: 1.5,
                   alignItems: "center",
-                  bgcolor: item.enabled !== false ? "#fbfcfe" : "action.hover",
+                  bgcolor: item.enabled !== false ? "app.paperAlt" : "action.hover",
                   opacity: item.enabled !== false ? 1 : 0.85
                 }}
               >

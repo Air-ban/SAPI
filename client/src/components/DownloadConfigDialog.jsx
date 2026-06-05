@@ -16,7 +16,6 @@ import {
   Typography
 } from "@mui/material";
 import DownloadIcon from "@mui/icons-material/Download";
-import { CodeBlock } from "./CodeBlock";
 
 export function DownloadConfigDialog({ open, onClose, baseUrl, apiKeys, defaultKey, models, onCopy }) {
   const [tool, setTool] = useState("codex");
@@ -286,8 +285,9 @@ export function DownloadConfigDialog({ open, onClose, baseUrl, apiKeys, defaultK
               variant="outlined"
               sx={{
                 p: 1.5,
-                bgcolor: "#1e293b",
-                color: "#e2e8f0",
+                bgcolor: "app.codeBg",
+                color: "app.codeText",
+                borderColor: "app.borderStrong",
                 fontFamily: 'Consolas, "SFMono-Regular", Menlo, monospace',
                 fontSize: "0.78rem",
                 lineHeight: 1.7,

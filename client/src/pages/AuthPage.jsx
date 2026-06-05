@@ -20,6 +20,7 @@ import LoginIcon from "@mui/icons-material/Login";
 import PersonAddIcon from "@mui/icons-material/PersonAdd";
 import { ForgotPasswordDialog } from "../components/ForgotPasswordDialog";
 import { DividerLine } from "../components/DividerLine";
+import { ThemeModeToggle } from "../components/ThemeModeToggle";
 
 export function AuthPage({
   mode,
@@ -29,7 +30,9 @@ export function AuthPage({
   onSendForgotCode,
   onResetPassword,
   onNavigate,
-  onToast
+  onToast,
+  themeMode,
+  onToggleThemeMode
 }) {
   const isRegister = mode === "register";
   const [form, setForm] = useState({
@@ -151,16 +154,20 @@ export function AuthPage({
             width: "100%",
             maxWidth: 440,
             p: { xs: 2.25, sm: 3 },
-            boxShadow: "0 18px 46px rgba(15, 23, 42, 0.08)"
+            boxShadow: (theme) => theme.palette.app.shadow,
+            bgcolor: "background.paper"
           }}
         >
           <Stack spacing={2.2}>
+            <Stack direction="row" justifyContent="flex-end">
+              <ThemeModeToggle mode={themeMode} onToggle={onToggleThemeMode} />
+            </Stack>
             <Stack spacing={1} alignItems="center" textAlign="center">
               <Box
                 sx={{
-                  width: 48,
-                  height: 48,
-                  borderRadius: 1,
+                  width: 42,
+                  height: 42,
+                  borderRadius: 1.25,
                   display: "grid",
                   placeItems: "center",
                   bgcolor: "primary.main",
@@ -171,12 +178,12 @@ export function AuthPage({
               </Box>
               <Box>
                 <Typography variant="h5">
-                  {isRegister ? "注册 HanGuan's SuperAPI 账号" : "登录 HanGuan's SuperAPI"}
+                  {isRegister ? "创建 SAPI 账号" : "登录 SAPI"}
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                   {isRegister
-                    ? "注册后进入用户控制台，自助创建 API Key。"
-                    : "登录 HanGuan's SuperAPI 用户控制台。"}
+                    ? "进入 AI SDK Gateway 控制台，自助创建 API Key。"
+                    : "登录 AI SDK Gateway 控制台。"}
                 </Typography>
               </Box>
             </Stack>
@@ -266,7 +273,7 @@ export function AuthPage({
                         helperText="使用管理员提供的邀请码进行注册。"
                         sx={{
                           '& .MuiOutlinedInput-root': {
-                            bgcolor: 'rgba(15,118,110,0.04)'
+                            bgcolor: 'app.paperAlt'
                           }
                         }}
                       />

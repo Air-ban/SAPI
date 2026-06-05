@@ -6,38 +6,40 @@ export const Section = React.memo(function Section({ title, icon, action, childr
     <Paper
       variant="outlined"
       sx={{
-        p: { xs: 1.75, sm: 2.25 },
-        boxShadow: "0 1px 3px rgba(15, 23, 42, 0.04)",
+        p: { xs: 1.5, sm: 2 },
+        boxShadow: "none",
         transition: "box-shadow 0.2s ease, border-color 0.2s ease",
         "&:hover": {
-          borderColor: "#cbd5e1",
-          boxShadow: "0 4px 12px rgba(15, 23, 42, 0.06)"
+          borderColor: "app.borderStrong"
         }
       }}
     >
-      <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1.5} sx={{ mb: 1.75 }}>
+      <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1.5} sx={{ mb: 1.5 }}>
         <Stack direction="row" alignItems="center" spacing={1.25}>
           <Box
             sx={{
-              color: "primary.main",
+              color: "text.secondary",
               display: "flex",
-              width: 32,
-              height: 32,
-              borderRadius: 1.5,
-              bgcolor: "rgba(13,115,119,0.08)",
+              width: 28,
+              height: 28,
+              borderRadius: 1,
+              bgcolor: "app.paperAlt",
+              border: "1px solid",
+              borderColor: "divider",
               alignItems: "center",
-              justifyContent: "center"
+              justifyContent: "center",
+              "& svg": { fontSize: 17 }
             }}
           >
             {icon}
           </Box>
-          <Typography variant="h6" sx={{ fontWeight: 680 }}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 620 }}>
             {title}
           </Typography>
         </Stack>
         {action}
       </Stack>
-      <Divider sx={{ mb: 2, borderColor: "#f1f5f9" }} />
+      <Divider sx={{ mb: 2 }} />
       {children}
     </Paper>
   );

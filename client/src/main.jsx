@@ -1,5 +1,6 @@
 ﻿import React, { useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { useMemo } from "react";
 import {
   Alert,
   AppBar,
@@ -15,10 +16,8 @@ import {
   useMediaQuery
 } from "@mui/material";
 import MenuIcon from "@mui/icons-material/Menu";
-import LoginIcon from "@mui/icons-material/Login";
-import PersonAddIcon from "@mui/icons-material/PersonAdd";
 
-import theme from "./theme";
+import { createAppTheme } from "./theme";
 import { DRAWER_WIDTH, ADMIN_TOKEN_KEY, USER_TOKEN_KEY } from "./constants";
 import { request } from "./utils/api";
 import { getInitialRoute } from "./utils/helpers";
@@ -31,6 +30,8 @@ import { SiteBanner } from "./components/SiteBanner";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { CreateApiKeyDialog } from "./components/CreateApiKeyDialog";
 import { CreatedKeyDialog } from "./components/CreatedKeyDialog";
+import { ThemeModeToggle } from "./components/ThemeModeToggle";
+import { ModelAvailabilityDashboard } from "./components/ModelAvailabilityDashboard";
 
 import { HomePage, RequireAccountPage } from "./pages/HomePage";
 import { AuthPage } from "./pages/AuthPage";
@@ -39,6 +40,12 @@ import { AdminView } from "./admin/AdminView";
 import { AnnouncementDialog } from "./admin/AnnouncementDialog";
 
 setupMarked();
+
+function getInitialThemeMode() {
+  const saved = localStorage.getItem("sapiThemeMode");
+  if (saved === "light" || saved === "dark") return saved;
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
 
 function App() {
   const [route, setRoute] = useState(getInitialRoute);
@@ -59,12 +66,23 @@ function App() {
   const [createKeyOpen, setCreateKeyOpen] = useState(false);
   const [createdKeyInfo, setCreatedKeyInfo] = useState(null);
   const [providerHealth, setProviderHealth] = useState([]);
+  const [modelAvailability, setModelAvailability] = useState(null);
   const [publicConfig, setPublicConfig] = useState(null);
   const [announcements, setAnnouncements] = useState([]);
   const [activeAnnouncement, setActiveAnnouncement] = useState(null);
   const [banner, setBanner] = useState(null);
   const [maintenance, setMaintenance] = useState({ maintenanceMode: false, maintenanceEndTime: "" });
+  const [themeMode, setThemeMode] = useState(getInitialThemeMode);
+  const theme = useMemo(() => createAppTheme(themeMode), [themeMode]);
   const compact = useMediaQuery(theme.breakpoints.down("md"));
+
+  const toggleThemeMode = useCallback(() => {
+    setThemeMode((current) => {
+      const next = current === "dark" ? "light" : "dark";
+      localStorage.setItem("sapiThemeMode", next);
+      return next;
+    });
+  }, []);
 
   const showToast = useCallback((message, severity = "success") => {
     setToast({ open: true, message, severity });
@@ -125,6 +143,15 @@ function App() {
       setProviderHealth(data.providers || []);
     } catch {
       setProviderHealth([]);
+    }
+  }, []);
+
+  const loadModelAvailability = useCallback(async () => {
+    try {
+      const data = await request("/api/health/models", { admin: false });
+      setModelAvailability(data);
+    } catch {
+      setModelAvailability(null);
     }
   }, []);
 
@@ -196,6 +223,17 @@ function App() {
     setTimeout(poll, 30000);
     return () => { cancelled = true; };
   }, [loadProviderHealth]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      await loadModelAvailability();
+      if (!cancelled) setTimeout(poll, 300000);
+    };
+    loadModelAvailability();
+    setTimeout(poll, 300000);
+    return () => { cancelled = true; };
+  }, [loadModelAvailability]);
 
   useEffect(() => {
     if (route === "admin" && adminToken) {
@@ -384,7 +422,7 @@ function App() {
   };
 
   const afterAdminChange = async (message) => {
-    await loadAdminState();
+    await Promise.all([loadAdminState(), loadProviderHealth(), loadModelAvailability()]);
     showToast(message);
   };
 
@@ -427,6 +465,8 @@ function App() {
           .then(() => showToast("已刷新"))
           .catch((error) => showToast(error.message, "error"));
       }}
+      themeMode={themeMode}
+      onToggleThemeMode={toggleThemeMode}
     />
   );
 
@@ -458,6 +498,8 @@ function App() {
           user={userSession?.user || null}
           admin={Boolean(adminToken)}
           announcements={announcements}
+          themeMode={themeMode}
+          onToggleThemeMode={toggleThemeMode}
           onLogout={() => {
             userLogout();
             logout();
@@ -486,6 +528,8 @@ function App() {
           onResetPassword={resetPassword}
           onNavigate={navigate}
           onToast={showToast}
+          themeMode={themeMode}
+          onToggleThemeMode={toggleThemeMode}
         />
         {snackbar}
       </ThemeProvider>
@@ -506,7 +550,11 @@ function App() {
     return (
       <ThemeProvider theme={theme}>
         <CssBaseline />
-        <RequireAccountPage onNavigate={navigate} />
+        <RequireAccountPage
+          onNavigate={navigate}
+          themeMode={themeMode}
+          onToggleThemeMode={toggleThemeMode}
+        />
         {snackbar}
       </ThemeProvider>
     );
@@ -523,16 +571,19 @@ function App() {
           sx={{
             display: { md: "none" },
             borderBottom: "1px solid",
-            borderColor: "divider"
+            borderColor: "divider",
+            bgcolor: "app.overlay",
+            backdropFilter: "blur(12px)"
           }}
         >
-          <Toolbar>
+          <Toolbar sx={{ gap: 1 }}>
             <IconButton edge="start" onClick={() => setMobileOpen(true)} aria-label="打开导航">
               <MenuIcon />
             </IconButton>
-            <Typography variant="h6" sx={{ ml: 1 }}>
-              HanGuan's SuperAPI
+            <Typography variant="h6" sx={{ flexGrow: 1 }}>
+              SAPI
             </Typography>
+            <ThemeModeToggle mode={themeMode} onToggle={toggleThemeMode} />
           </Toolbar>
         </AppBar>
 
@@ -546,8 +597,8 @@ function App() {
               "& .MuiDrawer-paper": {
                 width: DRAWER_WIDTH,
                 border: 0,
-                bgcolor: "#101820",
-                color: "#f8fafc"
+                bgcolor: "app.sidebarBg",
+                color: "app.sidebarText"
               }
             }}
           >
@@ -560,12 +611,12 @@ function App() {
           sx={{
             flexGrow: 1,
             minWidth: 0,
-            pt: { xs: 9, md: 4 },
+            pt: { xs: 9, md: 3 },
             px: { xs: 2, sm: 3, lg: 4 },
             pb: 4
           }}
         >
-          <Box sx={{ maxWidth: 1220, mx: "auto" }}>
+          <Box sx={{ maxWidth: 1280, mx: "auto" }}>
             {maintenance.maintenanceMode ? (
               <MaintenanceBanner maintenance={maintenance} />
             ) : null}
@@ -580,6 +631,7 @@ function App() {
                 user={userSession?.user || null}
                 usage={userUsage}
                 providerHealth={providerHealth}
+                modelAvailability={modelAvailability}
                 announcements={announcements}
                 onNavigate={navigate}
                 onUserLogout={() => {
@@ -609,7 +661,7 @@ function App() {
                   })
                 }
                 onRefresh={() =>
-                  Promise.all([loadUserSession(), loadUserUsage(), loadProviderHealth()])
+                  Promise.all([loadUserSession(), loadUserUsage(), loadProviderHealth(), loadModelAvailability()])
                     .then(() => showToast("已刷新"))
                     .catch((error) => showToast(error.message, "error"))
                 }
@@ -618,19 +670,21 @@ function App() {
                   updateUserSettings(body).catch((error) => showToast(error.message, "error"))
                 }
                 onToast={showToast}
+                ModelAvailabilityDashboard={ModelAvailabilityDashboard}
               />
             ) : (
               <AdminView
                 page={adminPage}
                 state={adminState}
                 providerHealth={providerHealth}
+                modelAvailability={modelAvailability}
                 onLogout={() => {
                   logout();
                   showToast("已退出");
                 }}
                 onCopy={copyText}
                 onRefresh={() =>
-                  loadAdminState()
+                  Promise.all([loadAdminState(), loadProviderHealth(), loadModelAvailability()])
                     .then(() => showToast("已刷新"))
                     .catch((error) => showToast(error.message, "error"))
                 }
@@ -638,6 +692,7 @@ function App() {
                 afterChange={afterAdminChange}
                 onToast={showToast}
                 adminToken={adminToken}
+                ModelAvailabilityDashboard={ModelAvailabilityDashboard}
               />
             )}
           </Box>

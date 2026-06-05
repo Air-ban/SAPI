@@ -61,7 +61,7 @@ export function PortalView({
   selectedKey,
   user,
   usage,
-  providerHealth,
+  modelAvailability,
   announcements,
   onNavigate,
   onUserLogout,
@@ -73,7 +73,7 @@ export function PortalView({
   onCopy,
   onUpdateSettings,
   onToast,
-  ModelHealthSection,
+  ModelAvailabilityDashboard,
   AnnouncementTimeline
 }) {
   const effectiveConfig = config || {
@@ -161,8 +161,8 @@ export function PortalView({
         </Section>
       ) : null}
 
-      {ModelHealthSection && providerHealth.length > 0 && ["overview", "models"].includes(currentPage) ? (
-        <ModelHealthSection providers={providerHealth} />
+      {ModelAvailabilityDashboard && ["overview", "models"].includes(currentPage) ? (
+        <ModelAvailabilityDashboard availability={modelAvailability} />
       ) : null}
 
       {["overview", "key", "models"].includes(currentPage) ? (

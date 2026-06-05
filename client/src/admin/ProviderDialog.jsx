@@ -351,7 +351,7 @@ export function ProviderDialog({ open, onClose, provider, afterChange, onToast }
                         gridTemplateColumns: "minmax(0, 1fr) auto",
                         alignItems: "center",
                         gap: 1,
-                        bgcolor: checked ? "rgba(15,118,110,0.07)" : "background.paper",
+                        bgcolor: checked ? "app.primarySoft" : "background.paper",
                         borderColor: checked ? "primary.light" : "divider"
                       }}
                     >

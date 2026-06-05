@@ -10,14 +10,14 @@ export const PageHeader = React.memo(function PageHeader({ eyebrow, title, descr
       justifyContent="space-between"
     >
       <Box sx={{ minWidth: 0 }}>
-        <Typography variant="overline" color="primary" sx={{ fontWeight: 850 }}>
+        <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 560 }}>
           {eyebrow}
         </Typography>
-        <Typography variant="h4" component="h1">
+        <Typography variant="h4" component="h1" sx={{ mt: 0.4 }}>
           {title}
         </Typography>
         {description ? (
-          <Typography variant="body1" color="text.secondary" sx={{ mt: 0.7, maxWidth: 720 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75, maxWidth: 720 }}>
             {description}
           </Typography>
         ) : null}
