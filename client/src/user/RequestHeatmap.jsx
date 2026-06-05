@@ -1,11 +1,11 @@
 import React, { useMemo } from "react";
-import { Box, Stack, Tooltip, Typography } from "@mui/material";
+import { Box, Stack, Tooltip, Typography, useTheme } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import { formatNumber } from "../utils/helpers";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const WEEKDAY_LABELS = ["", "Mon", "", "Wed", "", "Fri", ""];
-const COLORS = ["#ebedf0", "#9be9a8", "#40c463", "#30a14e", "#216e39"];
 
 function toDateKey(date) {
   const year = date.getFullYear();
@@ -31,6 +31,17 @@ function getLevel(requests, maxRequests) {
 }
 
 export function RequestHeatmap({ data = [], days = 365, title = "调用热力图" }) {
+  const theme = useTheme();
+  const heatColors = useMemo(
+    () => [
+      theme.palette.app.paperAlt,
+      alpha(theme.palette.success.main, theme.palette.mode === "dark" ? 0.28 : 0.18),
+      alpha(theme.palette.success.main, theme.palette.mode === "dark" ? 0.46 : 0.34),
+      alpha(theme.palette.success.main, theme.palette.mode === "dark" ? 0.68 : 0.56),
+      theme.palette.success.main
+    ],
+    [theme]
+  );
   const { cells, monthLabels, totalRequests, maxRequests, weekCount } = useMemo(() => {
     const today = startOfDay(new Date());
     const firstDay = addDays(today, -(days - 1));
@@ -114,7 +125,7 @@ export function RequestHeatmap({ data = [], days = 365, title = "调用热力图
           <Typography variant="caption" color="text.secondary">
             少
           </Typography>
-          {COLORS.map((color) => (
+          {heatColors.map((color) => (
             <Box
               key={color}
               sx={{
@@ -122,7 +133,8 @@ export function RequestHeatmap({ data = [], days = 365, title = "调用热力图
                 height: 12,
                 borderRadius: 0.5,
                 bgcolor: color,
-                border: "1px solid rgba(15,23,42,0.06)"
+                border: "1px solid",
+                borderColor: "divider"
               }}
             />
           ))}
@@ -199,8 +211,9 @@ export function RequestHeatmap({ data = [], days = 365, title = "调用热力图
                       width: 12,
                       height: 12,
                       borderRadius: 0.5,
-                      bgcolor: cell.inRange ? COLORS[level] : "transparent",
-                      border: cell.inRange ? "1px solid rgba(15,23,42,0.06)" : "1px solid transparent"
+                      bgcolor: cell.inRange ? heatColors[level] : "transparent",
+                      border: "1px solid",
+                      borderColor: cell.inRange ? "divider" : "transparent"
                     }}
                   />
                 </Tooltip>

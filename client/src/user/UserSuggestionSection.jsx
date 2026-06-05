@@ -132,7 +132,7 @@ export function UserSuggestionSection({ onToast }) {
         {suggestions.length ? (
           <Stack spacing={1.5}>
             {suggestions.map((item) => (
-              <Paper key={item.id} variant="outlined" sx={{ p: 2, bgcolor: "#fbfcfe" }}>
+              <Paper key={item.id} variant="outlined" sx={{ p: 2, bgcolor: "app.paperAlt" }}>
                 <Stack spacing={1.25}>
                   <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" flexWrap="wrap">
                     <Typography variant="subtitle1" sx={{ fontWeight: 780 }}>
@@ -163,8 +163,8 @@ export function UserSuggestionSection({ onToast }) {
                     <Box
                       sx={{
                         border: "1px solid",
-                        borderColor: "success.light",
-                        bgcolor: "rgba(16,185,129,0.08)",
+                        borderColor: "success.main",
+                        bgcolor: "app.successSoft",
                         borderRadius: 1,
                         p: 1.5
                       }}

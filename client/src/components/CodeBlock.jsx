@@ -10,8 +10,10 @@ export const CodeBlock = React.memo(function CodeBlock({ value }) {
         p: 2,
         overflow: "auto",
         borderRadius: 1,
-        bgcolor: "#101820",
-        color: "#d1fae5",
+        bgcolor: "app.codeBg",
+        color: "app.codeText",
+        border: "1px solid",
+        borderColor: "app.borderStrong",
         fontFamily: 'Consolas, "SFMono-Regular", Menlo, monospace',
         fontSize: 13,
         lineHeight: 1.7

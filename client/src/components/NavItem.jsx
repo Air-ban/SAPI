@@ -6,35 +6,22 @@ export const NavItem = React.memo(function NavItem({ active, icon, primary, seco
     <ListItemButton
       onClick={onClick}
       sx={{
-        borderRadius: 2,
-        py: 0.85,
-        px: 1.5,
+        borderRadius: 1.25,
+        py: 0.7,
+        px: 1,
         position: "relative",
         overflow: "hidden",
-        color: active ? "#fff" : "#94a3b8",
-        bgcolor: active ? "rgba(255,255,255,0.1)" : "transparent",
+        color: active ? "app.sidebarText" : "app.sidebarMuted",
+        bgcolor: active ? "app.sidebarActive" : "transparent",
         transition: "all 0.15s ease",
         "&:hover": {
-          bgcolor: active ? "rgba(255,255,255,0.14)" : "rgba(255,255,255,0.06)",
-          color: active ? "#fff" : "#cbd5e1"
-        },
-        "&::before": active
-          ? {
-              content: '""',
-              position: "absolute",
-              left: 0,
-              top: "20%",
-              bottom: "20%",
-              width: 3,
-              borderRadius: "0 3px 3px 0",
-              bgcolor: "#22d3ee",
-              transition: "opacity 0.2s ease"
-            }
-          : {}
+          bgcolor: active ? "app.sidebarActive" : "app.sidebarHover",
+          color: "app.sidebarText"
+        }
       }}
     >
-      <ListItemIcon sx={{ color: "inherit", minWidth: 36, transition: "color 0.15s ease" }}>
-        {icon}
+      <ListItemIcon sx={{ color: "inherit", minWidth: 30, transition: "color 0.15s ease" }}>
+        <Box sx={{ display: "flex", "& svg": { fontSize: 18 } }}>{icon}</Box>
       </ListItemIcon>
       <ListItemText
         primary={primary}
@@ -42,13 +29,13 @@ export const NavItem = React.memo(function NavItem({ active, icon, primary, seco
         slotProps={{
           primary: {
             variant: "body2",
-            fontWeight: active ? 700 : 500,
+            fontWeight: active ? 620 : 500,
             sx: { transition: "font-weight 0.15s ease" }
           },
           secondary: {
             variant: "caption",
             sx: {
-              color: active ? "rgba(255,255,255,0.6)" : "#64748b",
+              color: "app.sidebarMuted",
               transition: "color 0.15s ease"
             }
           }

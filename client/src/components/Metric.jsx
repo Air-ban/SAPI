@@ -6,41 +6,38 @@ export const Metric = React.memo(function Metric({ icon, label, value }) {
     <Paper
       variant="outlined"
       sx={{
-        p: 2,
+        p: 1.5,
         minWidth: 0,
         cursor: "default",
-        transition: "all 0.2s ease",
+        transition: "border-color 0.15s ease",
         "&:hover": {
-          transform: "translateY(-2px)",
-          boxShadow: "0 8px 25px rgba(0,0,0,0.08)",
-          borderColor: "primary.light"
+          borderColor: "app.borderStrong"
         }
       }}
     >
-      <Stack direction="row" spacing={1.4} alignItems="center">
+      <Stack direction="row" spacing={1.25} alignItems="center">
         <Box
           sx={{
-            width: 44,
-            height: 44,
+            width: 34,
+            height: 34,
             display: "grid",
             placeItems: "center",
-            borderRadius: 2,
-            background: "linear-gradient(135deg, rgba(13,115,119,0.12) 0%, rgba(59,89,152,0.08) 100%)",
-            color: "secondary.main",
+            borderRadius: 1,
+            bgcolor: "app.paperAlt",
+            border: "1px solid",
+            borderColor: "divider",
+            color: "primary.main",
             flexShrink: 0,
-            transition: "transform 0.2s ease",
-            ".MuiPaper-root:hover &": {
-              transform: "scale(1.05)"
-            }
+            "& svg": { fontSize: 18 }
           }}
         >
           {icon}
         </Box>
         <Box sx={{ minWidth: 0 }}>
-          <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
+          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 520 }}>
             {label}
           </Typography>
-          <Typography variant="h6" noWrap title={String(value)} sx={{ fontWeight: 680 }}>
+          <Typography variant="subtitle1" noWrap title={String(value)} sx={{ fontWeight: 640 }}>
             {value}
           </Typography>
         </Box>

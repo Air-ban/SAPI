@@ -1,18 +1,14 @@
 import React from "react";
 import {
-  Drawer,
   Box,
-  Toolbar,
   Stack,
   Typography,
   IconButton,
-  Chip,
   List,
   Paper,
   Button,
   Tooltip
 } from "@mui/material";
-import MenuIcon from "@mui/icons-material/Menu";
 import AnalyticsIcon from "@mui/icons-material/Analytics";
 import KeyIcon from "@mui/icons-material/Key";
 import BarChartIcon from "@mui/icons-material/BarChart";
@@ -28,7 +24,7 @@ import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
 import LogoutIcon from "@mui/icons-material/Logout";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import { NavItem } from "./NavItem";
-import { DRAWER_WIDTH } from "../constants";
+import { ThemeModeToggle } from "./ThemeModeToggle";
 
 const pulseSx = {
   "@keyframes healthPulse": {
@@ -49,12 +45,14 @@ export function Sidebar({
   onPortalPageChange,
   onAdminPageChange,
   onUserLogout,
-  onRefresh
+  onRefresh,
+  themeMode,
+  onToggleThemeMode
 }) {
   const healthMeta = {
-    ok: { label: "服务正常", color: "#22c55e" },
-    fail: { label: "服务异常", color: "#ef4444" },
-    checking: { label: "检查中", color: "#eab308" }
+    ok: { label: "服务正常", color: "success.main" },
+    fail: { label: "服务异常", color: "error.main" },
+    checking: { label: "检查中", color: "warning.main" }
   }[health];
   const portalPages = [
     { id: "overview", icon: <AnalyticsIcon />, primary: "概览", secondary: "Key、模型与端点摘要" },
@@ -89,27 +87,37 @@ export function Sidebar({
   ];
 
   return (
-    <Stack sx={{ height: "100%", p: 2.25, overflow: "auto" }} spacing={2.5}>
-      <Stack direction="row" spacing={1.5} alignItems="center">
+    <Stack sx={{ height: "100%", p: 1.5, overflow: "auto" }} spacing={2}>
+      <Stack direction="row" spacing={1.2} alignItems="center" sx={{ px: 0.5, py: 0.5 }}>
         <Box
-          component="img"
-          src="https://hanguasapi.oss-cn-beijing.aliyuncs.com/%E5%9B%BE%E7%89%87-removebg-preview.png"
-          alt="HanGuan's SuperAPI"
+          aria-hidden="true"
           sx={{
-            width: 44,
-            height: 44,
-            borderRadius: 1.5,
-            objectFit: "contain"
+            width: 30,
+            height: 30,
+            borderRadius: 1,
+            display: "grid",
+            placeItems: "center",
+            bgcolor: "primary.main",
+            color: "primary.contrastText",
+            fontSize: 14,
+            fontWeight: 760
           }}
-        />
-        <Box>
-          <Typography variant="h6" sx={{ lineHeight: 1.1 }}>
-            HanGuan's SuperAPI
+        >
+          S
+        </Box>
+        <Box sx={{ minWidth: 0, flexGrow: 1 }}>
+          <Typography variant="subtitle2" sx={{ lineHeight: 1.1, color: "app.sidebarText", fontWeight: 650 }}>
+            SAPI
           </Typography>
-          <Typography variant="caption" sx={{ color: "#94a3b8" }}>
-            LLM API Relay
+          <Typography variant="caption" sx={{ color: "app.sidebarMuted" }}>
+            AI SDK Gateway
           </Typography>
         </Box>
+        <ThemeModeToggle
+          mode={themeMode}
+          onToggle={onToggleThemeMode}
+          sx={{ color: "app.sidebarText" }}
+        />
       </Stack>
 
       <List disablePadding sx={{ display: "grid", gap: 1 }}>
@@ -136,7 +144,7 @@ export function Sidebar({
       {route === "portal" && user ? (
         <Stack spacing={1.25}>
           <Box sx={{ px: 1, pt: 0.5 }}>
-            <Typography variant="caption" sx={{ color: "#94a3b8", fontWeight: 750, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+            <Typography variant="caption" sx={{ color: "app.sidebarMuted", fontWeight: 600 }}>
               用户前台
             </Typography>
           </Box>
@@ -160,7 +168,7 @@ export function Sidebar({
           {adminNavGroups.map((group) => (
             <Stack key={group.label} spacing={1.25}>
               <Box sx={{ px: 1, pt: 0.5 }}>
-                <Typography variant="caption" sx={{ color: "#94a3b8", fontWeight: 750, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                <Typography variant="caption" sx={{ color: "app.sidebarMuted", fontWeight: 600 }}>
                   {group.label}
                 </Typography>
               </Box>
@@ -187,11 +195,11 @@ export function Sidebar({
         <Paper
           variant="outlined"
           sx={{
-            p: 1.75,
-            borderColor: "rgba(255,255,255,0.1)",
-            bgcolor: "rgba(255,255,255,0.05)",
+            p: 1.25,
+            borderColor: "app.sidebarBorder",
+            bgcolor: "app.sidebarSurface",
             color: "inherit",
-            borderRadius: 2.5
+            borderRadius: 1.25
           }}
         >
           <Stack spacing={1.25}>
@@ -199,7 +207,7 @@ export function Sidebar({
               <Typography variant="body2" sx={{ fontWeight: 720 }} noWrap>
                 {user.name}
               </Typography>
-              <Typography variant="caption" sx={{ color: "#94a3b8" }} noWrap>
+              <Typography variant="caption" sx={{ color: "app.sidebarMuted" }} noWrap>
                 {user.username}
               </Typography>
             </Box>
@@ -209,7 +217,7 @@ export function Sidebar({
               variant="outlined"
               startIcon={<LogoutIcon />}
               onClick={onUserLogout}
-              sx={{ borderColor: "rgba(255,255,255,0.18)", borderRadius: 2 }}
+              sx={{ borderColor: "app.sidebarBorder", borderRadius: 1, color: "app.sidebarText" }}
             >
               退出用户
             </Button>
@@ -220,11 +228,11 @@ export function Sidebar({
       <Paper
         variant="outlined"
         sx={{
-          p: 1.75,
-          borderColor: "rgba(255,255,255,0.1)",
-          bgcolor: "rgba(255,255,255,0.05)",
+          p: 1.25,
+          borderColor: "app.sidebarBorder",
+          bgcolor: "app.sidebarSurface",
           color: "inherit",
-          borderRadius: 2.5
+          borderRadius: 1.25
         }}
       >
         <Stack direction="row" spacing={1.5} alignItems="center">
@@ -235,7 +243,13 @@ export function Sidebar({
               borderRadius: "50%",
               bgcolor: healthMeta.color,
               flexShrink: 0,
-              boxShadow: `0 0 8px ${healthMeta.color}66`,
+              boxShadow: (theme) => `0 0 0 3px ${
+                health === "ok"
+                  ? theme.palette.app.successSoft
+                  : health === "fail"
+                    ? theme.palette.app.errorSoft
+                    : theme.palette.app.warningSoft
+              }`,
               ...(health === "checking" ? pulseSx : {})
             }}
           />
@@ -243,12 +257,12 @@ export function Sidebar({
             <Typography variant="body2" sx={{ fontWeight: 700 }}>
               {healthMeta.label}
             </Typography>
-            <Typography variant="caption" sx={{ color: "#94a3b8" }}>
+            <Typography variant="caption" sx={{ color: "app.sidebarMuted" }}>
               API 服务状态
             </Typography>
           </Box>
           <Tooltip title="刷新状态">
-            <IconButton size="small" onClick={onRefresh} sx={{ color: "#cbd5e1" }}>
+            <IconButton size="small" onClick={onRefresh} sx={{ color: "app.sidebarText" }}>
               <RefreshIcon fontSize="small" />
             </IconButton>
           </Tooltip>

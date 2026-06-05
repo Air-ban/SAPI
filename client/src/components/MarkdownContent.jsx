@@ -18,20 +18,23 @@ export function MarkdownContent({ content }) {
         "& code": {
           fontFamily: 'Consolas, "SFMono-Regular", Menlo, monospace',
           fontSize: "0.88em",
-          bgcolor: "rgba(15,23,42,0.06)",
+          bgcolor: "app.paperAlt",
+          color: "text.primary",
           px: 0.5,
           py: 0.15,
           borderRadius: 0.75
         },
         "& pre": {
-          bgcolor: "#101820",
-          color: "#d1fae5",
+          bgcolor: "app.codeBg",
+          color: "app.codeText",
           p: 2,
           borderRadius: 1,
           overflow: "auto",
           fontSize: 13,
           lineHeight: 1.7,
           mb: 1.5,
+          border: "1px solid",
+          borderColor: "app.borderStrong",
           "& code": {
             bgcolor: "transparent",
             color: "inherit",
@@ -46,13 +49,13 @@ export function MarkdownContent({ content }) {
           pl: 2,
           py: 0.5,
           my: 1.5,
-          bgcolor: "rgba(15,118,110,0.04)",
+          bgcolor: "app.primarySoft",
           borderRadius: "0 8px 8px 0"
         },
         "& a": { color: "primary.main", textDecoration: "none", "&:hover": { textDecoration: "underline" } },
         "& table": { width: "100%", borderCollapse: "collapse", mb: 1.5 },
         "& th, & td": { border: "1px solid", borderColor: "divider", p: 1, textAlign: "left" },
-        "& th": { bgcolor: "rgba(15,23,42,0.04)", fontWeight: 700 },
+        "& th": { bgcolor: "app.paperAlt", fontWeight: 700 },
         "& img": { maxWidth: "100%", borderRadius: 1 },
         "& hr": { border: 0, borderTop: "1px solid", borderColor: "divider", my: 2 }
       }}

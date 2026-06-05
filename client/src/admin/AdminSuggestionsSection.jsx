@@ -74,7 +74,7 @@ export function AdminSuggestionsSection({ suggestions, afterChange, onConfirm, o
               <Paper
                 key={item.id}
                 variant="outlined"
-                sx={{ p: 2, bgcolor: "#fbfcfe" }}
+                sx={{ p: 2, bgcolor: "app.paperAlt" }}
               >
                 <Stack spacing={1.25}>
                   <Stack
@@ -153,7 +153,7 @@ export function AdminSuggestionsSection({ suggestions, afterChange, onConfirm, o
                   </Typography>
 
                   {item.reply ? (
-                    <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "rgba(16,185,129,0.08)", borderColor: "success.light" }}>
+                    <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "app.successSoft", borderColor: "success.main" }}>
                       <Typography variant="caption" color="text.secondary">
                         管理员回复{item.repliedAt ? ` · ${new Date(item.repliedAt).toLocaleString("zh-CN")}` : ""}
                       </Typography>

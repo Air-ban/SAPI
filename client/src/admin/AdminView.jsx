@@ -36,13 +36,15 @@ export function AdminView({
   page = "overview",
   state,
   providerHealth,
+  modelAvailability,
   onLogout,
   onCopy,
   onRefresh,
   onConfirm,
   afterChange,
   onToast,
-  adminToken
+  adminToken,
+  ModelAvailabilityDashboard
 }) {
   const [providerDialogOpen, setProviderDialogOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState(null);
@@ -98,6 +100,10 @@ export function AdminView({
           <Metric icon={<DnsIcon />} label="上游供应商" value={providers.length} />
           <Metric icon={<KeyIcon />} label="用户账号" value={users.length} />
         </Box>
+      ) : null}
+
+      {ModelAvailabilityDashboard && currentPage === "overview" ? (
+        <ModelAvailabilityDashboard availability={modelAvailability} />
       ) : null}
 
       {providerHealth.length > 0 && currentPage === "overview" ? (

@@ -29,7 +29,7 @@ export function ApiKeyRpmRow({ apiKey, userId, afterChange, onToast }) {
   };
 
   return (
-    <Paper variant="outlined" sx={{ p: 1.5, bgcolor: '#fbfcfe' }}>
+    <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "app.paperAlt" }}>
       <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems="center">
         <Typography variant="body2" sx={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           <strong>{apiKey.name}</strong> <code>{apiKey.preview || apiKey.key?.slice(0, 12) + "..."}</code>

@@ -251,6 +251,7 @@ func MountPublicRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/banner", handleBanner)
 	mux.HandleFunc("GET /api/maintenance", handleMaintenance)
 	mux.HandleFunc("GET /api/health/providers", handleProvidersHealth)
+	mux.HandleFunc("GET /api/health/models", handleModelsHealth)
 	mux.HandleFunc("POST /api/suggestions", handlePostSuggestion)
 	mux.HandleFunc("GET /api/swagger.json", handleSwaggerJSON)
 	mux.HandleFunc("GET /swagger", handleSwaggerUI)
