@@ -100,7 +100,7 @@ func main() {
 func isAPIPath(p string) bool {
 	return pathMatches(p, "/api") || pathMatches(p, "/v1") ||
 		pathMatches(p, "/responses") || pathMatches(p, "/messages") ||
-		p == "/chat/completions" || p == "/models" ||
+		p == "/chat/completions" || pathMatches(p, "/models") ||
 		pathMatches(p, "/swagger")
 }
 
@@ -114,7 +114,7 @@ func buildSpaHandler(publicDir string) http.HandlerFunc {
 	indexHTML, indexErr := os.ReadFile(indexPath)
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !isAPIPath(r.URL.Path) && r.URL.Path != "/swagger" && r.URL.Path != "/models" {
+		if !isAPIPath(r.URL.Path) && r.URL.Path != "/swagger" {
 			path := filepath.Join(publicDir, filepath.Clean(r.URL.Path))
 			if info, err := os.Stat(path); err == nil && !info.IsDir() {
 				setStaticCacheHeader(w, r.URL.Path)

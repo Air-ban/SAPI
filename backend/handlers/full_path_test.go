@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -67,7 +68,7 @@ func TestFullPathSmokeWithMockUpstream(t *testing.T) {
 			BaseURL:       upstream.URL + "/v1",
 			APIKey:        "upstream-key",
 			Models:        []models.Model{{ID: "test-model", Name: "test-model"}},
-			ModelMappings: map[string]string{},
+			ModelMappings: map[string]string{"openrouter/test-model": "test-model"},
 			Enabled:       true,
 			CreatedAt:     store.Now(),
 			UpdatedAt:     store.Now(),
@@ -111,6 +112,17 @@ func TestFullPathSmokeWithMockUpstream(t *testing.T) {
 	modelsResp := get(t, app, "/v1/models", userKey)
 	if modelsResp.Code != http.StatusOK || !strings.Contains(modelsResp.Body.String(), "test-model") {
 		t.Fatalf("models returned %d body=%s", modelsResp.Code, modelsResp.Body.String())
+	}
+
+	modelResp := get(t, app, "/v1/models/test-model", userKey)
+	if modelResp.Code != http.StatusOK || !strings.Contains(modelResp.Body.String(), `"id":"test-model"`) {
+		t.Fatalf("model retrieve returned %d body=%s", modelResp.Code, modelResp.Body.String())
+	}
+
+	encodedMappedModel := "/v1/models/" + url.PathEscape("openrouter/test-model")
+	mappedModelResp := get(t, app, encodedMappedModel, userKey)
+	if mappedModelResp.Code != http.StatusOK || !strings.Contains(mappedModelResp.Body.String(), `"id":"openrouter/test-model"`) {
+		t.Fatalf("encoded mapped model retrieve returned %d body=%s", mappedModelResp.Code, mappedModelResp.Body.String())
 	}
 
 	chatResp := postJSON(t, app, "/v1/chat/completions", map[string]interface{}{

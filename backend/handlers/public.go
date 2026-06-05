@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"net/smtp"
+	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -195,45 +197,14 @@ func publicConfig() map[string]interface{} {
 func serviceConfig() map[string]interface{} {
 	cfg := config.Load()
 	db := store.ReadDB()
-
-	modelMap := make(map[string]models.Model)
-	for _, p := range db.Providers {
-		if !p.Enabled {
-			continue
-		}
-		for _, m := range p.Models {
-			if m.ID != "" {
-				modelMap[m.ID] = m
-			}
-		}
-		for customID, upstreamID := range p.ModelMappings {
-			if customID == "" || upstreamID == "" {
-				continue
-			}
-			if _, exists := modelMap[customID]; exists {
-				continue
-			}
-			name := customID
-			for _, m := range p.Models {
-				if m.ID == upstreamID && m.Name != "" {
-					name = m.Name
-					break
-				}
-			}
-			modelMap[customID] = models.Model{ID: customID, Name: name}
-		}
-	}
-
-	modelsList := make([]models.Model, 0, len(modelMap))
-	for _, v := range modelMap {
-		modelsList = append(modelsList, v)
-	}
+	modelsList := availableModelsForKey(db, nil)
 
 	return map[string]interface{}{
 		"name":    "SAPI",
 		"baseUrl": cfg.PublicBaseURL,
 		"endpoints": []map[string]string{
 			{"method": "GET", "path": "/v1/models", "description": "列出当前可用模型"},
+			{"method": "GET", "path": "/v1/models/{model}", "description": "查询单个 OpenAI 兼容模型"},
 			{"method": "POST", "path": "/v1/chat/completions", "description": "OpenAI 兼容聊天补全"},
 			{"method": "POST", "path": "/v1/completions", "description": "OpenAI 兼容文本补全"},
 			{"method": "POST", "path": "/v1/embeddings", "description": "OpenAI 兼容向量接口"},
@@ -251,6 +222,8 @@ func MountPublicRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/public/key", handlePublicKey)
 	mux.HandleFunc("GET /v1/models", handleModelsList)
 	mux.HandleFunc("GET /models", handleModelsList)
+	mux.HandleFunc("GET /v1/models/{model...}", handleModelRetrieve)
+	mux.HandleFunc("GET /models/{model...}", handleModelRetrieve)
 	mux.HandleFunc("GET /api/announcements", handleAnnouncements)
 	mux.HandleFunc("GET /api/banner", handleBanner)
 	mux.HandleFunc("GET /api/maintenance", handleMaintenance)
@@ -300,29 +273,66 @@ func handlePublicKey(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleModelsList(w http.ResponseWriter, r *http.Request) {
+	result, ok := validateModelsRequest(w, r)
+	if !ok {
+		return
+	}
+
+	modelList := availableModelsForKey(result.DB, result.APIKeyRecord)
+	data := make([]map[string]interface{}, len(modelList))
+	for i, m := range modelList {
+		data[i] = modelToOpenAIObject(m)
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"object": "list",
+		"data":   data,
+	})
+}
+
+func handleModelRetrieve(w http.ResponseWriter, r *http.Request) {
+	result, ok := validateModelsRequest(w, r)
+	if !ok {
+		return
+	}
+
+	modelID := modelIDFromModelsPath(r)
+	if modelID == "" {
+		handleModelsList(w, r)
+		return
+	}
+
+	for _, model := range availableModelsForKey(result.DB, result.APIKeyRecord) {
+		if model.ID == modelID {
+			json.NewEncoder(w).Encode(modelToOpenAIObject(model))
+			return
+		}
+	}
+
+	utils.SendError(w, 404, fmt.Sprintf("Model %q was not found or is not allowed for this API key.", modelID), "model_not_found")
+}
+
+func validateModelsRequest(w http.ResponseWriter, r *http.Request) (*middleware.FindUserByKeyResult, bool) {
 	apiKey := utils.GetUserAPIKey(r)
 	result := middleware.FindUserByKey(apiKey)
 	if result.User == nil {
 		utils.SendError(w, 401, "Invalid or disabled SAPI API key.", "invalid_api_key")
-		return
+		return nil, false
 	}
 
-	if result.DB.MaintenanceMode {
-		endTime := result.DB.MaintenanceEndTime
-		msg := "站点维护中，请稍后重试。"
-		if endTime != "" {
-			t, err := time.Parse(time.RFC3339, endTime)
-			if err == nil {
-				loc, _ := time.LoadLocation("Asia/Shanghai")
-				msg = "站点维护中，预计 " + t.In(loc).Format("2006-01-02 15:04:05") + " 恢复。"
-			}
-		}
-		utils.SendError(w, 503, msg, "maintenance_mode")
-		return
+	if middleware.CheckMaintenanceMode(result.DB, w) {
+		return nil, false
 	}
 
+	return result, true
+}
+
+func availableModelsForKey(db *models.Database, apiKeyRecord *models.APIKeyRecord) []models.Model {
 	modelMap := make(map[string]models.Model)
-	for _, p := range result.DB.Providers {
+	if db == nil {
+		return []models.Model{}
+	}
+	for _, p := range db.Providers {
 		if !p.Enabled {
 			continue
 		}
@@ -354,9 +364,9 @@ func handleModelsList(w http.ResponseWriter, r *http.Request) {
 		modelList = append(modelList, v)
 	}
 
-	if result.APIKeyRecord != nil && len(result.APIKeyRecord.AllowedModels) > 0 {
+	if apiKeyRecord != nil && len(apiKeyRecord.AllowedModels) > 0 {
 		allowedSet := make(map[string]bool)
-		for _, m := range result.APIKeyRecord.AllowedModels {
+		for _, m := range apiKeyRecord.AllowedModels {
 			allowedSet[strings.TrimSpace(m)] = true
 		}
 		filtered := make([]models.Model, 0)
@@ -368,25 +378,45 @@ func handleModelsList(w http.ResponseWriter, r *http.Request) {
 		modelList = filtered
 	}
 
-	data := make([]map[string]interface{}, len(modelList))
-	for i, m := range modelList {
-		data[i] = map[string]interface{}{
-			"id":          m.ID,
-			"object":      "model",
-			"created":     0,
-			"owned_by":    "sapi",
-			"name":        m.Name,
-			"cli_support": m.CliSupport,
+	sort.Slice(modelList, func(i, j int) bool {
+		return modelList[i].ID < modelList[j].ID
+	})
+
+	return modelList
+}
+
+func modelToOpenAIObject(m models.Model) map[string]interface{} {
+	item := map[string]interface{}{
+		"id":          m.ID,
+		"object":      "model",
+		"created":     0,
+		"owned_by":    "sapi",
+		"name":        m.Name,
+		"cli_support": m.CliSupport,
+	}
+	if m.CliSupport == nil {
+		item["cli_support"] = []string{}
+	}
+	if m.Description != "" {
+		item["description"] = m.Description
+	}
+	return item
+}
+
+func modelIDFromModelsPath(r *http.Request) string {
+	for _, prefix := range []string{"/v1/models/", "/models/"} {
+		if strings.HasPrefix(r.URL.EscapedPath(), prefix) {
+			raw := strings.TrimPrefix(r.URL.EscapedPath(), prefix)
+			modelID, err := url.PathUnescape(raw)
+			if err == nil {
+				return strings.TrimSpace(modelID)
+			}
 		}
-		if m.CliSupport == nil {
-			data[i]["cli_support"] = []string{}
+		if strings.HasPrefix(r.URL.Path, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(r.URL.Path, prefix))
 		}
 	}
-
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"object": "list",
-		"data":   data,
-	})
+	return ""
 }
 
 func handleAnnouncements(w http.ResponseWriter, r *http.Request) {
@@ -560,6 +590,7 @@ func handleSwaggerJSON(w http.ResponseWriter, r *http.Request) {
 		},
 		"paths": map[string]interface{}{
 			"/v1/models":                map[string]interface{}{"get": map[string]interface{}{"tags": []string{"Models"}, "summary": "List available models", "security": []map[string][]string{{"bearerAuth": {}}}, "responses": map[string]interface{}{"200": map[string]string{"description": "Models list"}}}},
+			"/v1/models/{model}":        map[string]interface{}{"get": map[string]interface{}{"tags": []string{"Models"}, "summary": "Retrieve a model", "security": []map[string][]string{{"bearerAuth": {}}}, "parameters": []map[string]interface{}{{"name": "model", "in": "path", "required": true, "schema": map[string]string{"type": "string"}}}, "responses": map[string]interface{}{"200": map[string]string{"description": "Model details"}, "404": map[string]string{"description": "Model not found"}}}},
 			"/v1/chat/completions":      map[string]interface{}{"post": map[string]interface{}{"tags": []string{"Chat"}, "summary": "Chat completions", "security": []map[string][]string{{"bearerAuth": {}}}}},
 			"/v1/completions":           map[string]interface{}{"post": map[string]interface{}{"tags": []string{"Completions"}, "summary": "Text completions", "security": []map[string][]string{{"bearerAuth": {}}}}},
 			"/v1/embeddings":            map[string]interface{}{"post": map[string]interface{}{"tags": []string{"Embeddings"}, "summary": "Create embeddings", "security": []map[string][]string{{"bearerAuth": {}}}}},

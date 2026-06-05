@@ -17,6 +17,7 @@ func TestIsAPIPathUsesPathSegments(t *testing.T) {
 		{path: "/messages/count_tokens", want: true},
 		{path: "/chat/completions", want: true},
 		{path: "/models", want: true},
+		{path: "/models/test-model", want: true},
 		{path: "/swagger", want: true},
 		{path: "/swagger/index.html", want: true},
 		{path: "/apix", want: false},

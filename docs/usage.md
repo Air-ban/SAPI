@@ -134,6 +134,32 @@ curl http://localhost:3000/models \
 
 返回模型受 Provider 启用状态、模型映射、API Key 模型白名单影响。
 
+查询单个模型:
+
+```bash
+curl http://localhost:3000/v1/models/gpt-4o-mini \
+  -H "Authorization: Bearer sk-sapi-..."
+```
+
+模型 ID 如果包含 `/`，调用方应按 URL path 规则编码。SAPI 会按同一套 Provider 启用状态、模型映射和 API Key 白名单返回结果。
+
+## AstrBot 接入
+AstrBot 使用 OpenAI 兼容提供商接入 SAPI。
+
+在 AstrBot 管理面板进入 `服务提供商`，新增提供商时选择 `OpenAI`:
+
+- API Base URL: `https://sapi.eterultimate.asia/v1`
+- API Key: 用户控制台或管理员创建的 `sk-sapi-...`
+- 模型: 点击获取模型列表后选择需要启用的模型
+
+本地开发环境可把 API Base URL 改为:
+
+```text
+http://localhost:3000/v1
+```
+
+不要把 API Base URL 填成 `/v1/chat/completions`。AstrBot 会自己拼接 OpenAI Chat Completions 路径，并会通过 `GET /v1/models` 获取模型列表。SAPI 同时兼容 `GET /v1/models/{model}`，用于 OpenAI SDK 或 AstrBot 侧的单模型探测。
+
 ## OpenAI Chat Completions
 ```bash
 curl http://localhost:3000/v1/chat/completions \
