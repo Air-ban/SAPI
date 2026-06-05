@@ -1,13 +1,17 @@
 package store
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -19,8 +23,16 @@ import (
 
 var (
 	mu                      sync.RWMutex
+	requestLogMu            sync.Mutex
 	cachedDB                *models.Database
 	lastRequestLogPruneTime time.Time
+	lastFileRequestLogPrune time.Time
+	lastStatePersistTime    time.Time
+)
+
+const (
+	fileRequestLogPruneInterval = time.Hour
+	statePersistInterval        = 30 * time.Second
 )
 
 func Init(ctx context.Context, cfg *config.Config) error {
@@ -57,6 +69,15 @@ func DataFilePath() string {
 	}
 	exePath, _ := os.Executable()
 	return filepath.Join(filepath.Dir(exePath), "..", "data", "sapi.json")
+}
+
+func RequestLogFilePath() string {
+	filePath := DataFilePath()
+	ext := filepath.Ext(filePath)
+	if ext == "" {
+		return filePath + ".request-logs.jsonl"
+	}
+	return strings.TrimSuffix(filePath, ext) + ".request-logs.jsonl"
 }
 
 func Now() string {
@@ -119,7 +140,7 @@ func ReadDB() *models.Database {
 
 func writeDB(db *models.Database) {
 	db.UpdatedAt = Now()
-	writeDBDirect(db)
+	writeDBDirect(stateForPersist(db))
 }
 
 func writeDBDirect(db *models.Database) {
@@ -189,6 +210,21 @@ func loadCacheLocked(ctx context.Context, createIfMissing bool) error {
 	if db == nil {
 		db = newDefaultDB()
 	}
+	if !postgresEnabled() && len(db.RequestLogs) > 0 {
+		if err := migrateFileRequestLogs(db.RequestLogs); err != nil {
+			log.Printf("[STORE] migrate request logs to jsonl failed: %v", err)
+		} else {
+			db.RequestLogs = requestLogsForMemory(db.RequestLogs)
+		}
+	} else if !postgresEnabled() {
+		items, err := queryFileRequestLogs(requestLogCutoff(), "", 50000)
+		if err != nil {
+			log.Printf("[STORE] load request log summaries failed: %v", err)
+			db.RequestLogs = []models.RequestLog{}
+		} else {
+			db.RequestLogs = items
+		}
+	}
 	if normalizeDB(db) {
 		if postgresEnabled() {
 			if err := savePostgresState(ctx, db); err != nil {
@@ -197,6 +233,9 @@ func loadCacheLocked(ctx context.Context, createIfMissing bool) error {
 		} else {
 			writeDB(db)
 		}
+	}
+	if !postgresEnabled() && len(db.RequestLogs) == 0 {
+		writeDB(db)
 	}
 	if postgresEnabled() {
 		for _, item := range db.RequestLogs {
@@ -220,7 +259,7 @@ func persistStateLocked(ctx context.Context, db *models.Database) error {
 	if postgresEnabled() {
 		return savePostgresState(ctx, db)
 	}
-	writeDBDirect(db)
+	writeDBDirect(stateForPersist(db))
 	return nil
 }
 
@@ -259,6 +298,15 @@ func cloneDatabase(db *models.Database) *models.Database {
 	return &cloned
 }
 
+func stateForPersist(db *models.Database) *models.Database {
+	state := cloneDatabase(db)
+	if state == nil {
+		return nil
+	}
+	state.RequestLogs = []models.RequestLog{}
+	return state
+}
+
 func cloneDatabaseForRead(db *models.Database) *models.Database {
 	if db == nil {
 		return nil
@@ -294,21 +342,33 @@ func requestLogForList(item models.RequestLog) models.RequestLog {
 	return item
 }
 
-func AppendRequestLog(item models.RequestLog) {
-	mu.Lock()
-	defer mu.Unlock()
+func requestLogsForMemory(items []models.RequestLog) []models.RequestLog {
+	cutoff := requestLogCutoff()
+	result := make([]models.RequestLog, 0, len(items))
+	for _, item := range items {
+		if requestLogAtOrAfter(item, cutoff) {
+			result = append(result, requestLogForList(item))
+		}
+	}
+	if len(result) > 50000 {
+		result = result[len(result)-50000:]
+	}
+	return result
+}
 
+func AppendRequestLog(item models.RequestLog) {
+	timestamp := item.Timestamp
+	if timestamp == "" {
+		timestamp = Now()
+		item.Timestamp = timestamp
+	}
+
+	mu.Lock()
 	if cachedDB == nil {
 		if err := loadCacheLocked(context.Background(), true); err != nil {
 			log.Printf("[STORE] request log load failed: %v", err)
 			cachedDB = newDefaultDB()
 		}
-	}
-
-	timestamp := item.Timestamp
-	if timestamp == "" {
-		timestamp = Now()
-		item.Timestamp = timestamp
 	}
 
 	if item.APIKeyID != "" {
@@ -325,22 +385,33 @@ func AppendRequestLog(item models.RequestLog) {
 	}
 
 	if postgresEnabled() {
+		cachedDB.RequestLogs = []models.RequestLog{}
+		mu.Unlock()
 		if err := insertPostgresRequestLog(context.Background(), item); err != nil {
 			log.Printf("[STORE] insert postgres request log failed: %v", err)
 		}
 		prunePostgresRequestLogsIfDue(context.Background())
-		cachedDB.RequestLogs = []models.RequestLog{}
 		return
 	}
 
-	cachedDB.RequestLogs = append(cachedDB.RequestLogs, item)
+	cachedDB.RequestLogs = append(cachedDB.RequestLogs, requestLogForList(item))
 	cachedDB.RequestLogs = pruneRequestLogs(cachedDB.RequestLogs, requestLogCutoff())
 	if len(cachedDB.RequestLogs) > 50000 {
 		cachedDB.RequestLogs = cachedDB.RequestLogs[len(cachedDB.RequestLogs)-50000:]
 	}
-	if err := persistStateLocked(context.Background(), cachedDB); err != nil {
-		log.Printf("[STORE] persist request log failed: %v", err)
+	now := time.Now().UTC()
+	if lastStatePersistTime.IsZero() || now.Sub(lastStatePersistTime) >= statePersistInterval {
+		if err := persistStateLocked(context.Background(), cachedDB); err != nil {
+			log.Printf("[STORE] persist state failed: %v", err)
+		}
+		lastStatePersistTime = now
 	}
+	mu.Unlock()
+
+	if err := appendFileRequestLog(item); err != nil {
+		log.Printf("[STORE] append file request log failed: %v", err)
+	}
+	pruneFileRequestLogsIfDue(requestLogCutoff())
 }
 
 func RequestLogsSince(db *models.Database, since time.Time, userID string, limit int) []models.RequestLog {
@@ -368,6 +439,13 @@ func RequestLogsSince(db *models.Database, since time.Time, userID string, limit
 	if limit > 0 && len(result) > limit {
 		result = result[len(result)-limit:]
 	}
+	if len(result) == 0 && len(db.RequestLogs) == 0 {
+		if items, err := queryFileRequestLogs(since, userID, limit); err == nil {
+			return items
+		} else {
+			log.Printf("[STORE] query file request logs failed: %v", err)
+		}
+	}
 	return result
 }
 
@@ -382,6 +460,14 @@ func FindRequestLog(id, userID string) (*models.RequestLog, bool) {
 			return item, ok
 		}
 		log.Printf("[STORE] query postgres request log failed: %v", err)
+	}
+
+	if item, ok, err := findFileRequestLog(id, userID); err == nil {
+		if ok {
+			return item, true
+		}
+	} else {
+		log.Printf("[STORE] find file request log failed: %v", err)
 	}
 
 	mu.RLock()
@@ -415,6 +501,212 @@ func cloneRequestLog(item models.RequestLog) models.RequestLog {
 		cloned.HasRequestContent = true
 	}
 	return cloned
+}
+
+func migrateFileRequestLogs(items []models.RequestLog) error {
+	if len(items) == 0 {
+		return nil
+	}
+	requestLogMu.Lock()
+	defer requestLogMu.Unlock()
+	for _, item := range items {
+		if item.ID == "" {
+			continue
+		}
+		if err := appendFileRequestLogLocked(item); err != nil {
+			return err
+		}
+	}
+	lastFileRequestLogPrune = time.Time{}
+	return pruneFileRequestLogsLocked(requestLogCutoff())
+}
+
+func appendFileRequestLog(item models.RequestLog) error {
+	if item.ID == "" {
+		return nil
+	}
+	requestLogMu.Lock()
+	defer requestLogMu.Unlock()
+	return appendFileRequestLogLocked(item)
+}
+
+func appendFileRequestLogLocked(item models.RequestLog) error {
+	filePath := RequestLogFilePath()
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(filePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	raw, err := json.Marshal(item)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(raw); err != nil {
+		return err
+	}
+	_, err = f.Write([]byte("\n"))
+	return err
+}
+
+func queryFileRequestLogs(since time.Time, userID string, limit int) ([]models.RequestLog, error) {
+	requestLogMu.Lock()
+	defer requestLogMu.Unlock()
+	items, err := readFileRequestLogsLocked(func(item models.RequestLog) bool {
+		if userID != "" && item.UserID != userID {
+			return false
+		}
+		return requestLogAtOrAfter(item, since)
+	}, true)
+	if err != nil {
+		return nil, err
+	}
+	if limit > 0 && len(items) > limit {
+		items = items[len(items)-limit:]
+	}
+	return items, nil
+}
+
+func findFileRequestLog(id, userID string) (*models.RequestLog, bool, error) {
+	requestLogMu.Lock()
+	defer requestLogMu.Unlock()
+	var found *models.RequestLog
+	_, err := readFileRequestLogsLocked(func(item models.RequestLog) bool {
+		if item.ID != id {
+			return false
+		}
+		if userID != "" && item.UserID != userID {
+			return false
+		}
+		cloned := cloneRequestLog(item)
+		found = &cloned
+		return false
+	}, false)
+	if err != nil {
+		return nil, false, err
+	}
+	return found, found != nil, nil
+}
+
+func readFileRequestLogsLocked(keep func(models.RequestLog) bool, forList bool) ([]models.RequestLog, error) {
+	filePath := RequestLogFilePath()
+	f, err := os.Open(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []models.RequestLog{}, nil
+		}
+		return nil, err
+	}
+	defer f.Close()
+
+	result := make([]models.RequestLog, 0)
+	reader := bufio.NewReaderSize(f, 1024*1024)
+	for {
+		line, err := reader.ReadBytes('\n')
+		if len(bytes.TrimSpace(line)) > 0 {
+			var item models.RequestLog
+			if jsonErr := json.Unmarshal(bytes.TrimSpace(line), &item); jsonErr == nil && keep(item) {
+				if forList {
+					item = requestLogForList(item)
+				}
+				result = append(result, item)
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Timestamp < result[j].Timestamp
+	})
+	return result, nil
+}
+
+func pruneFileRequestLogsIfDue(cutoff time.Time) {
+	now := time.Now().UTC()
+	requestLogMu.Lock()
+	defer requestLogMu.Unlock()
+	if now.Sub(lastFileRequestLogPrune) < fileRequestLogPruneInterval {
+		return
+	}
+	lastFileRequestLogPrune = now
+	if err := pruneFileRequestLogsLocked(cutoff); err != nil {
+		log.Printf("[STORE] prune file request logs failed: %v", err)
+	}
+}
+
+func pruneFileRequestLogsLocked(cutoff time.Time) error {
+	filePath := RequestLogFilePath()
+	input, err := os.Open(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	defer input.Close()
+
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		return err
+	}
+	tempFile := filePath + ".tmp"
+	output, err := os.OpenFile(tempFile, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+
+	reader := bufio.NewReaderSize(input, 1024*1024)
+	writer := bufio.NewWriterSize(output, 1024*1024)
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) > 0 {
+			var item models.RequestLog
+			if jsonErr := json.Unmarshal(trimmed, &item); jsonErr == nil && requestLogAtOrAfter(item, cutoff) {
+				if _, err := writer.Write(trimmed); err != nil {
+					output.Close()
+					return err
+				}
+				if err := writer.WriteByte('\n'); err != nil {
+					output.Close()
+					return err
+				}
+			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			output.Close()
+			return readErr
+		}
+	}
+	if err := writer.Flush(); err != nil {
+		output.Close()
+		return err
+	}
+	if err := output.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tempFile, filePath)
+}
+
+func requestLogAtOrAfter(item models.RequestLog, cutoff time.Time) bool {
+	if item.Timestamp == "" {
+		return true
+	}
+	if ts, err := time.Parse(time.RFC3339, item.Timestamp); err == nil {
+		return !ts.Before(cutoff.UTC())
+	}
+	if ts, err := time.Parse("2006-01-02T15:04:05.000Z", item.Timestamp); err == nil {
+		return !ts.Before(cutoff.UTC())
+	}
+	return item.Timestamp >= cutoff.UTC().Format(time.RFC3339)
 }
 
 func requestLogCutoff() time.Time {

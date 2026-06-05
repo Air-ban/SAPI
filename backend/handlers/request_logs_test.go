@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -112,5 +113,40 @@ func TestRequestLogDetailReturnsContentWithAccessControl(t *testing.T) {
 	mux.ServeHTTP(otherRec, otherReq)
 	if otherRec.Code != http.StatusNotFound {
 		t.Fatalf("expected other user to get 404, got %d body=%s", otherRec.Code, otherRec.Body.String())
+	}
+}
+
+func TestFileStoreKeepsRequestContentOutOfMainState(t *testing.T) {
+	dataFile := filepath.Join(t.TempDir(), "sapi.json")
+	t.Setenv("SAPI_DATA_FILE", dataFile)
+	t.Setenv("SAPI_POSTGRES_URL", " ")
+	t.Setenv("DATABASE_URL", " ")
+	if err := store.Init(context.Background(), config.Load()); err != nil {
+		t.Fatal(err)
+	}
+
+	store.AppendRequestLog(models.RequestLog{
+		ID:             "log_file_split",
+		UserID:         "usr_file",
+		Status:         http.StatusOK,
+		OK:             true,
+		RequestContent: map[string]interface{}{"prompt": "payload-kept-in-jsonl"},
+		Timestamp:      store.Now(),
+	})
+
+	mainState, err := os.ReadFile(dataFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(mainState), "payload-kept-in-jsonl") || strings.Contains(string(mainState), "requestContent") {
+		t.Fatalf("main state should not persist full request content, got %s", string(mainState))
+	}
+
+	item, ok := store.FindRequestLog("log_file_split", "usr_file")
+	if !ok {
+		t.Fatal("expected request log detail to be found from jsonl")
+	}
+	if item.RequestContent["prompt"] != "payload-kept-in-jsonl" {
+		t.Fatalf("expected full request content from jsonl, got %#v", item.RequestContent)
 	}
 }
