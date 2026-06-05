@@ -48,6 +48,14 @@ redis.call("PEXPIRE", KEYS[1], ARGV[2])
 return {1, count + 1, 0}
 `)
 
+var consumeOnceScript = redis.NewScript(`
+if redis.call("EXISTS", KEYS[1]) == 1 then
+  redis.call("DEL", KEYS[1])
+  return 1
+end
+return 0
+`)
+
 func Init(ctx context.Context, cfg *config.Config) error {
 	Configure(cfg)
 	if cfg == nil || strings.TrimSpace(cfg.RedisURL) == "" {
@@ -281,6 +289,29 @@ func RedisClearFailures(ctx context.Context, keys []string) error {
 		return err
 	}
 	return nil
+}
+
+func RedisRememberOnce(ctx context.Context, key string, ttl time.Duration) error {
+	if redisClient == nil || key == "" || ttl <= 0 {
+		return errRedisDisabled()
+	}
+	if err := redisClient.Set(ctx, prefixedKey("once", key), "1", ttl).Err(); err != nil {
+		logRedisError(err)
+		return err
+	}
+	return nil
+}
+
+func RedisConsumeOnce(ctx context.Context, key string) (bool, error) {
+	if redisClient == nil || key == "" {
+		return false, errRedisDisabled()
+	}
+	result, err := consumeOnceScript.Run(ctx, redisClient, []string{prefixedKey("once", key)}).Result()
+	if err != nil {
+		logRedisError(err)
+		return false, err
+	}
+	return toInt64(result) == 1, nil
 }
 
 func ValidHTTPBaseURL(value string) bool {

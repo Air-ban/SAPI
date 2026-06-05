@@ -22,6 +22,13 @@ import { DRAWER_WIDTH, ADMIN_TOKEN_KEY, USER_TOKEN_KEY } from "./constants";
 import { request } from "./utils/api";
 import { getInitialRoute } from "./utils/helpers";
 import { setupMarked } from "./utils/markedConfig";
+import {
+  decodeCreationOptions,
+  decodeRequestOptions,
+  encodeLoginCredential,
+  encodeRegistrationCredential,
+  passkeySupported
+} from "./utils/passkey";
 
 import { Sidebar } from "./components/Sidebar";
 import { LoadingPage } from "./components/LoadingPage";
@@ -350,6 +357,19 @@ function App() {
     setMobileOpen(false);
   };
 
+  const completeAdminLogin = async (data, message = "已进入管理后台") => {
+    localStorage.setItem(ADMIN_TOKEN_KEY, data.token);
+    localStorage.removeItem(USER_TOKEN_KEY);
+    setAdminToken(data.token);
+    setUserToken("");
+    setUserSession(null);
+    setSelectedKey("");
+    showToast(message);
+    await loadAdminState();
+    await loadPublicConfig();
+    navigate("admin");
+  };
+
   const login = async ({ username, password, captchaTicket, captchaRandstr }) => {
     const data = await request("/api/auth/login", {
       method: "POST",
@@ -358,15 +378,7 @@ function App() {
     });
 
     if (data.role === "admin") {
-      localStorage.setItem(ADMIN_TOKEN_KEY, data.token);
-      localStorage.removeItem(USER_TOKEN_KEY);
-      setAdminToken(data.token);
-      setUserToken("");
-      setUserSession(null);
-      setSelectedKey("");
-      showToast("已进入管理后台");
-      await loadAdminState();
-      navigate("admin");
+      await completeAdminLogin(data);
       return;
     }
 
@@ -383,6 +395,62 @@ function App() {
     setSelectedKey(data.user.apiKey || "");
     showToast("已登录");
     navigate("portal");
+  };
+
+  const loginWithAdminPasskey = async () => {
+    if (!passkeySupported()) {
+      throw new Error("当前浏览器不支持 Passkey");
+    }
+    const start = await request("/api/admin/passkeys/login/options", {
+      method: "POST",
+      admin: false,
+      body: {}
+    });
+    const credential = await navigator.credentials.get(decodeRequestOptions(start.options));
+    if (!credential) {
+      throw new Error("Passkey 登录已取消");
+    }
+    const data = await request("/api/admin/passkeys/login/finish", {
+      method: "POST",
+      admin: false,
+      body: {
+        sessionToken: start.sessionToken,
+        credential: encodeLoginCredential(credential)
+      }
+    });
+    await completeAdminLogin(data, "已使用 Passkey 进入管理后台");
+  };
+
+  const registerAdminPasskey = async () => {
+    if (!passkeySupported()) {
+      throw new Error("当前浏览器不支持 Passkey");
+    }
+    const start = await request("/api/admin/passkeys/register/options", {
+      method: "POST",
+      body: {}
+    });
+    const credential = await navigator.credentials.create(decodeCreationOptions(start.options));
+    if (!credential) {
+      throw new Error("Passkey 绑定已取消");
+    }
+    await request("/api/admin/passkeys/register/finish", {
+      method: "POST",
+      body: {
+        sessionToken: start.sessionToken,
+        name: navigator.platform ? `Admin ${navigator.platform}` : "Admin Passkey",
+        credential: encodeRegistrationCredential(credential)
+      }
+    });
+    await Promise.all([loadAdminState(), loadPublicConfig()]);
+    showToast("Passkey 已绑定");
+  };
+
+  const deleteAdminPasskey = async (passkey) => {
+    await request(`/api/admin/passkeys/${encodeURIComponent(passkey.id)}`, {
+      method: "DELETE"
+    });
+    await Promise.all([loadAdminState(), loadPublicConfig()]);
+    showToast("Passkey 已删除");
   };
 
   const sendVerificationCode = async (email, purpose = "register", captchaTicket = "", captchaRandstr = "") => {
@@ -607,6 +675,7 @@ function App() {
         <AuthPage
           mode={route === "register" ? "register" : "login"}
           onLogin={login}
+          onPasskeyLogin={loginWithAdminPasskey}
           onRegister={userRegister}
           onSendCode={sendVerificationCode}
           onSendForgotCode={sendForgotPasswordCode}
@@ -792,6 +861,16 @@ function App() {
                 adminToken={adminToken}
                 ModelAvailabilityDashboard={ModelAvailabilityDashboard}
                 onLoadRequestContent={loadAdminRequestContent}
+                onRegisterPasskey={registerAdminPasskey}
+                onDeletePasskey={(passkey) =>
+                  setConfirm({
+                    title: "删除 Passkey",
+                    message: `确认删除 ${passkey?.name || "该 Passkey"}？`,
+                    confirmText: "删除",
+                    danger: true,
+                    action: () => deleteAdminPasskey(passkey)
+                  })
+                }
               />
             )}
           </Box>

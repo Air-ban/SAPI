@@ -9,6 +9,7 @@ import (
 
 	"sapi/auth"
 	"sapi/config"
+	"sapi/middleware"
 	"sapi/models"
 	"sapi/security"
 	"sapi/store"
@@ -24,6 +25,11 @@ func MountAuthRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/auth/register", handleRegister)
 	mux.HandleFunc("POST /api/auth/forgot-password/send-code", handleForgotPasswordSendCode)
 	mux.HandleFunc("POST /api/auth/forgot-password/reset", handleForgotPasswordReset)
+	mux.HandleFunc("POST /api/admin/passkeys/register/options", middleware.RequireAdmin(handleAdminPasskeyRegisterOptions))
+	mux.HandleFunc("POST /api/admin/passkeys/register/finish", middleware.RequireAdmin(handleAdminPasskeyRegisterFinish))
+	mux.HandleFunc("POST /api/admin/passkeys/login/options", handleAdminPasskeyLoginOptions)
+	mux.HandleFunc("POST /api/admin/passkeys/login/finish", handleAdminPasskeyLoginFinish)
+	mux.HandleFunc("DELETE /api/admin/passkeys/{id}", middleware.RequireAdmin(handleAdminPasskeyDelete))
 }
 
 func handleAdminLogin(w http.ResponseWriter, r *http.Request) {

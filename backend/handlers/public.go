@@ -191,6 +191,9 @@ func publicConfig() map[string]interface{} {
 			"enabled":              cfg.GitHubClientID != "" && cfg.GitHubClientSecret != "",
 			"requiredFollowTarget": cfg.GitHubRequiredFollowTarget,
 		},
+		"adminPasskey": map[string]interface{}{
+			"enabled": store.AdminPasskeyCount() > 0,
+		},
 	}
 }
 

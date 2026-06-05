@@ -1,5 +1,7 @@
 package models
 
+import "github.com/go-webauthn/webauthn/webauthn"
+
 type Database struct {
 	Version            int                `json:"version"`
 	AppSecret          string             `json:"appSecret"`
@@ -10,6 +12,7 @@ type Database struct {
 	AdminAPIKeys       []APIKeyRecord     `json:"adminApiKeys"`
 	InvitationCodes    []InvitationCode   `json:"invitationCodes"`
 	VerificationCodes  []VerificationCode `json:"verificationCodes"`
+	AdminPasskeys      []AdminPasskey     `json:"adminPasskeys"`
 	Announcements      []Announcement     `json:"announcements"`
 	Documents          []interface{}      `json:"documents"`
 	Suggestions        []Suggestion       `json:"suggestions"`
@@ -141,6 +144,15 @@ type VerificationCode struct {
 	Purpose   string `json:"purpose"`
 	CreatedAt string `json:"createdAt"`
 	Used      bool   `json:"used"`
+}
+
+type AdminPasskey struct {
+	ID         string              `json:"id"`
+	Name       string              `json:"name"`
+	Credential webauthn.Credential `json:"credential"`
+	CreatedAt  string              `json:"createdAt"`
+	UpdatedAt  string              `json:"updatedAt"`
+	LastUsedAt string              `json:"lastUsedAt"`
 }
 
 type Announcement struct {

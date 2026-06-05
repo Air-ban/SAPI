@@ -31,6 +31,7 @@ import { BannerEditSection } from "./BannerEditSection";
 import { RpmLimitSection } from "./RpmLimitSection";
 import { AnnouncementsSection } from "./AnnouncementsSection";
 import { AdminSuggestionsSection } from "./AdminSuggestionsSection";
+import { AdminPasskeysSection } from "./AdminPasskeysSection";
 
 export function AdminView({
   page = "overview",
@@ -45,7 +46,9 @@ export function AdminView({
   onToast,
   adminToken,
   ModelAvailabilityDashboard,
-  onLoadRequestContent
+  onLoadRequestContent,
+  onRegisterPasskey,
+  onDeletePasskey
 }) {
   const [providerDialogOpen, setProviderDialogOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState(null);
@@ -210,6 +213,12 @@ export function AdminView({
             onCopy={onCopy}
             onConfirm={onConfirm}
             afterChange={afterChange}
+            onToast={onToast}
+          />
+          <AdminPasskeysSection
+            passkeys={state?.adminPasskeys || []}
+            onRegister={onRegisterPasskey}
+            onDelete={onDeletePasskey}
             onToast={onToast}
           />
         </>

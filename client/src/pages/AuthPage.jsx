@@ -19,6 +19,7 @@ import {
 import LoginIcon from "@mui/icons-material/Login";
 import PersonAddIcon from "@mui/icons-material/PersonAdd";
 import GitHubIcon from "@mui/icons-material/GitHub";
+import FingerprintIcon from "@mui/icons-material/Fingerprint";
 import { ForgotPasswordDialog } from "../components/ForgotPasswordDialog";
 import { DividerLine } from "../components/DividerLine";
 import { ThemeModeToggle } from "../components/ThemeModeToggle";
@@ -26,6 +27,7 @@ import { ThemeModeToggle } from "../components/ThemeModeToggle";
 export function AuthPage({
   mode,
   onLogin,
+  onPasskeyLogin,
   onRegister,
   onSendCode,
   onSendForgotCode,
@@ -39,6 +41,7 @@ export function AuthPage({
   const isRegister = mode === "register";
   const githubEnabled = Boolean(publicConfig?.github?.enabled);
   const githubRequiredFollowTarget = publicConfig?.github?.requiredFollowTarget || "";
+  const adminPasskeyEnabled = Boolean(publicConfig?.adminPasskey?.enabled);
   const [form, setForm] = useState({
     username: "",
     email: "",
@@ -83,6 +86,18 @@ export function AuthPage({
       onToast(error.message, "error");
     } finally {
       setCodeLoading(false);
+    }
+  };
+
+  const passkeyLogin = async () => {
+    if (!onPasskeyLogin) return;
+    setLoading(true);
+    try {
+      await onPasskeyLogin();
+    } catch (error) {
+      onToast(error.message, "error");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -316,6 +331,17 @@ export function AuthPage({
                 >
                   {isRegister ? "注册" : "登录"}
                 </Button>
+                {!isRegister && adminPasskeyEnabled ? (
+                  <Button
+                    variant="outlined"
+                    size="large"
+                    startIcon={<FingerprintIcon />}
+                    onClick={passkeyLogin}
+                    disabled={loading}
+                  >
+                    使用 Passkey 登录管理后台
+                  </Button>
+                ) : null}
                 {githubEnabled ? (
                   <Stack spacing={0.75}>
                     <Button

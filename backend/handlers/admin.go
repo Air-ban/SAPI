@@ -66,6 +66,7 @@ func handleAdminState(w http.ResponseWriter, r *http.Request) {
 		"providers":          store.RedactProviders(db.Providers),
 		"users":              sanitizeUsers(db.Users),
 		"adminApiKeys":       sanitizeAdminAPIKeys(db.AdminAPIKeys),
+		"adminPasskeys":      sanitizeAdminPasskeys(db.AdminPasskeys),
 		"publicConfig":       serviceConfig(),
 		"usage":              usage.GetUsageStats(db, "", 30),
 		"invitationCodes":    db.InvitationCodes,

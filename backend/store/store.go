@@ -104,14 +104,15 @@ func ensureFileDB() {
 
 	createdAt := Now()
 	db := &models.Database{
-		Version:     1,
-		AppSecret:   auth.RandomSecret(),
-		Providers:   []models.Provider{},
-		Users:       []models.User{},
-		TokenUsage:  []interface{}{},
-		RequestLogs: []models.RequestLog{},
-		CreatedAt:   createdAt,
-		UpdatedAt:   createdAt,
+		Version:       1,
+		AppSecret:     auth.RandomSecret(),
+		Providers:     []models.Provider{},
+		Users:         []models.User{},
+		TokenUsage:    []interface{}{},
+		RequestLogs:   []models.RequestLog{},
+		AdminPasskeys: []models.AdminPasskey{},
+		CreatedAt:     createdAt,
+		UpdatedAt:     createdAt,
 	}
 
 	os.MkdirAll(filepath.Dir(filePath), 0755)
@@ -189,6 +190,16 @@ func ReadDBInternal() *models.Database {
 		cachedDB = newDefaultDB()
 	}
 	return cloneDatabase(cachedDB)
+}
+
+func AdminPasskeyCount() int {
+	EnsureDB()
+	mu.RLock()
+	defer mu.RUnlock()
+	if cachedDB == nil {
+		return 0
+	}
+	return len(cachedDB.AdminPasskeys)
 }
 
 func loadCacheLocked(ctx context.Context, createIfMissing bool) error {
@@ -741,14 +752,15 @@ func pruneRequestLogs(items []models.RequestLog, cutoff time.Time) []models.Requ
 func newDefaultDB() *models.Database {
 	createdAt := Now()
 	return &models.Database{
-		Version:     1,
-		AppSecret:   auth.RandomSecret(),
-		Providers:   []models.Provider{},
-		Users:       []models.User{},
-		TokenUsage:  []interface{}{},
-		RequestLogs: []models.RequestLog{},
-		CreatedAt:   createdAt,
-		UpdatedAt:   createdAt,
+		Version:       1,
+		AppSecret:     auth.RandomSecret(),
+		Providers:     []models.Provider{},
+		Users:         []models.User{},
+		TokenUsage:    []interface{}{},
+		RequestLogs:   []models.RequestLog{},
+		AdminPasskeys: []models.AdminPasskey{},
+		CreatedAt:     createdAt,
+		UpdatedAt:     createdAt,
 	}
 }
 
@@ -789,6 +801,10 @@ func normalizeDB(db *models.Database) bool {
 	}
 	if db.VerificationCodes == nil {
 		db.VerificationCodes = []models.VerificationCode{}
+		changed = true
+	}
+	if db.AdminPasskeys == nil {
+		db.AdminPasskeys = []models.AdminPasskey{}
 		changed = true
 	}
 	if db.Announcements == nil {
