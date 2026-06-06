@@ -840,6 +840,12 @@ func normalizeDB(db *models.Database) bool {
 		changed = true
 	}
 
+	for i := range db.AdminAPIKeys {
+		if normalizeAPIKeyBanState(&db.AdminAPIKeys[i]) {
+			changed = true
+		}
+	}
+
 	for i := range db.Providers {
 		p := &db.Providers[i]
 		normalizedFormat := models.NormalizeUpstreamFormat(p.UpstreamFormat)
@@ -956,6 +962,9 @@ func normalizeDB(db *models.Database) bool {
 				k.RPMLimit = 0
 				itemChanged = true
 			}
+			if normalizeAPIKeyBanState(&k) {
+				itemChanged = true
+			}
 			if itemChanged {
 				changed = true
 			}
@@ -980,6 +989,44 @@ func normalizeDB(db *models.Database) bool {
 	}
 
 	return changed
+}
+
+func normalizeAPIKeyBanState(k *models.APIKeyRecord) bool {
+	if k == nil {
+		return false
+	}
+	changed := false
+	now := time.Now().UTC()
+	if k.BannedUntil != "" {
+		if bannedUntil, ok := parseStoredTime(k.BannedUntil); !ok || !bannedUntil.After(now) {
+			k.BannedUntil = ""
+			k.BanReason = ""
+			k.InvalidRequestCount = 0
+			k.LastInvalidRequestAt = ""
+			changed = true
+		}
+	}
+	if k.BannedUntil == "" && k.InvalidRequestCount > 0 && k.LastInvalidRequestAt != "" {
+		if lastInvalidAt, ok := parseStoredTime(k.LastInvalidRequestAt); !ok || now.Sub(lastInvalidAt) > time.Hour {
+			k.InvalidRequestCount = 0
+			k.LastInvalidRequestAt = ""
+			changed = true
+		}
+	}
+	return changed
+}
+
+func parseStoredTime(value string) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{time.RFC3339Nano, "2006-01-02T15:04:05.000Z"} {
+		if t, err := time.Parse(layout, value); err == nil {
+			return t.UTC(), true
+		}
+	}
+	return time.Time{}, false
 }
 
 func isLegacyDefaultKeyRPMForUser(value int, user *models.User) bool {

@@ -11,6 +11,7 @@ import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import KeyIcon from "@mui/icons-material/Key";
+import BlockIcon from "@mui/icons-material/Block";
 import RotateRightIcon from "@mui/icons-material/RotateRight";
 import { EntityRow } from "../components/EntityRow";
 import { Section } from "../components/Section";
@@ -41,6 +42,14 @@ export function AdminApiKeysSection({ apiKeys, usage, onCopy, onConfirm, afterCh
       body: { enabled: !enabled }
     });
     await afterChange(enabled ? "API Key 已停用" : "API Key 已启用");
+  };
+
+  const toggleBan = (id, banned) => async () => {
+    await request(`/api/admin/api-keys/${id}`, {
+      method: "PUT",
+      body: { banned: !banned }
+    });
+    await afterChange(banned ? "API Key 已解封" : "API Key 已封禁 1 小时");
   };
 
   const deleteKey = (id, keyName) => {
@@ -83,6 +92,12 @@ export function AdminApiKeysSection({ apiKeys, usage, onCopy, onConfirm, afterCh
               ["Key", apiKey.key || apiKey.preview || "-"],
               ["创建时间", formatDate(apiKey.createdAt)]
             ];
+            if (apiKey.isBanned) {
+              meta.push(["封禁至", formatDate(apiKey.bannedUntil)]);
+            }
+            if (apiKey.invalidRequestCount > 0) {
+              meta.push(["异常请求体", `${apiKey.invalidRequestCount} 次`]);
+            }
             if (keyUsage) {
               meta.push(["用量", `请求 ${keyUsage.requests} 次 / ${keyUsage.totalTokens.toLocaleString()} tokens`]);
             }
@@ -107,6 +122,15 @@ export function AdminApiKeysSection({ apiKeys, usage, onCopy, onConfirm, afterCh
                     </Tooltip>
                     <Button size="small" variant="outlined" onClick={() => toggleKey(apiKey.id, apiKey.enabled).catch((error) => onToast(error.message, "error"))}>
                       {apiKey.enabled !== false ? "停用" : "启用"}
+                    </Button>
+                    <Button
+                      size="small"
+                      variant={apiKey.isBanned ? "contained" : "outlined"}
+                      color={apiKey.isBanned ? "success" : "warning"}
+                      startIcon={<BlockIcon />}
+                      onClick={() => toggleBan(apiKey.id, Boolean(apiKey.isBanned)).catch((error) => onToast(error.message, "error"))}
+                    >
+                      {apiKey.isBanned ? "解封" : "封禁1小时"}
                     </Button>
                     <Tooltip title="删除">
                       <IconButton color="error" onClick={() => deleteKey(apiKey.id, apiKey.name)}>

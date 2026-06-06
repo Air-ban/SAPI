@@ -7,12 +7,14 @@ import {
   TextField,
   Typography
 } from "@mui/material";
+import BlockIcon from "@mui/icons-material/Block";
 import { request } from "../utils/api";
-import { formatRpmLimit } from "../utils/helpers";
+import { formatDate, formatRpmLimit } from "../utils/helpers";
 
 export function ApiKeyRpmRow({ apiKey, userId, afterChange, onToast }) {
   const [rpm, setRpm] = useState(apiKey.rpmLimit > 0 ? String(apiKey.rpmLimit) : "");
   const [loading, setLoading] = useState(false);
+  const [banLoading, setBanLoading] = useState(false);
 
   const save = async () => {
     setLoading(true);
@@ -29,6 +31,21 @@ export function ApiKeyRpmRow({ apiKey, userId, afterChange, onToast }) {
     }
   };
 
+  const toggleBan = async () => {
+    setBanLoading(true);
+    try {
+      await request(`/api/admin/users/${userId}/api-keys/${apiKey.id}`, {
+        method: "PUT",
+        body: { banned: !apiKey.isBanned }
+      });
+      await afterChange(apiKey.isBanned ? `${apiKey.name} 已解封` : `${apiKey.name} 已封禁 1 小时`);
+    } catch (error) {
+      onToast(error.message, "error");
+    } finally {
+      setBanLoading(false);
+    }
+  };
+
   return (
     <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "app.paperAlt" }}>
       <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems="center">
@@ -38,6 +55,8 @@ export function ApiKeyRpmRow({ apiKey, userId, afterChange, onToast }) {
           </Typography>
           <Typography variant="caption" color="text.secondary">
             有效限制：{formatRpmLimit(apiKey.effectiveRpmLimit)}
+            {apiKey.invalidRequestCount > 0 ? ` / 异常请求体 ${apiKey.invalidRequestCount} 次` : ""}
+            {apiKey.isBanned ? ` / 封禁至 ${formatDate(apiKey.bannedUntil)}` : ""}
           </Typography>
         </Stack>
         <TextField
@@ -58,6 +77,17 @@ export function ApiKeyRpmRow({ apiKey, userId, afterChange, onToast }) {
           sx={{ flexShrink: 0 }}
         >
           {loading ? <CircularProgress size={16} /> : "保存"}
+        </Button>
+        <Button
+          size="small"
+          variant={apiKey.isBanned ? "contained" : "outlined"}
+          color={apiKey.isBanned ? "success" : "warning"}
+          startIcon={banLoading ? <CircularProgress size={16} /> : <BlockIcon />}
+          onClick={() => toggleBan().catch((e) => onToast(e.message, "error"))}
+          disabled={banLoading}
+          sx={{ flexShrink: 0 }}
+        >
+          {apiKey.isBanned ? "解封" : "封禁1小时"}
         </Button>
       </Stack>
     </Paper>

@@ -594,18 +594,45 @@ func sanitizeAPIKeyRecordWithEffective(record *models.APIKeyRecord, effectiveRpm
 		key = record.Key
 	}
 	preview := maskKey(key)
+	isBanned, retryAfter, banReason := middleware.APIKeyBanStatus(record)
+	retryAfterSeconds := 0
+	if retryAfter > 0 {
+		retryAfterSeconds = int(retryAfter.Seconds())
+	}
+	bannedUntil := ""
+	invalidRequestCount := 0
+	lastInvalidRequestAt := ""
+	if record != nil {
+		if isBanned {
+			bannedUntil = record.BannedUntil
+		}
+		if banReason == "" {
+			banReason = record.BanReason
+		}
+		if !isBanned {
+			banReason = ""
+		}
+		invalidRequestCount = record.InvalidRequestCount
+		lastInvalidRequestAt = record.LastInvalidRequestAt
+	}
 	return map[string]interface{}{
-		"id":                getRecordID(record),
-		"name":              getRecordName(record),
-		"key":               key,
-		"preview":           preview,
-		"enabled":           getRecordEnabled(record),
-		"allowedModels":     getRecordAllowedModels(record),
-		"rpmLimit":          getRecordRPMLimit(record),
-		"effectiveRpmLimit": effectiveRpmLimit,
-		"createdAt":         getRecordCreatedAt(record),
-		"updatedAt":         getRecordUpdatedAt(record),
-		"lastUsedAt":        getRecordLastUsedAt(record),
+		"id":                   getRecordID(record),
+		"name":                 getRecordName(record),
+		"key":                  key,
+		"preview":              preview,
+		"enabled":              getRecordEnabled(record),
+		"allowedModels":        getRecordAllowedModels(record),
+		"rpmLimit":             getRecordRPMLimit(record),
+		"effectiveRpmLimit":    effectiveRpmLimit,
+		"isBanned":             isBanned,
+		"bannedUntil":          bannedUntil,
+		"banReason":            banReason,
+		"retryAfterSeconds":    retryAfterSeconds,
+		"invalidRequestCount":  invalidRequestCount,
+		"lastInvalidRequestAt": lastInvalidRequestAt,
+		"createdAt":            getRecordCreatedAt(record),
+		"updatedAt":            getRecordUpdatedAt(record),
+		"lastUsedAt":           getRecordLastUsedAt(record),
 	}
 }
 

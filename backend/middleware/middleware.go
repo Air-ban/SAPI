@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +24,13 @@ const (
 	apiKeyFailureWindow = 5 * time.Minute
 	apiKeyBlockDuration = 10 * time.Minute
 	rpmWindowDuration   = time.Minute
+
+	apiKeyInvalidBodyLimit  = 20
+	apiKeyInvalidBodyWindow = time.Hour
+	apiKeyBanDuration       = time.Hour
+
+	apiKeyBanReasonInvalidBody = "invalid_request_body"
+	apiKeyBanReasonManual      = "manual"
 )
 
 func CORS(next http.Handler) http.Handler {
@@ -90,6 +98,9 @@ type FindUserByKeyResult struct {
 	DB           *models.Database
 	User         *models.User
 	APIKeyRecord *models.APIKeyRecord
+	Banned       bool
+	RetryAfter   time.Duration
+	BanReason    string
 }
 
 func FindUserByKey(apiKey string) *FindUserByKeyResult {
@@ -104,10 +115,14 @@ func FindUserByKey(apiKey string) *FindUserByKeyResult {
 		for j := range u.APIKeys {
 			k := &u.APIKeys[j]
 			if k.Enabled && auth.SafeEqual(k.Key, apiKey) {
+				banned, retryAfter, reason := APIKeyBanStatus(k)
 				return &FindUserByKeyResult{
 					DB:           db,
 					User:         u,
 					APIKeyRecord: k,
+					Banned:       banned,
+					RetryAfter:   retryAfter,
+					BanReason:    reason,
 				}
 			}
 		}
@@ -129,6 +144,7 @@ func FindUserByKey(apiKey string) *FindUserByKeyResult {
 	for i := range db.AdminAPIKeys {
 		k := &db.AdminAPIKeys[i]
 		if k.Enabled && auth.SafeEqual(k.Key, apiKey) {
+			banned, retryAfter, reason := APIKeyBanStatus(k)
 			return &FindUserByKeyResult{
 				DB: db,
 				User: &models.User{
@@ -139,6 +155,9 @@ func FindUserByKey(apiKey string) *FindUserByKeyResult {
 					Source:   "admin",
 				},
 				APIKeyRecord: k,
+				Banned:       banned,
+				RetryAfter:   retryAfter,
+				BanReason:    reason,
 			}
 		}
 	}
@@ -167,6 +186,72 @@ func ClearAPIKeyFailures(r *http.Request) {
 	key := "api-key-ip:" + security.SensitiveKey(security.ClientIP(r))
 	_ = security.RedisClearFailures(r.Context(), []string{key})
 	apiKeyFailureLimiter.Clear(key)
+}
+
+func APIKeyBanStatus(k *models.APIKeyRecord) (bool, time.Duration, string) {
+	if k == nil || k.BannedUntil == "" {
+		return false, 0, ""
+	}
+	bannedUntil, ok := parseAPIKeyTime(k.BannedUntil)
+	if !ok {
+		return false, 0, ""
+	}
+	now := time.Now().UTC()
+	if !bannedUntil.After(now) {
+		return false, 0, ""
+	}
+	return true, bannedUntil.Sub(now), k.BanReason
+}
+
+func SetAPIKeyBan(k *models.APIKeyRecord, banned bool, reason string, now time.Time) {
+	if k == nil {
+		return
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if banned {
+		if reason == "" {
+			reason = apiKeyBanReasonManual
+		}
+		k.BannedUntil = formatAPIKeyTime(now.Add(apiKeyBanDuration))
+		k.BanReason = reason
+		k.UpdatedAt = formatAPIKeyTime(now)
+		return
+	}
+	k.BannedUntil = ""
+	k.BanReason = ""
+	k.InvalidRequestCount = 0
+	k.LastInvalidRequestAt = ""
+	k.UpdatedAt = formatAPIKeyTime(now)
+}
+
+func RecordInvalidRequestBody(apiKey string) (bool, time.Duration, int) {
+	if apiKey == "" {
+		return false, 0, 0
+	}
+	limitKey := "api-key-body:" + security.SensitiveKey(apiKey)
+	count, retryAfter, err := security.RedisRecordFailureState(context.Background(), limitKey, apiKeyInvalidBodyLimit, apiKeyInvalidBodyWindow, apiKeyBanDuration)
+	if err != nil {
+		count, retryAfter = apiKeyBodyFailureLimiter.RecordFailureWindow(limitKey, apiKeyInvalidBodyLimit, apiKeyInvalidBodyWindow, apiKeyBanDuration)
+	}
+
+	now := time.Now().UTC()
+	bannedUntil := ""
+	if retryAfter > 0 {
+		bannedUntil = formatAPIKeyTime(now.Add(retryAfter))
+	}
+	updateAPIKeyInvalidBodyState(apiKey, count, bannedUntil, now)
+	return retryAfter > 0, retryAfter, count
+}
+
+func ClearInvalidRequestBodyFailures(apiKey string) {
+	if apiKey == "" {
+		return
+	}
+	limitKey := "api-key-body:" + security.SensitiveKey(apiKey)
+	_ = security.RedisClearFailures(context.Background(), []string{limitKey})
+	apiKeyBodyFailureLimiter.Clear(limitKey)
 }
 
 var rpmWindows sync.Map
@@ -241,6 +326,7 @@ type failureRecord struct {
 }
 
 var apiKeyFailureLimiter = &failureLimiter{records: map[string]*failureRecord{}}
+var apiKeyBodyFailureLimiter = &failureLimiter{records: map[string]*failureRecord{}}
 
 func (l *failureLimiter) Allow(key string) (bool, time.Duration) {
 	now := time.Now()
@@ -275,6 +361,27 @@ func (l *failureLimiter) RecordFailure(key string) {
 	}
 }
 
+func (l *failureLimiter) RecordFailureWindow(key string, maxFailures int, window, blockFor time.Duration) (int, time.Duration) {
+	now := time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	record := l.records[key]
+	if record == nil || now.Sub(record.firstFailure) > window {
+		record = &failureRecord{firstFailure: now}
+		l.records[key] = record
+	}
+	if record.blockedUntil.After(now) {
+		return record.count, record.blockedUntil.Sub(now)
+	}
+	record.count++
+	if record.count >= maxFailures {
+		record.blockedUntil = now.Add(blockFor)
+		return record.count, blockFor
+	}
+	return record.count, 0
+}
+
 func (l *failureLimiter) Clear(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -285,7 +392,76 @@ func ResetSecurityStateForTest() {
 	apiKeyFailureLimiter.mu.Lock()
 	defer apiKeyFailureLimiter.mu.Unlock()
 	apiKeyFailureLimiter.records = map[string]*failureRecord{}
+	apiKeyBodyFailureLimiter.mu.Lock()
+	defer apiKeyBodyFailureLimiter.mu.Unlock()
+	apiKeyBodyFailureLimiter.records = map[string]*failureRecord{}
 	rpmWindows = sync.Map{}
+}
+
+func updateAPIKeyInvalidBodyState(apiKey string, count int, bannedUntil string, now time.Time) {
+	if apiKey == "" {
+		return
+	}
+	store.MutateDB(func(db *models.Database) interface{} {
+		updated := false
+		for i := range db.Users {
+			u := &db.Users[i]
+			for j := range u.APIKeys {
+				k := &u.APIKeys[j]
+				if !auth.SafeEqual(k.Key, apiKey) {
+					continue
+				}
+				applyInvalidBodyState(k, count, bannedUntil, now)
+				u.UpdatedAt = formatAPIKeyTime(now)
+				updated = true
+				break
+			}
+			if updated {
+				break
+			}
+		}
+		if !updated {
+			for i := range db.AdminAPIKeys {
+				k := &db.AdminAPIKeys[i]
+				if auth.SafeEqual(k.Key, apiKey) {
+					applyInvalidBodyState(k, count, bannedUntil, now)
+					updated = true
+					break
+				}
+			}
+		}
+		return updated
+	})
+}
+
+func applyInvalidBodyState(k *models.APIKeyRecord, count int, bannedUntil string, now time.Time) {
+	if k == nil {
+		return
+	}
+	k.InvalidRequestCount = count
+	k.LastInvalidRequestAt = formatAPIKeyTime(now)
+	if bannedUntil != "" {
+		k.BannedUntil = bannedUntil
+		k.BanReason = apiKeyBanReasonInvalidBody
+	}
+	k.UpdatedAt = formatAPIKeyTime(now)
+}
+
+func formatAPIKeyTime(t time.Time) string {
+	return t.UTC().Format("2006-01-02T15:04:05.000Z")
+}
+
+func parseAPIKeyTime(value string) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{time.RFC3339Nano, "2006-01-02T15:04:05.000Z"} {
+		if t, err := time.Parse(layout, value); err == nil {
+			return t.UTC(), true
+		}
+	}
+	return time.Time{}, false
 }
 
 func CheckMaintenanceMode(db *models.Database, w http.ResponseWriter) bool {

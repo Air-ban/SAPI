@@ -464,6 +464,12 @@ func handleAdminUpdateAPIKey(w http.ResponseWriter, r *http.Request) {
 				if enabled, ok := body["enabled"].(bool); ok {
 					k.Enabled = enabled
 				}
+				if banned, ok := body["banned"].(bool); ok {
+					middleware.SetAPIKeyBan(k, banned, "manual", time.Now().UTC())
+					if !banned {
+						middleware.ClearInvalidRequestBodyFailures(k.Key)
+					}
+				}
 				k.UpdatedAt = store.Now()
 				return k
 			}
@@ -870,10 +876,19 @@ func handleAdminUpdateUserAPIKey(w http.ResponseWriter, r *http.Request) {
 				u := &db.Users[i]
 				for j := range u.APIKeys {
 					if u.APIKeys[j].ID == keyID {
+						k := &u.APIKeys[j]
 						if rpm, ok := body["rpmLimit"].(float64); ok {
-							u.APIKeys[j].RPMLimit = subscription.ClampAPIKeyRPMLimit(u, int(rpm))
+							k.RPMLimit = subscription.ClampAPIKeyRPMLimit(u, int(rpm))
 						}
-						u.APIKeys[j].UpdatedAt = store.Now()
+						if banned, ok := body["banned"].(bool); ok {
+							middleware.SetAPIKeyBan(k, banned, "manual", time.Now().UTC())
+							if !banned {
+								middleware.ClearInvalidRequestBodyFailures(k.Key)
+							}
+						}
+						now := store.Now()
+						k.UpdatedAt = now
+						u.UpdatedAt = now
 						return u
 					}
 				}

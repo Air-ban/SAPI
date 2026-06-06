@@ -101,15 +101,19 @@ type User struct {
 }
 
 type APIKeyRecord struct {
-	ID            string   `json:"id"`
-	Name          string   `json:"name"`
-	Key           string   `json:"key"`
-	Enabled       bool     `json:"enabled"`
-	AllowedModels []string `json:"allowedModels"`
-	RPMLimit      int      `json:"rpmLimit"`
-	CreatedAt     string   `json:"createdAt"`
-	UpdatedAt     string   `json:"updatedAt"`
-	LastUsedAt    string   `json:"lastUsedAt"`
+	ID                   string   `json:"id"`
+	Name                 string   `json:"name"`
+	Key                  string   `json:"key"`
+	Enabled              bool     `json:"enabled"`
+	AllowedModels        []string `json:"allowedModels"`
+	RPMLimit             int      `json:"rpmLimit"`
+	BannedUntil          string   `json:"bannedUntil"`
+	BanReason            string   `json:"banReason"`
+	InvalidRequestCount  int      `json:"invalidRequestCount"`
+	LastInvalidRequestAt string   `json:"lastInvalidRequestAt"`
+	CreatedAt            string   `json:"createdAt"`
+	UpdatedAt            string   `json:"updatedAt"`
+	LastUsedAt           string   `json:"lastUsedAt"`
 }
 
 type RequestLog struct {

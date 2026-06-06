@@ -277,6 +277,10 @@ func handlePublicKey(w http.ResponseWriter, r *http.Request) {
 		utils.SendError(w, 404, "API key was not found or is disabled.", "key_not_found")
 		return
 	}
+	if result.Banned {
+		sendAPIKeyBannedError(w, result.RetryAfter, result.BanReason)
+		return
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"valid":  true,
 		"config": serviceConfig(),
@@ -328,6 +332,10 @@ func validateModelsRequest(w http.ResponseWriter, r *http.Request) (*middleware.
 	result := middleware.FindUserByKey(apiKey)
 	if result.User == nil {
 		utils.SendError(w, 401, "Invalid or disabled SAPI API key.", "invalid_api_key")
+		return nil, false
+	}
+	if result.Banned {
+		sendAPIKeyBannedError(w, result.RetryAfter, result.BanReason)
 		return nil, false
 	}
 

@@ -246,28 +246,35 @@ func RedisCheckBlocked(ctx context.Context, keys []string) (bool, time.Duration,
 }
 
 func RedisRecordFailure(ctx context.Context, key string, maxFailures int, window, blockFor time.Duration) error {
+	_, _, err := RedisRecordFailureState(ctx, key, maxFailures, window, blockFor)
+	return err
+}
+
+func RedisRecordFailureState(ctx context.Context, key string, maxFailures int, window, blockFor time.Duration) (int, time.Duration, error) {
 	if redisClient == nil || key == "" || maxFailures <= 0 {
-		return errRedisDisabled()
+		return 0, 0, errRedisDisabled()
 	}
 
 	failKey := prefixedKey("fail", key)
 	count, err := redisClient.Incr(ctx, failKey).Result()
 	if err != nil {
 		logRedisError(err)
-		return err
+		return 0, 0, err
 	}
 	if count == 1 {
 		_ = redisClient.Expire(ctx, failKey, window).Err()
 	}
+	var retryAfter time.Duration
 	if count >= int64(maxFailures) {
 		blockKey := prefixedKey("block", key)
 		if err := redisClient.Set(ctx, blockKey, "1", blockFor).Err(); err != nil {
 			logRedisError(err)
-			return err
+			return int(count), 0, err
 		}
+		retryAfter = blockFor
 		_ = redisClient.Expire(ctx, failKey, window).Err()
 	}
-	return nil
+	return int(count), retryAfter, nil
 }
 
 func RedisClearFailures(ctx context.Context, keys []string) error {

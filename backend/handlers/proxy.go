@@ -69,6 +69,10 @@ func validateProxyRequest(w http.ResponseWriter, r *http.Request) (*apiKeyInfo, 
 		return nil, false
 	}
 	middleware.ClearAPIKeyFailures(r)
+	if result.Banned {
+		sendAPIKeyBannedError(w, result.RetryAfter, result.BanReason)
+		return nil, false
+	}
 
 	if middleware.CheckMaintenanceMode(result.DB, w) {
 		return nil, false
@@ -80,7 +84,7 @@ func validateProxyRequest(w http.ResponseWriter, r *http.Request) (*apiKeyInfo, 
 		DB:           result.DB,
 	}
 
-	model, ok := extractProxyModel(w, r)
+	model, ok := extractProxyModel(w, r, info)
 	if !ok {
 		return nil, false
 	}
@@ -108,13 +112,48 @@ func validateProxyRequest(w http.ResponseWriter, r *http.Request) (*apiKeyInfo, 
 	return info, true
 }
 
-func extractProxyModel(w http.ResponseWriter, r *http.Request) (string, bool) {
+func sendAPIKeyBannedError(w http.ResponseWriter, retryAfter time.Duration, reason string) {
+	if retryAfter < time.Second {
+		retryAfter = time.Second
+	}
+	w.Header().Set("Retry-After", fmt.Sprintf("%d", int(retryAfter.Seconds())))
+	message := "API key is temporarily banned. Try again later."
+	if reason == "invalid_request_body" {
+		message = "API key is temporarily banned for repeated invalid request bodies. Try again later."
+	}
+	utils.SendError(w, http.StatusTooManyRequests, message, "api_key_banned")
+}
+
+func sendInvalidProxyBodyError(w http.ResponseWriter, info *apiKeyInfo, status int, message, code string) {
+	if info != nil && info.APIKeyRecord != nil && info.APIKeyRecord.Key != "" {
+		banned, retryAfter, _ := middleware.RecordInvalidRequestBody(info.APIKeyRecord.Key)
+		if banned {
+			sendAPIKeyBannedError(w, retryAfter, "invalid_request_body")
+			return
+		}
+	}
+	utils.SendError(w, status, message, code)
+}
+
+func recordInvalidProxyBody(w http.ResponseWriter, info *apiKeyInfo) bool {
+	if info == nil || info.APIKeyRecord == nil || info.APIKeyRecord.Key == "" {
+		return false
+	}
+	banned, retryAfter, _ := middleware.RecordInvalidRequestBody(info.APIKeyRecord.Key)
+	if banned {
+		sendAPIKeyBannedError(w, retryAfter, "invalid_request_body")
+		return true
+	}
+	return false
+}
+
+func extractProxyModel(w http.ResponseWriter, r *http.Request, info *apiKeyInfo) (string, bool) {
 	if r.Body == nil {
 		return "", true
 	}
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		utils.SendError(w, 400, "Request body could not be read.", "invalid_request")
+		sendInvalidProxyBodyError(w, info, 400, "Request body could not be read.", "invalid_request")
 		return "", false
 	}
 	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
@@ -123,12 +162,12 @@ func extractProxyModel(w http.ResponseWriter, r *http.Request) (string, bool) {
 	}
 	var body map[string]interface{}
 	if err := json.Unmarshal(bodyBytes, &body); err != nil {
-		utils.SendError(w, 400, "Request body must be valid JSON.", "invalid_json")
+		sendInvalidProxyBodyError(w, info, 400, "Request body must be valid JSON.", "invalid_json")
 		return "", false
 	}
 	model, _ := body["model"].(string)
 	if len(model) > 200 {
-		utils.SendError(w, 400, "Model name is too long.", "invalid_model")
+		sendInvalidProxyBodyError(w, info, 400, "Model name is too long.", "invalid_model")
 		return "", false
 	}
 	return model, true
@@ -168,7 +207,7 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 	bodyBytes, _ := io.ReadAll(r.Body)
 	var body map[string]interface{}
 	if err := json.Unmarshal(bodyBytes, &body); err != nil {
-		utils.SendError(w, 400, "Request body must be valid JSON.", "invalid_json")
+		sendInvalidProxyBodyError(w, info, 400, "Request body must be valid JSON.", "invalid_json")
 		return
 	}
 	requestContent := cloneRequestContent(body)
@@ -595,7 +634,7 @@ func handleAnthropicCountTokensHandler(w http.ResponseWriter, r *http.Request) {
 	bodyBytes, _ := io.ReadAll(r.Body)
 	var body map[string]interface{}
 	if err := json.Unmarshal(bodyBytes, &body); err != nil {
-		utils.SendError(w, 400, "Request body must be valid JSON.", "invalid_json")
+		sendInvalidProxyBodyError(w, info, 400, "Request body must be valid JSON.", "invalid_json")
 		return
 	}
 	requestContent := cloneRequestContent(body)
@@ -633,13 +672,19 @@ func handleAnthropicMessagesProxyHandler(w http.ResponseWriter, r *http.Request)
 	bodyBytes, _ := io.ReadAll(r.Body)
 	var body map[string]interface{}
 	if err := json.Unmarshal(bodyBytes, &body); err != nil {
-		utils.SendError(w, 400, "Request body must be valid JSON.", "invalid_json")
+		if recordInvalidProxyBody(w, info) {
+			return
+		}
+		proxy.SendAnthropicError(w, 400, "invalid_request_error", "Request body must be valid JSON.")
 		return
 	}
 	requestContent := cloneRequestContent(body)
 
 	model, _ := body["model"].(string)
 	if len(model) > 200 {
+		if recordInvalidProxyBody(w, info) {
+			return
+		}
 		proxy.SendAnthropicError(w, 400, "invalid_request_error", "Model name is too long.")
 		return
 	}
@@ -1140,14 +1185,14 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 	var body map[string]interface{}
 	if len(bytes.TrimSpace(bodyBytes)) > 0 {
 		if err := json.Unmarshal(bodyBytes, &body); err != nil {
-			utils.SendError(w, 400, "Request body must be valid JSON.", "invalid_json")
+			sendInvalidProxyBodyError(w, info, 400, "Request body must be valid JSON.", "invalid_json")
 			return
 		}
 	}
 	requestContent := cloneRequestContent(body)
 	model, _ := body["model"].(string)
 	if len(model) > 200 {
-		utils.SendError(w, 400, "Model name is too long.", "invalid_model")
+		sendInvalidProxyBodyError(w, info, 400, "Model name is too long.", "invalid_model")
 		return
 	}
 	streamReq, _ := body["stream"].(bool)
