@@ -512,6 +512,7 @@ func handleAdminCreateProvider(w http.ResponseWriter, r *http.Request) {
 	name := security.SafeSingleLine(toString(body["name"]), 120)
 	baseURL := security.SafeSingleLine(toString(body["baseUrl"]), 2048)
 	apiKey := security.SafeSingleLine(toString(body["apiKey"]), 2048)
+	upstreamFormat := models.NormalizeUpstreamFormat(security.SafeSingleLine(toString(body["upstreamFormat"]), 32))
 
 	if name == "" || baseURL == "" || apiKey == "" || !security.ValidHTTPBaseURL(baseURL) {
 		utils.SendError(w, 400, "Provider name, base URL and API key are required.", "invalid_provider")
@@ -527,6 +528,7 @@ func handleAdminCreateProvider(w http.ResponseWriter, r *http.Request) {
 			Name:              name,
 			BaseURL:           baseURL,
 			APIKey:            apiKey,
+			UpstreamFormat:    upstreamFormat,
 			Models:            normalizeModelList(body["models"]),
 			ModelMappings:     normalizeModelMappings(body["modelMappings"]),
 			Enabled:           true,
@@ -572,6 +574,9 @@ func handleAdminUpdateProvider(w http.ResponseWriter, r *http.Request) {
 				}
 				if apiKey, ok := body["apiKey"].(string); ok && apiKey != "" {
 					p.APIKey = security.SafeSingleLine(apiKey, 2048)
+				}
+				if upstreamFormat, ok := body["upstreamFormat"].(string); ok {
+					p.UpstreamFormat = models.NormalizeUpstreamFormat(security.SafeSingleLine(upstreamFormat, 32))
 				}
 				if models, ok := body["models"]; ok {
 					p.Models = normalizeModelList(models)

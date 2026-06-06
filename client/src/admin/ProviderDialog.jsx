@@ -12,6 +12,7 @@ import {
   DialogTitle,
   FormControlLabel,
   IconButton,
+  MenuItem,
   Paper,
   Stack,
   Switch,
@@ -31,6 +32,7 @@ export function ProviderDialog({ open, onClose, provider, afterChange, onToast }
     name: "",
     baseUrl: "",
     apiKey: "",
+    upstreamFormat: "auto",
     enabled: true,
     failoverThreshold: 3
   });
@@ -41,7 +43,7 @@ export function ProviderDialog({ open, onClose, provider, afterChange, onToast }
   const [loading, setLoading] = useState(false);
 
   const reset = useCallback(() => {
-    setForm({ name: "", baseUrl: "", apiKey: "", enabled: true, failoverThreshold: 3, priority: 0 });
+    setForm({ name: "", baseUrl: "", apiKey: "", upstreamFormat: "auto", enabled: true, failoverThreshold: 3, priority: 0 });
     setSelectedModels([]);
     setModelSelectionTouched(false);
     setLookup({ loading: false, error: "", models: [] });
@@ -55,6 +57,7 @@ export function ProviderDialog({ open, onClose, provider, afterChange, onToast }
         name: provider.name || "",
         baseUrl: provider.baseUrl || "",
         apiKey: "",
+        upstreamFormat: provider.upstreamFormat || "auto",
         enabled: provider.enabled !== false,
         failoverThreshold: typeof provider.failoverThreshold === 'number' ? provider.failoverThreshold : 3,
         priority: typeof provider.priority === 'number' ? provider.priority : 0
@@ -264,6 +267,18 @@ export function ProviderDialog({ open, onClose, provider, afterChange, onToast }
             placeholder="sk-..."
             required={!isEdit}
           />
+          <TextField
+            label="上游请求格式"
+            value={form.upstreamFormat}
+            onChange={update("upstreamFormat")}
+            select
+            helperText="自动识别失败时可强制转换请求体，避免可用上游因应用层格式不匹配报错。"
+          >
+            <MenuItem value="auto">自动识别</MenuItem>
+            <MenuItem value="openai">OpenAI</MenuItem>
+            <MenuItem value="gemini">Gemini</MenuItem>
+            <MenuItem value="anthropic">Anthropic</MenuItem>
+          </TextField>
           <Stack
             direction={{ xs: "column", sm: "row" }}
             spacing={1}

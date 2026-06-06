@@ -1,6 +1,10 @@
 package models
 
-import "github.com/go-webauthn/webauthn/webauthn"
+import (
+	"strings"
+
+	"github.com/go-webauthn/webauthn/webauthn"
+)
 
 type Database struct {
 	Version            int                `json:"version"`
@@ -31,6 +35,7 @@ type Provider struct {
 	Name              string               `json:"name"`
 	BaseURL           string               `json:"baseUrl"`
 	APIKey            string               `json:"apiKey"`
+	UpstreamFormat    string               `json:"upstreamFormat"`
 	Models            []Model              `json:"models"`
 	ModelMappings     map[string]string    `json:"modelMappings"`
 	Enabled           bool                 `json:"enabled"`
@@ -44,6 +49,22 @@ type Provider struct {
 	LastHealthCheck   string               `json:"lastHealthCheck"`
 	CreatedAt         string               `json:"createdAt"`
 	UpdatedAt         string               `json:"updatedAt"`
+}
+
+const (
+	UpstreamFormatAuto      = "auto"
+	UpstreamFormatOpenAI    = "openai"
+	UpstreamFormatGemini    = "gemini"
+	UpstreamFormatAnthropic = "anthropic"
+)
+
+func NormalizeUpstreamFormat(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case UpstreamFormatOpenAI, UpstreamFormatGemini, UpstreamFormatAnthropic:
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return UpstreamFormatAuto
+	}
 }
 
 type Model struct {

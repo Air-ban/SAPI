@@ -105,3 +105,132 @@ func TestNonChatPathKeepsOpenAICompatibleForwarding(t *testing.T) {
 		t.Fatalf("expected mapped model, got %#v", payload["model"])
 	}
 }
+
+func TestForcedGeminiFormatOverridesProviderDetection(t *testing.T) {
+	body := map[string]interface{}{
+		"model":    "gemini-force",
+		"messages": []interface{}{map[string]interface{}{"role": "user", "content": "hello"}},
+	}
+
+	req, err := BuildChatCompletionsUpstreamRequestDetailed(models.Provider{
+		Name:           "OpenAI-compatible gateway",
+		BaseURL:        "https://gateway.example.com/v1",
+		APIKey:         "google-key",
+		UpstreamFormat: models.UpstreamFormatGemini,
+	}, "/v1/chat/completions", "", body, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Kind != UpstreamGemini || !req.NeedsChatResponseConversion {
+		t.Fatalf("expected forced Gemini conversion, got kind=%s converts=%v", req.Kind, req.NeedsChatResponseConversion)
+	}
+	if !strings.Contains(req.URL, "/models/gemini-force:generateContent?key=google-key") {
+		t.Fatalf("unexpected forced Gemini URL: %s", req.URL)
+	}
+	if req.Headers.Get("Authorization") != "" {
+		t.Fatalf("did not expect bearer auth for Gemini request: %#v", req.Headers)
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(req.Body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := payload["contents"].([]interface{}); !ok {
+		t.Fatalf("expected Gemini contents payload, got %#v", payload)
+	}
+}
+
+func TestForcedAnthropicFormatOverridesProviderDetection(t *testing.T) {
+	body := map[string]interface{}{
+		"model":      "claude-force",
+		"messages":   []interface{}{map[string]interface{}{"role": "user", "content": "hello"}},
+		"max_tokens": float64(24),
+	}
+
+	req, err := BuildChatCompletionsUpstreamRequestDetailed(models.Provider{
+		Name:           "Generic gateway",
+		BaseURL:        "https://gateway.example.com",
+		APIKey:         "sk-ant",
+		UpstreamFormat: models.UpstreamFormatAnthropic,
+	}, "/v1/chat/completions", "", body, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Kind != UpstreamAnthropic || !req.NeedsChatResponseConversion {
+		t.Fatalf("expected forced Anthropic conversion, got kind=%s converts=%v", req.Kind, req.NeedsChatResponseConversion)
+	}
+	if req.URL != "https://gateway.example.com/v1/messages" {
+		t.Fatalf("unexpected forced Anthropic URL: %s", req.URL)
+	}
+	if req.Headers.Get("x-api-key") != "sk-ant" || req.Headers.Get("anthropic-version") == "" {
+		t.Fatalf("missing Anthropic headers: %#v", req.Headers)
+	}
+}
+
+func TestForcedOpenAIFormatOverridesProviderDetection(t *testing.T) {
+	body := map[string]interface{}{
+		"model":    "public-model",
+		"messages": []interface{}{map[string]interface{}{"role": "user", "content": "hello"}},
+	}
+
+	req, err := BuildChatCompletionsUpstreamRequestDetailed(models.Provider{
+		Name:           "Gemini",
+		BaseURL:        "https://generativelanguage.googleapis.com/v1beta",
+		APIKey:         "openai-key",
+		UpstreamFormat: models.UpstreamFormatOpenAI,
+	}, "/v1/chat/completions", "foo=bar", body, "real-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Kind != UpstreamOpenAI || req.NeedsChatResponseConversion {
+		t.Fatalf("expected forced OpenAI passthrough, got kind=%s converts=%v", req.Kind, req.NeedsChatResponseConversion)
+	}
+	if req.URL != "https://generativelanguage.googleapis.com/v1beta/v1/chat/completions?foo=bar" {
+		t.Fatalf("unexpected forced OpenAI URL: %s", req.URL)
+	}
+	if req.Headers.Get("Authorization") != "Bearer openai-key" {
+		t.Fatalf("expected bearer auth, got %#v", req.Headers)
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(req.Body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["model"] != "real-model" {
+		t.Fatalf("expected mapped model, got %#v", payload["model"])
+	}
+}
+
+func TestBuildAnthropicMessagesNativeUpstreamRequest(t *testing.T) {
+	body := map[string]interface{}{
+		"model":      "public-claude",
+		"stream":     true,
+		"max_tokens": float64(32),
+		"messages":   []interface{}{map[string]interface{}{"role": "user", "content": "hello"}},
+	}
+
+	req, err := BuildAnthropicMessagesUpstreamRequestDetailed(models.Provider{
+		BaseURL: "https://api.anthropic.com",
+		APIKey:  "sk-ant",
+	}, body, "claude-real")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Kind != UpstreamAnthropic || req.NeedsChatResponseConversion {
+		t.Fatalf("expected native Anthropic request, got kind=%s converts=%v", req.Kind, req.NeedsChatResponseConversion)
+	}
+	if req.URL != "https://api.anthropic.com/v1/messages" {
+		t.Fatalf("unexpected native Anthropic URL: %s", req.URL)
+	}
+	if req.Headers.Get("Accept") != "text/event-stream" {
+		t.Fatalf("expected event-stream accept header, got %q", req.Headers.Get("Accept"))
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(req.Body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["model"] != "claude-real" {
+		t.Fatalf("expected upstream model override, got %#v", payload["model"])
+	}
+}

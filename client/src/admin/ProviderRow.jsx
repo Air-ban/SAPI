@@ -11,12 +11,21 @@ import { EntityRow } from "../components/EntityRow";
 import { request } from "../utils/api";
 
 export function ProviderRow({ provider, afterChange, onConfirm, onEdit, onToast }) {
+  const upstreamFormat = provider.upstreamFormat || "auto";
+  const upstreamFormatLabels = {
+    auto: "自动识别",
+    openai: "OpenAI",
+    gemini: "Gemini",
+    anthropic: "Anthropic"
+  };
+
   const toggle = async () => {
     await request(`/api/admin/providers/${provider.id}`, {
       method: "PUT",
       body: {
         name: provider.name,
         baseUrl: provider.baseUrl,
+        upstreamFormat,
         models: provider.models,
         modelMappings: provider.modelMappings,
         enabled: !provider.enabled,
@@ -71,6 +80,7 @@ export function ProviderRow({ provider, afterChange, onConfirm, onEdit, onToast 
       icon={<ApiIcon />}
       meta={[
         ["Base URL", provider.baseUrl],
+        ["上游格式", upstreamFormatLabels[upstreamFormat] || upstreamFormat],
         ["API Key", provider.apiKey || "-"],
         ["模型", modelLabels.join(", ") || "-"],
         ...(mappingLabels.length ? [["映射", mappingLabels.join(", ")]] : []),

@@ -190,6 +190,7 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var selectedProvider *proxy.ProviderCandidate
+	var selectedUpstreamReq proxy.ChatCompletionsUpstreamRequest
 	var upstreamResp *http.Response
 	var lastError error
 	startedAt := time.Now()
@@ -198,18 +199,29 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 		candidate := &candidates[i]
 		startedAt = time.Now()
 
-		upstreamURL := utils.BuildUpstreamURL(candidate.Provider.BaseURL, "/v1/chat/completions")
-		reqBody, _ := json.Marshal(responseRequest)
-
-		req, err := http.NewRequestWithContext(r.Context(), "POST", upstreamURL, bytes.NewReader(reqBody))
+		upstreamReq, err := proxy.BuildChatCompletionsUpstreamRequestDetailed(
+			candidate.Provider,
+			"/v1/chat/completions",
+			"",
+			responseRequest,
+			candidate.UpstreamModel,
+		)
 		if err != nil {
 			lastError = err
 			continue
 		}
-		req.Header.Set("Authorization", "Bearer "+candidate.Provider.APIKey)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Accept-Encoding", "identity")
-		if accept := r.Header.Get("Accept"); accept != "" {
+
+		req, err := http.NewRequestWithContext(r.Context(), "POST", upstreamReq.URL, bytes.NewReader(upstreamReq.Body))
+		if err != nil {
+			lastError = err
+			continue
+		}
+		for key, values := range upstreamReq.Headers {
+			for _, v := range values {
+				req.Header.Add(key, v)
+			}
+		}
+		if accept := r.Header.Get("Accept"); accept != "" && req.Header.Get("Accept") == "" {
 			req.Header.Set("Accept", accept)
 		}
 
@@ -253,6 +265,7 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		selectedProvider = candidate
+		selectedUpstreamReq = upstreamReq
 		upstreamResp = resp
 		break
 	}
@@ -273,6 +286,7 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 		bodyBytes, _ := io.ReadAll(upstreamResp.Body)
 		var payload map[string]interface{}
 		json.Unmarshal(bodyBytes, &payload)
+		payload = upstreamChatPayloadAsOpenAI(payload, selectedUpstreamReq.Kind, model)
 
 		text, finishReason, usage := proxy.ExtractChatCompletionText(payload)
 		instructions, _ := body["instructions"].(string)
@@ -431,6 +445,10 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 		line, err := readLine(reader, &buf)
 		if err != nil {
 			break
+		}
+		line = upstreamStreamLineAsOpenAI(line, selectedUpstreamReq.Kind, model)
+		if line == "" {
+			continue
 		}
 
 		trimmed := strings.TrimSpace(line)
@@ -636,6 +654,8 @@ func handleAnthropicMessagesProxyHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	var selectedProvider *proxy.ProviderCandidate
+	var selectedUpstreamReq proxy.ChatCompletionsUpstreamRequest
+	var selectedUpstreamModel string
 	var upstreamResp *http.Response
 	var lastError error
 	startedAt := time.Now()
@@ -643,22 +663,32 @@ func handleAnthropicMessagesProxyHandler(w http.ResponseWriter, r *http.Request)
 	for i := range candidates {
 		candidate := &candidates[i]
 		startedAt = time.Now()
-
-		if candidate.UpstreamModel != "" {
-			openAIBody["model"] = candidate.UpstreamModel
+		upstreamModelForLog := candidate.UpstreamModel
+		if upstreamModelForLog == "" {
+			upstreamModelForLog = model
 		}
 
-		upstreamURL := utils.BuildUpstreamURL(candidate.Provider.BaseURL, "/v1/chat/completions")
-		reqBody, _ := json.Marshal(openAIBody)
-
-		req, err := http.NewRequestWithContext(r.Context(), "POST", upstreamURL, bytes.NewReader(reqBody))
+		upstreamReq, err := buildAnthropicMessagesUpstreamRequest(
+			candidate.Provider,
+			body,
+			openAIBody,
+			candidate.UpstreamModel,
+		)
 		if err != nil {
 			lastError = err
 			continue
 		}
-		req.Header.Set("Authorization", "Bearer "+candidate.Provider.APIKey)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Accept-Encoding", "identity")
+
+		req, err := http.NewRequestWithContext(r.Context(), "POST", upstreamReq.URL, bytes.NewReader(upstreamReq.Body))
+		if err != nil {
+			lastError = err
+			continue
+		}
+		for key, values := range upstreamReq.Headers {
+			for _, v := range values {
+				req.Header.Add(key, v)
+			}
+		}
 
 		resp, err := proxy.DoUpstream(req)
 		if err != nil {
@@ -678,7 +708,7 @@ func handleAnthropicMessagesProxyHandler(w http.ResponseWriter, r *http.Request)
 				ProviderID:     candidate.Provider.ID,
 				ProviderName:   candidate.Provider.Name,
 				Model:          model,
-				UpstreamModel:  toStringSafe(openAIBody["model"]),
+				UpstreamModel:  upstreamModelForLog,
 				Endpoint:       "/v1/messages",
 				Method:         "POST",
 				Status:         resp.StatusCode,
@@ -709,6 +739,8 @@ func handleAnthropicMessagesProxyHandler(w http.ResponseWriter, r *http.Request)
 		}
 
 		selectedProvider = candidate
+		selectedUpstreamReq = upstreamReq
+		selectedUpstreamModel = upstreamModelForLog
 		upstreamResp = resp
 		break
 	}
@@ -730,8 +762,18 @@ func handleAnthropicMessagesProxyHandler(w http.ResponseWriter, r *http.Request)
 		var payload map[string]interface{}
 		json.Unmarshal(bodyBytes, &payload)
 
-		anthropicResp := proxy.OpenAIToAnthropicNonStreaming(payload, model)
 		usage := utils.FindUsagePayload(payload)
+		anthropicResp := payload
+		if selectedUpstreamReq.NeedsChatResponseConversion || selectedUpstreamReq.Kind != proxy.UpstreamAnthropic {
+			openAIChatPayload := upstreamChatPayloadAsOpenAI(payload, selectedUpstreamReq.Kind, model)
+			anthropicResp = proxy.OpenAIToAnthropicNonStreaming(openAIChatPayload, model)
+			usage = utils.FindUsagePayload(openAIChatPayload)
+		} else if anthropicResp == nil {
+			anthropicResp = map[string]interface{}{}
+		}
+		if model != "" {
+			anthropicResp["model"] = model
+		}
 
 		w.Header().Set("Anthropic-Version", "2023-06-01")
 		w.WriteHeader(200)
@@ -747,12 +789,48 @@ func handleAnthropicMessagesProxyHandler(w http.ResponseWriter, r *http.Request)
 			ProviderID:     provider.Provider.ID,
 			ProviderName:   provider.Provider.Name,
 			Model:          model,
-			UpstreamModel:  toStringSafe(openAIBody["model"]),
+			UpstreamModel:  selectedUpstreamModel,
 			Endpoint:       "/v1/messages",
 			Method:         "POST",
 			Status:         200,
 			OK:             true,
 			Stream:         false,
+			DurationMs:     int(time.Since(startedAt).Milliseconds()),
+			Usage:          usage,
+			RequestContent: requestContent,
+		})
+		proxy.RecordProviderSuccess(provider.Provider.ID)
+		return
+	}
+
+	if selectedUpstreamReq.Kind == proxy.UpstreamAnthropic && !selectedUpstreamReq.NeedsChatResponseConversion {
+		utils.CopyUpstreamHeaders(upstreamResp.Header, w, map[string]string{
+			"Content-Type":      "text/event-stream; charset=utf-8",
+			"Cache-Control":     "no-cache, no-transform",
+			"X-Accel-Buffering": "no",
+			"Anthropic-Version": "2023-06-01",
+		})
+		w.WriteHeader(200)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		usage := proxy.WriteUpstreamStreamToResponse(upstreamResp, w)
+		logging.RecordRequestLog(logging.RequestLogParams{
+			UserID:         info.User.ID,
+			UserName:       info.User.Name,
+			Username:       info.User.Username,
+			APIKeyID:       getKeyID(info.APIKeyRecord),
+			APIKeyName:     getKeyName(info.APIKeyRecord),
+			APIKeyPreview:  maskKeyPreview(info.APIKeyRecord.Key),
+			ProviderID:     provider.Provider.ID,
+			ProviderName:   provider.Provider.Name,
+			Model:          model,
+			UpstreamModel:  selectedUpstreamModel,
+			Endpoint:       "/v1/messages",
+			Method:         "POST",
+			Status:         200,
+			OK:             true,
+			Stream:         true,
 			DurationMs:     int(time.Since(startedAt).Milliseconds()),
 			Usage:          usage,
 			RequestContent: requestContent,
@@ -814,6 +892,10 @@ func handleAnthropicMessagesProxyHandler(w http.ResponseWriter, r *http.Request)
 		line, err := readLine(reader, &buf)
 		if err != nil {
 			break
+		}
+		line = upstreamStreamLineAsOpenAI(line, selectedUpstreamReq.Kind, model)
+		if line == "" {
+			continue
 		}
 
 		trimmed := strings.TrimSpace(line)
@@ -1020,7 +1102,7 @@ func handleAnthropicMessagesProxyHandler(w http.ResponseWriter, r *http.Request)
 		ProviderID:     provider.Provider.ID,
 		ProviderName:   provider.Provider.Name,
 		Model:          model,
-		UpstreamModel:  toStringSafe(openAIBody["model"]),
+		UpstreamModel:  selectedUpstreamModel,
 		Endpoint:       "/v1/messages",
 		Method:         "POST",
 		Status:         200,
@@ -1091,7 +1173,7 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[V1CHAT] TRY_CANDIDATE[%d] provider=%s upstream_model=%s",
 			i, candidate.Provider.Name, candidate.UpstreamModel)
 
-		upstreamURL, upstreamBody, upstreamHeaders, needsChatResponseConversion, err := proxy.BuildChatCompletionsUpstreamRequest(
+		upstreamReq, err := proxy.BuildChatCompletionsUpstreamRequestDetailed(
 			candidate.Provider,
 			r.URL.Path,
 			r.URL.RawQuery,
@@ -1103,16 +1185,16 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 			lastError = err
 			continue
 		}
-		log.Printf("[V1CHAT] UPSTREAM_URL %s %s", r.Method, upstreamURL)
+		log.Printf("[V1CHAT] UPSTREAM_URL %s %s", r.Method, upstreamReq.URL)
 
 		var reqBody io.Reader
-		if upstreamBody != nil {
-			reqBody = bytes.NewReader(upstreamBody)
+		if upstreamReq.Body != nil {
+			reqBody = bytes.NewReader(upstreamReq.Body)
 		}
 		log.Printf("[V1CHAT] UPSTREAM_BODY len=%d preview=%s",
-			len(upstreamBody), truncateForLog(string(upstreamBody), 200))
+			len(upstreamReq.Body), truncateForLog(string(upstreamReq.Body), 200))
 
-		req, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL, reqBody)
+		req, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamReq.URL, reqBody)
 		if err != nil {
 			log.Printf("[V1CHAT] CREATE_REQ_ERROR err=%v", err)
 			lastError = err
@@ -1125,7 +1207,7 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 				req.Header.Add(key, v)
 			}
 		}
-		for key, values := range upstreamHeaders {
+		for key, values := range upstreamReq.Headers {
 			req.Header.Del(key)
 			for _, v := range values {
 				req.Header.Add(key, v)
@@ -1202,9 +1284,9 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 			}
 
 			var usage interface{}
-			if needsChatResponseConversion && proxy.DetectUpstreamKind(candidate.Provider) == proxy.UpstreamGemini {
+			if upstreamReq.NeedsChatResponseConversion && upstreamReq.Kind == proxy.UpstreamGemini {
 				usage = writeGeminiStreamAsOpenAI(resp, w, model)
-			} else if needsChatResponseConversion && proxy.DetectUpstreamKind(candidate.Provider) == proxy.UpstreamAnthropic {
+			} else if upstreamReq.NeedsChatResponseConversion && upstreamReq.Kind == proxy.UpstreamAnthropic {
 				usage = writeAnthropicStreamAsOpenAI(resp, w, model)
 			} else {
 				usage = proxy.WriteUpstreamStreamToResponse(resp, w)
@@ -1242,10 +1324,10 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 		resp.Body.Close()
 		log.Printf("[V1CHAT] NONSTREAM_BODY len=%d preview=%s", len(bodyBytes), truncateForLog(string(bodyBytes), 300))
 		usage := utils.ExtractUsageFromResponseText(string(bodyBytes))
-		if needsChatResponseConversion {
+		if upstreamReq.NeedsChatResponseConversion {
 			var payload map[string]interface{}
 			if json.Unmarshal(bodyBytes, &payload) == nil {
-				switch proxy.DetectUpstreamKind(candidate.Provider) {
+				switch upstreamReq.Kind {
 				case proxy.UpstreamAnthropic:
 					converted := proxy.AnthropicToOpenAIChat(payload, model)
 					bodyBytes, _ = json.Marshal(converted)
@@ -1342,6 +1424,38 @@ func readLine(reader *bufio.Reader, buf *strings.Builder) (string, error) {
 		if b != '\r' {
 			buf.WriteByte(b)
 		}
+	}
+}
+
+func buildAnthropicMessagesUpstreamRequest(provider models.Provider, anthropicBody map[string]interface{}, openAIBody map[string]interface{}, upstreamModel string) (proxy.ChatCompletionsUpstreamRequest, error) {
+	if proxy.ProviderUpstreamKind(provider) == proxy.UpstreamAnthropic {
+		return proxy.BuildAnthropicMessagesUpstreamRequestDetailed(provider, anthropicBody, upstreamModel)
+	}
+	return proxy.BuildChatCompletionsUpstreamRequestDetailed(provider, "/v1/chat/completions", "", openAIBody, upstreamModel)
+}
+
+func upstreamChatPayloadAsOpenAI(payload map[string]interface{}, kind proxy.UpstreamKind, model string) map[string]interface{} {
+	if payload == nil {
+		return map[string]interface{}{}
+	}
+	switch kind {
+	case proxy.UpstreamAnthropic:
+		return proxy.AnthropicToOpenAIChat(payload, model)
+	case proxy.UpstreamGemini:
+		return proxy.GeminiToOpenAIChat(payload, model)
+	default:
+		return payload
+	}
+}
+
+func upstreamStreamLineAsOpenAI(line string, kind proxy.UpstreamKind, model string) string {
+	switch kind {
+	case proxy.UpstreamAnthropic:
+		return proxy.AnthropicStreamLineToOpenAI(line, model)
+	case proxy.UpstreamGemini:
+		return proxy.GeminiStreamChunkToOpenAI(line, model)
+	default:
+		return line
 	}
 }
 

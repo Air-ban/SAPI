@@ -842,6 +842,11 @@ func normalizeDB(db *models.Database) bool {
 
 	for i := range db.Providers {
 		p := &db.Providers[i]
+		normalizedFormat := models.NormalizeUpstreamFormat(p.UpstreamFormat)
+		if p.UpstreamFormat != normalizedFormat {
+			p.UpstreamFormat = normalizedFormat
+			changed = true
+		}
 		if p.HealthStatus == "" {
 			p.HealthStatus = "unknown"
 			changed = true
@@ -995,6 +1000,7 @@ func RedactProvider(p models.Provider) map[string]interface{} {
 		"id":                p.ID,
 		"name":              p.Name,
 		"baseUrl":           p.BaseURL,
+		"upstreamFormat":    models.NormalizeUpstreamFormat(p.UpstreamFormat),
 		"models":            p.Models,
 		"modelMappings":     p.ModelMappings,
 		"enabled":           p.Enabled,
