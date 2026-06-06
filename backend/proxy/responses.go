@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	"sapi/utils"
@@ -122,16 +123,18 @@ func appendResponsesToolMessage(messages *[]map[string]interface{}, item map[str
 		if name == "" || callID == "" {
 			return false
 		}
+		input := utils.ExtractTextFromContent(item["input"])
+		args, _ := json.Marshal(map[string]string{"input": input})
 		*messages = append(*messages, map[string]interface{}{
 			"role":    "assistant",
 			"content": nil,
 			"tool_calls": []interface{}{
 				map[string]interface{}{
 					"id":   callID,
-					"type": "custom",
-					"custom": map[string]interface{}{
-						"name":  name,
-						"input": utils.ExtractTextFromContent(item["input"]),
+					"type": "function",
+					"function": map[string]interface{}{
+						"name":      name,
+						"arguments": string(args),
 					},
 				},
 			},
@@ -312,11 +315,21 @@ func convertResponsesCustomTool(tool map[string]interface{}) (map[string]interfa
 		return nil, false
 	}
 	return map[string]interface{}{
-		"type": "custom",
-		"custom": map[string]interface{}{
+		"type": "function",
+		"function": map[string]interface{}{
 			"name":        name,
 			"description": tool["description"],
-			"format":      tool["format"],
+			"parameters": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"input": map[string]interface{}{
+						"type":        "string",
+						"description": "Raw input for the custom tool.",
+					},
+				},
+				"required":             []string{"input"},
+				"additionalProperties": false,
+			},
 		},
 	}, true
 }
@@ -342,10 +355,10 @@ func ConvertResponsesToolChoiceToChat(choice map[string]interface{}, tools []map
 				}, true
 			}
 		case "custom":
-			if custom, ok := tool["custom"].(map[string]interface{}); ok && custom["name"] == name {
+			if fn, ok := tool["function"].(map[string]interface{}); ok && fn["name"] == name {
 				return map[string]interface{}{
-					"type":   "custom",
-					"custom": map[string]interface{}{"name": name},
+					"type":     "function",
+					"function": map[string]interface{}{"name": name},
 				}, true
 			}
 		}
@@ -354,6 +367,10 @@ func ConvertResponsesToolChoiceToChat(choice map[string]interface{}, tools []map
 }
 
 func ExtractChatCompletionFunctionCallItems(payload map[string]interface{}) []interface{} {
+	return ExtractChatCompletionToolCallItems(payload, nil)
+}
+
+func ExtractChatCompletionToolCallItems(payload map[string]interface{}, customToolNames map[string]bool) []interface{} {
 	choices, _ := payload["choices"].([]interface{})
 	if len(choices) == 0 {
 		return nil
@@ -391,11 +408,18 @@ func ExtractChatCompletionFunctionCallItems(payload map[string]interface{}) []in
 			if name == "" {
 				continue
 			}
+			callID := firstStringFromBody(tc, "id")
+			if customToolNames[name] {
+				items = append(items, buildResponsesCustomToolCall(callID, name, firstStringFromBody(fn, "arguments")))
+				continue
+			}
 			items = append(items, map[string]interface{}{
 				"type":      "function_call",
-				"call_id":   firstStringFromBody(tc, "id"),
+				"id":        callID,
+				"call_id":   callID,
 				"name":      name,
 				"arguments": firstStringFromBody(fn, "arguments"),
+				"status":    "completed",
 			})
 		case "custom":
 			custom, _ := tc["custom"].(map[string]interface{})
@@ -403,15 +427,173 @@ func ExtractChatCompletionFunctionCallItems(payload map[string]interface{}) []in
 			if name == "" {
 				continue
 			}
-			items = append(items, map[string]interface{}{
-				"type":    "custom_tool_call",
-				"call_id": firstStringFromBody(tc, "id"),
-				"name":    name,
-				"input":   firstStringFromBody(custom, "input"),
-			})
+			items = append(items, buildResponsesCustomToolCall(firstStringFromBody(tc, "id"), name, firstStringFromBody(custom, "input")))
 		}
 	}
 	return items
+}
+
+type ChatToolCallAccumulator struct {
+	calls map[int]*chatToolCallState
+}
+
+type chatToolCallState struct {
+	id          string
+	toolType    string
+	name        string
+	arguments   strings.Builder
+	customInput strings.Builder
+}
+
+func NewChatToolCallAccumulator() *ChatToolCallAccumulator {
+	return &ChatToolCallAccumulator{calls: map[int]*chatToolCallState{}}
+}
+
+func (a *ChatToolCallAccumulator) AddChunk(payload map[string]interface{}) {
+	if a == nil || payload == nil {
+		return
+	}
+	choices, _ := payload["choices"].([]interface{})
+	if len(choices) == 0 {
+		return
+	}
+	choice, _ := choices[0].(map[string]interface{})
+	if choice == nil {
+		return
+	}
+	message, _ := choice["message"].(map[string]interface{})
+	if message == nil {
+		message, _ = choice["delta"].(map[string]interface{})
+	}
+	if message == nil {
+		return
+	}
+	toolCalls, _ := message["tool_calls"].([]interface{})
+	for i, toolCall := range toolCalls {
+		tc, ok := toolCall.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		index := i
+		if idx, ok := tc["index"].(float64); ok {
+			index = int(idx)
+		}
+		state := a.calls[index]
+		if state == nil {
+			state = &chatToolCallState{}
+			a.calls[index] = state
+		}
+		if id := firstStringFromBody(tc, "id"); id != "" {
+			state.id = id
+		}
+		if toolType := firstStringFromBody(tc, "type"); toolType != "" {
+			state.toolType = toolType
+		}
+		if fn, _ := tc["function"].(map[string]interface{}); fn != nil {
+			if name := firstStringFromBody(fn, "name"); name != "" {
+				state.name = name
+			}
+			if args, ok := fn["arguments"].(string); ok {
+				state.arguments.WriteString(args)
+			}
+		}
+		if custom, _ := tc["custom"].(map[string]interface{}); custom != nil {
+			state.toolType = "custom"
+			if name := firstStringFromBody(custom, "name"); name != "" {
+				state.name = name
+			}
+			if input, ok := custom["input"].(string); ok {
+				state.customInput.WriteString(input)
+			}
+		}
+	}
+}
+
+func (a *ChatToolCallAccumulator) Items(customToolNames map[string]bool) []interface{} {
+	if a == nil || len(a.calls) == 0 {
+		return nil
+	}
+	indexes := make([]int, 0, len(a.calls))
+	for index := range a.calls {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+
+	items := make([]interface{}, 0, len(indexes))
+	for _, index := range indexes {
+		state := a.calls[index]
+		if state == nil || state.name == "" {
+			continue
+		}
+		callID := state.id
+		if callID == "" {
+			callID = utils.GenerateID("call")
+		}
+		arguments := state.arguments.String()
+		if state.toolType == "custom" || customToolNames[state.name] {
+			input := state.customInput.String()
+			if input == "" {
+				input = customToolInputFromArguments(arguments)
+			}
+			items = append(items, buildResponsesCustomToolCall(callID, state.name, input))
+			continue
+		}
+		items = append(items, map[string]interface{}{
+			"type":      "function_call",
+			"id":        callID,
+			"call_id":   callID,
+			"name":      state.name,
+			"arguments": arguments,
+			"status":    "completed",
+		})
+	}
+	return items
+}
+
+func ResponsesCustomToolNames(tools interface{}) map[string]bool {
+	result := map[string]bool{}
+	toolList, ok := tools.([]interface{})
+	if !ok {
+		return result
+	}
+	for _, tool := range toolList {
+		t, ok := tool.(map[string]interface{})
+		if !ok || firstStringFromBody(t, "type") != "custom" {
+			continue
+		}
+		if name := firstStringFromBody(t, "name"); name != "" {
+			result[name] = true
+		}
+	}
+	return result
+}
+
+func buildResponsesCustomToolCall(callID, name, input string) map[string]interface{} {
+	if callID == "" {
+		callID = utils.GenerateID("call")
+	}
+	return map[string]interface{}{
+		"type":    "custom_tool_call",
+		"id":      callID,
+		"call_id": callID,
+		"name":    name,
+		"input":   customToolInputFromArguments(input),
+		"status":  "completed",
+	}
+}
+
+func customToolInputFromArguments(arguments string) string {
+	trimmed := strings.TrimSpace(arguments)
+	if trimmed == "" {
+		return ""
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
+		if input, ok := payload["input"].(string); ok {
+			return input
+		}
+	}
+	return arguments
 }
 
 func BuildResponseUsage(usage interface{}, outputText string) map[string]interface{} {

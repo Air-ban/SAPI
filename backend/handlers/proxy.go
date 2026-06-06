@@ -149,6 +149,16 @@ func cloneRequestContent(body map[string]interface{}) map[string]interface{} {
 	return cloned
 }
 
+func responsesInputFromBody(body map[string]interface{}) interface{} {
+	if body == nil {
+		return nil
+	}
+	if input, ok := body["input"]; ok {
+		return input
+	}
+	return body["messages"]
+}
+
 func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 	info, ok := validateProxyRequest(w, r)
 	if !ok {
@@ -162,6 +172,7 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	requestContent := cloneRequestContent(body)
+	customToolNames := proxy.ResponsesCustomToolNames(body["tools"])
 
 	responseRequest := proxy.ConvertToChatCompletionsPayload(body)
 	payload, _ := responseRequest["model"]
@@ -265,7 +276,7 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 
 		text, finishReason, usage := proxy.ExtractChatCompletionText(payload)
 		instructions, _ := body["instructions"].(string)
-		input, _ := responseRequest["input"].([]map[string]interface{})
+		input := responsesInputFromBody(body)
 
 		outputItems := make([]interface{}, 0)
 		reasoningEffort, _ := body["reasoning"].(map[string]interface{})
@@ -276,7 +287,11 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 		if effort != "" {
 			outputItems = append(outputItems, proxy.CreateReasoningItem(effort))
 		}
-		outputItems = append(outputItems, proxy.CreateAssistantMessageItem(text))
+		toolItems := proxy.ExtractChatCompletionToolCallItems(payload, customToolNames)
+		if text != "" || len(toolItems) == 0 {
+			outputItems = append(outputItems, proxy.CreateAssistantMessageItem(text))
+		}
+		outputItems = append(outputItems, toolItems...)
 
 		respObj := proxy.BuildResponseObject(map[string]interface{}{
 			"status":          "completed",
@@ -340,7 +355,7 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	instructions, _ := body["instructions"].(string)
-	input, _ := responseRequest["input"].([]map[string]interface{})
+	input := responsesInputFromBody(body)
 
 	outputItems := make([]interface{}, 0)
 	if effort != "" {
@@ -410,6 +425,7 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 	outputText := ""
 	finishReason := ""
 	var usagePayload interface{}
+	toolAccumulator := proxy.NewChatToolCallAccumulator()
 
 	for {
 		line, err := readLine(reader, &buf)
@@ -434,6 +450,7 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 		if json.Unmarshal([]byte(item), &ssePayload) != nil {
 			continue
 		}
+		toolAccumulator.AddChunk(ssePayload)
 
 		dText, dFinish, dUsage := proxy.ExtractChatCompletionText(ssePayload)
 		if dFinish != "" {
@@ -475,6 +492,8 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 		finalOutput = append(finalOutput, proxy.CreateReasoningItem(effort))
 	}
 	finalOutput = append(finalOutput, completedItem)
+	toolItems := toolAccumulator.Items(customToolNames)
+	finalOutput = append(finalOutput, toolItems...)
 
 	sseWriter.Write("response.output_text.done", map[string]interface{}{
 		"content_index": 0,
@@ -498,6 +517,18 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 		"item":         completedItem,
 		"output_index": assistIdx,
 	})
+	toolStartIndex := assistIdx + 1
+	for i, item := range toolItems {
+		outputIndex := toolStartIndex + i
+		sseWriter.Write("response.output_item.added", map[string]interface{}{
+			"item":         item,
+			"output_index": outputIndex,
+		})
+		sseWriter.Write("response.output_item.done", map[string]interface{}{
+			"item":         item,
+			"output_index": outputIndex,
+		})
+	}
 
 	finalResponse := proxy.BuildResponseObject(map[string]interface{}{
 		"status":          "completed",

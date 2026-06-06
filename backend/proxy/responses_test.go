@@ -1,6 +1,9 @@
 package proxy
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestConvertResponsesToolsToChatTools(t *testing.T) {
 	tools := []interface{}{
@@ -61,12 +64,16 @@ func TestConvertResponsesToolsToChatTools(t *testing.T) {
 		t.Fatalf("expected second tool name read_file, got %v", secondFunction["name"])
 	}
 
-	custom := chatTools[2]["custom"].(map[string]interface{})
-	if custom["name"] != "apply_patch" {
-		t.Fatalf("expected custom tool name apply_patch, got %v", custom["name"])
+	customFunction := chatTools[2]["function"].(map[string]interface{})
+	if customFunction["name"] != "apply_patch" {
+		t.Fatalf("expected custom tool to map to function name apply_patch, got %v", customFunction["name"])
 	}
-	if custom["description"] != "Apply a patch." {
-		t.Fatalf("expected custom description to be preserved, got %v", custom["description"])
+	if customFunction["description"] != "Apply a patch." {
+		t.Fatalf("expected custom description to be preserved, got %v", customFunction["description"])
+	}
+	params := customFunction["parameters"].(map[string]interface{})
+	if params["type"] != "object" {
+		t.Fatalf("expected custom tool parameters object schema, got %#v", params)
 	}
 }
 
@@ -130,9 +137,9 @@ func TestConvertResponsesCustomToolChoiceToChat(t *testing.T) {
 	}
 
 	choiceMap := choice.(map[string]interface{})
-	custom := choiceMap["custom"].(map[string]interface{})
-	if custom["name"] != "apply_patch" {
-		t.Fatalf("expected custom tool choice name apply_patch, got %v", custom["name"])
+	function := choiceMap["function"].(map[string]interface{})
+	if function["name"] != "apply_patch" {
+		t.Fatalf("expected custom tool choice to map to function name apply_patch, got %v", function["name"])
 	}
 }
 
@@ -201,17 +208,104 @@ func TestConvertInputToMessagesPreservesCustomToolHistory(t *testing.T) {
 
 	toolCalls := messages[0]["tool_calls"].([]interface{})
 	call := toolCalls[0].(map[string]interface{})
-	if call["type"] != "custom" {
-		t.Fatalf("expected custom chat tool call, got %#v", call)
+	if call["type"] != "function" {
+		t.Fatalf("expected custom history to map to function chat tool call, got %#v", call)
 	}
-	custom := call["custom"].(map[string]interface{})
-	if custom["name"] != "apply_patch" || custom["input"] != "*** Begin Patch" {
-		t.Fatalf("unexpected custom chat tool call: %#v", custom)
+	function := call["function"].(map[string]interface{})
+	if function["name"] != "apply_patch" {
+		t.Fatalf("unexpected custom chat tool call name: %#v", function)
+	}
+	var args map[string]string
+	if err := json.Unmarshal([]byte(function["arguments"].(string)), &args); err != nil {
+		t.Fatalf("custom function arguments are not JSON: %v", err)
+	}
+	if args["input"] != "*** Begin Patch" {
+		t.Fatalf("expected custom input to be wrapped as function arguments, got %#v", args)
 	}
 
 	toolMessage := messages[1]
 	if toolMessage["role"] != "tool" || toolMessage["tool_call_id"] != "call_456" {
 		t.Fatalf("expected custom tool output message, got %#v", toolMessage)
+	}
+}
+
+func TestExtractChatCompletionToolCallItemsRestoresCustomToolsFromFunctions(t *testing.T) {
+	items := ExtractChatCompletionToolCallItems(map[string]interface{}{
+		"choices": []interface{}{
+			map[string]interface{}{
+				"message": map[string]interface{}{
+					"tool_calls": []interface{}{
+						map[string]interface{}{
+							"id":   "call_456",
+							"type": "function",
+							"function": map[string]interface{}{
+								"name":      "apply_patch",
+								"arguments": `{"input":"*** Begin Patch"}`,
+							},
+						},
+					},
+				},
+			},
+		},
+	}, map[string]bool{"apply_patch": true})
+
+	if len(items) != 1 {
+		t.Fatalf("expected 1 custom tool call item, got %d", len(items))
+	}
+	item := items[0].(map[string]interface{})
+	if item["type"] != "custom_tool_call" || item["call_id"] != "call_456" || item["name"] != "apply_patch" {
+		t.Fatalf("unexpected restored custom tool call: %#v", item)
+	}
+	if item["input"] != "*** Begin Patch" {
+		t.Fatalf("expected restored custom input, got %v", item["input"])
+	}
+}
+
+func TestChatToolCallAccumulatorCombinesStreamingFunctionArguments(t *testing.T) {
+	accumulator := NewChatToolCallAccumulator()
+	accumulator.AddChunk(map[string]interface{}{
+		"choices": []interface{}{
+			map[string]interface{}{
+				"delta": map[string]interface{}{
+					"tool_calls": []interface{}{
+						map[string]interface{}{
+							"index": float64(0),
+							"id":    "call_789",
+							"type":  "function",
+							"function": map[string]interface{}{
+								"name":      "apply_patch",
+								"arguments": `{"input":"*** Begin`,
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	accumulator.AddChunk(map[string]interface{}{
+		"choices": []interface{}{
+			map[string]interface{}{
+				"delta": map[string]interface{}{
+					"tool_calls": []interface{}{
+						map[string]interface{}{
+							"index": float64(0),
+							"function": map[string]interface{}{
+								"arguments": ` Patch"}`,
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	items := accumulator.Items(map[string]bool{"apply_patch": true})
+	if len(items) != 1 {
+		t.Fatalf("expected 1 accumulated custom tool call, got %d", len(items))
+	}
+	item := items[0].(map[string]interface{})
+	if item["type"] != "custom_tool_call" || item["input"] != "*** Begin Patch" {
+		t.Fatalf("unexpected accumulated custom tool call: %#v", item)
 	}
 }
 

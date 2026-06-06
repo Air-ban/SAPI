@@ -46,6 +46,8 @@ export function DownloadConfigDialog({ open, onClose, baseUrl, apiKeys, defaultK
 
   const selectedKey = (keyList.find((k) => k.id === selectedKeyId) || keyList[0] || {}).key || "";
   const endpoint = baseUrl || window.location.origin;
+  const codexEndpointBase = endpoint.replace(/\/+$/, "");
+  const codexEndpoint = codexEndpointBase.endsWith("/v1") ? codexEndpointBase : `${codexEndpointBase}/v1`;
 
   const claudeScript = [
     "@echo off",
@@ -131,7 +133,7 @@ export function DownloadConfigDialog({ open, onClose, baseUrl, apiKeys, defaultK
     `echo name = "custom" >> "%CONFIG_PATH%"`,
     `echo wire_api = "responses" >> "%CONFIG_PATH%"`,
     `echo requires_openai_auth = true >> "%CONFIG_PATH%"`,
-    `echo base_url = "${endpoint}" >> "%CONFIG_PATH%"`,
+    `echo base_url = "${codexEndpoint}" >> "%CONFIG_PATH%"`,
     "",
     "echo Writing auth.json...",
     "",

@@ -227,6 +227,14 @@ func MountPublicRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /models", handleModelsList)
 	mux.HandleFunc("GET /v1/models/{model...}", handleModelRetrieve)
 	mux.HandleFunc("GET /models/{model...}", handleModelRetrieve)
+	mux.HandleFunc("GET /v1/messages/v1/models", handleModelsList)
+	mux.HandleFunc("GET /messages/v1/models", handleModelsList)
+	mux.HandleFunc("GET /v1/responses/v1/models", handleModelsList)
+	mux.HandleFunc("GET /responses/v1/models", handleModelsList)
+	mux.HandleFunc("GET /v1/messages/v1/models/{model...}", handleModelRetrieve)
+	mux.HandleFunc("GET /messages/v1/models/{model...}", handleModelRetrieve)
+	mux.HandleFunc("GET /v1/responses/v1/models/{model...}", handleModelRetrieve)
+	mux.HandleFunc("GET /responses/v1/models/{model...}", handleModelRetrieve)
 	mux.HandleFunc("GET /api/announcements", handleAnnouncements)
 	mux.HandleFunc("GET /api/banner", handleBanner)
 	mux.HandleFunc("GET /api/maintenance", handleMaintenance)
@@ -417,6 +425,18 @@ func modelIDFromModelsPath(r *http.Request) string {
 		}
 		if strings.HasPrefix(r.URL.Path, prefix) {
 			return strings.TrimSpace(strings.TrimPrefix(r.URL.Path, prefix))
+		}
+	}
+	for _, marker := range []string{"/v1/models/"} {
+		if idx := strings.Index(r.URL.EscapedPath(), marker); idx >= 0 {
+			raw := r.URL.EscapedPath()[idx+len(marker):]
+			modelID, err := url.PathUnescape(raw)
+			if err == nil {
+				return strings.TrimSpace(modelID)
+			}
+		}
+		if idx := strings.Index(r.URL.Path, marker); idx >= 0 {
+			return strings.TrimSpace(r.URL.Path[idx+len(marker):])
 		}
 	}
 	return ""

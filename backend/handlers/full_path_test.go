@@ -119,10 +119,21 @@ func TestFullPathSmokeWithMockUpstream(t *testing.T) {
 		t.Fatalf("model retrieve returned %d body=%s", modelResp.Code, modelResp.Body.String())
 	}
 
+	compatModelsResp := get(t, app, "/v1/messages/v1/models", userKey)
+	if compatModelsResp.Code != http.StatusOK || !strings.Contains(compatModelsResp.Body.String(), "test-model") {
+		t.Fatalf("compat models returned %d body=%s", compatModelsResp.Code, compatModelsResp.Body.String())
+	}
+
 	encodedMappedModel := "/v1/models/" + url.PathEscape("openrouter/test-model")
 	mappedModelResp := get(t, app, encodedMappedModel, userKey)
 	if mappedModelResp.Code != http.StatusOK || !strings.Contains(mappedModelResp.Body.String(), `"id":"openrouter/test-model"`) {
 		t.Fatalf("encoded mapped model retrieve returned %d body=%s", mappedModelResp.Code, mappedModelResp.Body.String())
+	}
+
+	compatMappedModel := "/v1/messages/v1/models/" + url.PathEscape("openrouter/test-model")
+	compatMappedModelResp := get(t, app, compatMappedModel, userKey)
+	if compatMappedModelResp.Code != http.StatusOK || !strings.Contains(compatMappedModelResp.Body.String(), `"id":"openrouter/test-model"`) {
+		t.Fatalf("compat encoded mapped model retrieve returned %d body=%s", compatMappedModelResp.Code, compatMappedModelResp.Body.String())
 	}
 
 	chatResp := postJSON(t, app, "/v1/chat/completions", map[string]interface{}{
