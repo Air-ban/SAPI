@@ -11,22 +11,29 @@ import {
   IconButton,
   InputLabel,
   MenuItem,
+  Paper,
   Select,
   Switch,
   Stack,
   TextField,
   Tooltip,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography
 } from "@mui/material";
+import DownloadIcon from "@mui/icons-material/Download";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import EditIcon from "@mui/icons-material/Edit";
+import InsightsIcon from "@mui/icons-material/Insights";
 import KeyIcon from "@mui/icons-material/Key";
 import SettingsIcon from "@mui/icons-material/Settings";
 import VpnKeyIcon from "@mui/icons-material/VpnKey";
 import { EntityRow } from "../components/EntityRow";
-import { formatDate, formatRpmLimit, getUserApiKeys, subscriptionTierLabel } from "../utils/helpers";
-import { request } from "../utils/api";
+import { EmptyState } from "../components/EmptyState";
+import { formatDate, formatNumber, formatRpmLimit, getUserApiKeys, subscriptionTierLabel } from "../utils/helpers";
+import { request, requestBlob } from "../utils/api";
+import { RequestHeatmap } from "../user/RequestHeatmap";
 import { ApiKeyRpmRow } from "./ApiKeyRpmRow";
 
 const FALLBACK_TIERS = [
@@ -45,6 +52,11 @@ export function UserRow({ user, usage, subscriptionTiers = FALLBACK_TIERS, after
   const [expanded, setExpanded] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editLoading, setEditLoading] = useState(false);
+  const [tierLoading, setTierLoading] = useState("");
+  const [exportLoading, setExportLoading] = useState(false);
+  const [heatmapOpen, setHeatmapOpen] = useState(false);
+  const [heatmapLoading, setHeatmapLoading] = useState(false);
+  const [heatmapUsage, setHeatmapUsage] = useState(null);
   const [editForm, setEditForm] = useState({
     name: user.name || "",
     username: user.username || "",
@@ -132,6 +144,58 @@ export function UserRow({ user, usage, subscriptionTiers = FALLBACK_TIERS, after
     }
   };
 
+  const switchTier = async (tierId) => {
+    if (!tierId || tierId === (user.subscriptionTier || "lite")) return;
+    setTierLoading(tierId);
+    try {
+      await request(`/api/admin/users/${user.id}`, {
+        method: "PUT",
+        body: { subscriptionTier: tierId }
+      });
+      await afterChange(`订阅已切换为 ${subscriptionTierLabel(tierId, tiers)}`);
+    } catch (error) {
+      onToast(error.message, "error");
+    } finally {
+      setTierLoading("");
+    }
+  };
+
+  const downloadExport = async () => {
+    setExportLoading(true);
+    try {
+      const { blob, filename } = await requestBlob(`/api/admin/users/${user.id}/request-logs/export?days=7&includeContent=true`);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename || `sapi-user-${user.username || user.id}-request-logs.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      onToast("对话数据已导出", "success");
+    } catch (error) {
+      onToast(error.message, "error");
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
+  const toggleHeatmap = async () => {
+    const nextOpen = !heatmapOpen;
+    setHeatmapOpen(nextOpen);
+    if (!nextOpen || heatmapUsage) return;
+
+    setHeatmapLoading(true);
+    try {
+      const data = await request(`/api/admin/users/${user.id}/usage?days=365`);
+      setHeatmapUsage(data?.usage || null);
+    } catch (error) {
+      onToast(error.message, "error");
+    } finally {
+      setHeatmapLoading(false);
+    }
+  };
+
   const apiKeys = getUserApiKeys(user);
   const sourceLabel = user.source === "github"
     ? "GitHub"
@@ -165,13 +229,11 @@ export function UserRow({ user, usage, subscriptionTiers = FALLBACK_TIERS, after
         meta={meta}
         actions={
           <>
-            {apiKeys.length ? (
-              <Tooltip title="管理 API Key">
-                <IconButton size="small" onClick={() => setExpanded(!expanded)}>
-                  <SettingsIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-            ) : null}
+            <Tooltip title="用户管理">
+              <IconButton size="small" onClick={() => setExpanded(!expanded)}>
+                <SettingsIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
             {apiKeys[0]?.key ? (
               <Tooltip title="复制首个 Key">
                 <IconButton size="small" onClick={() => onCopy(apiKeys[0].key)}>
@@ -205,17 +267,107 @@ export function UserRow({ user, usage, subscriptionTiers = FALLBACK_TIERS, after
           </>
         }
       />
-      {expanded && apiKeys.length ? (
-        <Stack spacing={1} sx={{ pl: { xs: 0, md: 7 }, mb: 1 }}>
-          {apiKeys.map((key) => (
-            <ApiKeyRpmRow
-              key={key.id || key.key}
-              apiKey={key}
-              userId={user.id}
-              afterChange={afterChange}
-              onToast={onToast}
-            />
-          ))}
+      {expanded ? (
+        <Stack spacing={1.25} sx={{ pl: { xs: 0, md: 7 }, mb: 1 }}>
+          <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "app.paperAlt" }}>
+            <Stack spacing={1.5}>
+              <Stack
+                direction={{ xs: "column", md: "row" }}
+                spacing={1}
+                alignItems={{ xs: "stretch", md: "center" }}
+                justifyContent="space-between"
+              >
+                <Stack spacing={0.25} sx={{ minWidth: 0 }}>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 780 }}>
+                    订阅套餐
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {subscriptionTierLabel(user.subscriptionTier, tiers)} / {formatRpmLimit(user.subscriptionRpmLimit ?? user.defaultRpmLimit)}
+                  </Typography>
+                </Stack>
+                <ToggleButtonGroup
+                  exclusive
+                  size="small"
+                  value={user.subscriptionTier || "lite"}
+                  onChange={(_, value) => value && switchTier(value)}
+                  sx={{
+                    flexWrap: "wrap",
+                    gap: 0.75,
+                    justifyContent: { xs: "flex-start", md: "flex-end" },
+                    "& .MuiToggleButtonGroup-grouped": {
+                      m: 0,
+                      borderRadius: 1,
+                      border: "1px solid",
+                      borderColor: "divider"
+                    }
+                  }}
+                >
+                  {tiers.map((tier) => (
+                    <ToggleButton key={tier.id} value={tier.id} disabled={Boolean(tierLoading)}>
+                      <Stack direction="row" spacing={0.5} alignItems="center">
+                        <span>{tier.name}</span>
+                        {tierLoading === tier.id ? <CircularProgress size={12} /> : null}
+                      </Stack>
+                    </ToggleButton>
+                  ))}
+                </ToggleButtonGroup>
+              </Stack>
+              <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={exportLoading ? <CircularProgress size={16} /> : <DownloadIcon />}
+                  onClick={downloadExport}
+                  disabled={exportLoading}
+                  sx={{ alignSelf: { xs: "stretch", sm: "flex-start" } }}
+                >
+                  导出对话
+                </Button>
+                <Button
+                  size="small"
+                  variant={heatmapOpen ? "contained" : "outlined"}
+                  startIcon={heatmapLoading ? <CircularProgress size={16} /> : <InsightsIcon />}
+                  onClick={toggleHeatmap}
+                  disabled={heatmapLoading}
+                  sx={{ alignSelf: { xs: "stretch", sm: "flex-start" } }}
+                >
+                  热力图
+                </Button>
+              </Stack>
+            </Stack>
+          </Paper>
+          {heatmapOpen ? (
+            <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "app.paperAlt", overflow: "hidden" }}>
+              {heatmapLoading ? (
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <CircularProgress size={16} />
+                  <Typography variant="body2" color="text.secondary">加载中</Typography>
+                </Stack>
+              ) : heatmapUsage?.byDay?.length ? (
+                <Stack spacing={1.5}>
+                  <RequestHeatmap data={heatmapUsage.byDay} days={365} title={`${user.name || user.username || "用户"} 调用热力图`} />
+                  <Typography variant="caption" color="text.secondary">
+                    请求 {formatNumber(heatmapUsage.requests)} 次 / {formatNumber(heatmapUsage.totalTokens)} tokens / 失败 {formatNumber(heatmapUsage.failedRequests)} 次
+                  </Typography>
+                </Stack>
+              ) : (
+                <EmptyState text="暂无可分析的调用记录。" />
+              )}
+            </Paper>
+          ) : null}
+          {apiKeys.length ? (
+            <Stack spacing={1}>
+              {apiKeys.map((key) => (
+                <ApiKeyRpmRow
+                  key={key.id || key.key}
+                  apiKey={key}
+                  userId={user.id}
+                  afterChange={afterChange}
+                  onToast={onToast}
+                />
+              ))}
+            </Stack>
+          ) : null}
         </Stack>
       ) : null}
       <Dialog open={passwordDialogOpen} onClose={() => setPasswordDialogOpen(false)} maxWidth="xs" fullWidth>

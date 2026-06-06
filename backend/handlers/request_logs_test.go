@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -113,6 +114,98 @@ func TestRequestLogDetailReturnsContentWithAccessControl(t *testing.T) {
 	mux.ServeHTTP(otherRec, otherReq)
 	if otherRec.Code != http.StatusNotFound {
 		t.Fatalf("expected other user to get 404, got %d body=%s", otherRec.Code, otherRec.Body.String())
+	}
+}
+
+func TestAdminUserUsageFiltersByUser(t *testing.T) {
+	mux, adminToken, _, _ := setupRequestLogTest(t)
+
+	store.AppendRequestLog(models.RequestLog{
+		ID:           "log_other_usage",
+		UserID:       "usr_other",
+		UserName:     "Other",
+		Username:     "other",
+		Model:        "test-model",
+		Status:       http.StatusOK,
+		OK:           true,
+		PromptTokens: 100,
+		TotalTokens:  150,
+		Timestamp:    store.Now(),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/users/usr_owner/usage?days=365", nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected admin user usage to return 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Days  int `json:"days"`
+		Usage struct {
+			Requests    int `json:"requests"`
+			TotalTokens int `json:"totalTokens"`
+			ByUser      []struct {
+				UserID string `json:"userId"`
+			} `json:"byUser"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Days != 365 {
+		t.Fatalf("days = %d, want 365", payload.Days)
+	}
+	if payload.Usage.Requests != 1 || payload.Usage.TotalTokens != 5 {
+		t.Fatalf("expected only owner usage, got requests=%d totalTokens=%d", payload.Usage.Requests, payload.Usage.TotalTokens)
+	}
+	for _, row := range payload.Usage.ByUser {
+		if row.UserID != "usr_owner" {
+			t.Fatalf("usage included unexpected user %q", row.UserID)
+		}
+	}
+}
+
+func TestAdminUserRequestLogsExportIncludesContent(t *testing.T) {
+	mux, adminToken, _, _ := setupRequestLogTest(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/users/usr_owner/request-logs/export?days=7", nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected export to return 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Disposition"); !strings.Contains(got, "attachment") || !strings.Contains(got, "owner") {
+		t.Fatalf("unexpected content disposition %q", got)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "large-secret-payload") {
+		t.Fatalf("expected export to include request content, body=%s", body)
+	}
+
+	var payload struct {
+		RequestLogCount int `json:"requestLogCount"`
+		RequestLogs     []struct {
+			UserID         string                 `json:"userId"`
+			RequestContent map[string]interface{} `json:"requestContent"`
+		} `json:"requestLogs"`
+		User map[string]interface{} `json:"user"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.RequestLogCount != 1 || len(payload.RequestLogs) != 1 {
+		t.Fatalf("expected one exported log, got count=%d len=%d", payload.RequestLogCount, len(payload.RequestLogs))
+	}
+	if payload.RequestLogs[0].UserID != "usr_owner" || payload.RequestLogs[0].RequestContent == nil {
+		t.Fatalf("unexpected exported log %#v", payload.RequestLogs[0])
+	}
+	if _, ok := payload.User["apiKey"]; ok {
+		t.Fatal("exported user summary should not include API key material")
 	}
 }
 

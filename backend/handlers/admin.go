@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -44,6 +45,8 @@ func MountAdminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/admin/users/{id}", middleware.RequireAdmin(handleAdminUpdateUser))
 	mux.HandleFunc("DELETE /api/admin/users/{id}", middleware.RequireAdmin(handleAdminDeleteUser))
 	mux.HandleFunc("PUT /api/admin/users/{id}/password", middleware.RequireAdmin(handleAdminResetUserPassword))
+	mux.HandleFunc("GET /api/admin/users/{id}/usage", middleware.RequireAdmin(handleAdminUserUsage))
+	mux.HandleFunc("GET /api/admin/users/{id}/request-logs/export", middleware.RequireAdmin(handleAdminUserRequestLogsExport))
 	mux.HandleFunc("PUT /api/admin/users/{userId}/api-keys/{keyId}", middleware.RequireAdmin(handleAdminUpdateUserAPIKey))
 	mux.HandleFunc("GET /api/admin/announcements", middleware.RequireAdmin(handleAdminListAnnouncements))
 	mux.HandleFunc("POST /api/admin/announcements", middleware.RequireAdmin(handleAdminCreateAnnouncement))
@@ -106,6 +109,68 @@ func handleAdminRequestLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"requestLog": item})
+}
+
+func handleAdminUserUsage(w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("id")
+	db := store.ReadDB()
+	user, ok := findUserByID(db, userID)
+	if !ok {
+		utils.SendError(w, http.StatusNotFound, "User not found.", "not_found")
+		return
+	}
+
+	days := queryInt(r, "days", 365, 1, 365)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"user":  sanitizeUserExportSummary(user),
+		"days":  days,
+		"usage": usage.GetUsageStats(db, userID, days),
+	})
+}
+
+func handleAdminUserRequestLogsExport(w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("id")
+	db := store.ReadDB()
+	user, ok := findUserByID(db, userID)
+	if !ok {
+		utils.SendError(w, http.StatusNotFound, "User not found.", "not_found")
+		return
+	}
+
+	days := queryInt(r, "days", 7, 1, 7)
+	limit := queryInt(r, "limit", 5000, 1, 20000)
+	includeContent := !strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("includeContent")), "false")
+	since := time.Now().UTC().AddDate(0, 0, -days)
+	logs := store.RequestLogsSince(db, since, userID, limit)
+	sort.Slice(logs, func(i, j int) bool {
+		return logs[i].Timestamp < logs[j].Timestamp
+	})
+
+	exportLogs := make([]models.RequestLog, 0, len(logs))
+	for _, item := range logs {
+		if includeContent && item.ID != "" {
+			if full, found := store.FindRequestLog(item.ID, userID); found {
+				exportLogs = append(exportLogs, *full)
+				continue
+			}
+		}
+		exportLogs = append(exportLogs, item)
+	}
+
+	now := time.Now().UTC()
+	filename := fmt.Sprintf("sapi-user-%s-request-logs-%s.json", safeExportSlug(user), now.Format("2006-01-02"))
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"exportedAt":      now.Format(time.RFC3339),
+		"user":            sanitizeUserExportSummary(user),
+		"days":            days,
+		"limit":           limit,
+		"includeContent":  includeContent,
+		"requestLogCount": len(exportLogs),
+		"requestLogs":     exportLogs,
+	})
 }
 
 func handleAdminGetSMTP(w http.ResponseWriter, r *http.Request) {
@@ -1132,6 +1197,71 @@ func sanitizeUsers(users []models.User) []map[string]interface{} {
 		result[i] = sanitizeUser(&u)
 	}
 	return result
+}
+
+func findUserByID(db *models.Database, id string) (*models.User, bool) {
+	if db == nil {
+		return nil, false
+	}
+	for i := range db.Users {
+		if db.Users[i].ID == id {
+			return &db.Users[i], true
+		}
+	}
+	return nil, false
+}
+
+func queryInt(r *http.Request, name string, fallback int, minValue int, maxValue int) int {
+	value := fallback
+	if parsed, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get(name))); err == nil {
+		value = parsed
+	}
+	if value < minValue {
+		return minValue
+	}
+	if value > maxValue {
+		return maxValue
+	}
+	return value
+}
+
+func safeExportSlug(user *models.User) string {
+	parts := []string{user.Username, user.Name, user.ID}
+	for _, part := range parts {
+		part = strings.ToLower(strings.TrimSpace(part))
+		if part == "" {
+			continue
+		}
+		var b strings.Builder
+		for _, r := range part {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+				b.WriteRune(r)
+			} else if b.Len() == 0 || !strings.HasSuffix(b.String(), "-") {
+				b.WriteByte('-')
+			}
+		}
+		slug := strings.Trim(b.String(), "-.")
+		if slug != "" {
+			return slug
+		}
+	}
+	return "user"
+}
+
+func sanitizeUserExportSummary(user *models.User) map[string]interface{} {
+	return map[string]interface{}{
+		"id":                   user.ID,
+		"name":                 user.Name,
+		"username":             user.Username,
+		"email":                user.Email,
+		"enabled":              user.Enabled,
+		"source":               user.Source,
+		"githubLogin":          user.GitHubLogin,
+		"subscriptionTier":     subscription.TierForUser(user),
+		"subscriptionRpmLimit": subscription.RPMLimitForUser(user),
+		"createdAt":            user.CreatedAt,
+		"updatedAt":            user.UpdatedAt,
+	}
 }
 
 func sanitizeAdminAPIKeys(keys []models.APIKeyRecord) []map[string]interface{} {
