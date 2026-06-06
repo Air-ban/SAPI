@@ -58,6 +58,7 @@ func MountAdminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/site-email", middleware.RequireAdmin(handleAdminGetSiteEmail))
 	mux.HandleFunc("PUT /api/admin/site-email", middleware.RequireAdmin(handleAdminUpdateSiteEmail))
 	mux.HandleFunc("PUT /api/admin/rpm-limit", middleware.RequireAdmin(handleAdminUpdateRPMLimit))
+	mux.HandleFunc("PUT /api/admin/subscriptions/global-tier", middleware.RequireAdmin(handleAdminApplyGlobalSubscriptionTier))
 	mux.HandleFunc("PUT /api/admin/banner", middleware.RequireAdmin(handleAdminUpdateBanner))
 	mux.HandleFunc("PUT /api/admin/maintenance", middleware.RequireAdmin(handleAdminUpdateMaintenance))
 }
@@ -1140,6 +1141,43 @@ func handleAdminUpdateRPMLimit(w http.ResponseWriter, r *http.Request) {
 	})
 
 	json.NewEncoder(w).Encode(map[string]interface{}{"defaultRpmLimit": limit})
+}
+
+func handleAdminApplyGlobalSubscriptionTier(w http.ResponseWriter, r *http.Request) {
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
+
+	tier := security.SafeSingleLine(toString(body["subscriptionTier"]), 32)
+	if !subscription.IsValidTier(tier) {
+		utils.SendError(w, http.StatusBadRequest, "Subscription tier is invalid.", "invalid_subscription_tier")
+		return
+	}
+	tier = subscription.NormalizeTier(tier)
+
+	result := store.MutateDB(func(db *models.Database) interface{} {
+		changed := 0
+		for i := range db.Users {
+			if subscription.TierForUser(&db.Users[i]) == tier {
+				continue
+			}
+			db.Users[i].SubscriptionTier = tier
+			db.Users[i].UpdatedAt = store.Now()
+			changed++
+		}
+		return map[string]int{
+			"changedUsers": changed,
+			"totalUsers":   len(db.Users),
+		}
+	}).(map[string]int)
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"subscriptionTier":     tier,
+		"subscriptionRpmLimit": subscription.RPMLimitForTier(tier),
+		"changedUsers":         result["changedUsers"],
+		"totalUsers":           result["totalUsers"],
+	})
 }
 
 func handleAdminUpdateBanner(w http.ResponseWriter, r *http.Request) {

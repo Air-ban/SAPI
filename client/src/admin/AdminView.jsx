@@ -255,6 +255,9 @@ export function AdminView({
           />
           <RpmLimitSection
             subscriptionTiers={subscriptionTiers}
+            afterChange={afterChange}
+            onConfirm={onConfirm}
+            onToast={onToast}
           />
         </Stack>
       ) : null}

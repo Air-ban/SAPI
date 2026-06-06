@@ -68,3 +68,59 @@ func TestAdminUpdateUserSubscriptionTier(t *testing.T) {
 		t.Fatalf("stored subscriptionTier = %q, want %q", got, subscription.TierUltra)
 	}
 }
+
+func TestAdminApplyGlobalSubscriptionTier(t *testing.T) {
+	t.Setenv("SAPI_DATA_FILE", filepath.Join(t.TempDir(), "sapi.json"))
+	t.Setenv("SAPI_ADMIN_USER", "admin")
+	t.Setenv("SAPI_ADMIN_PASSWORD", "secret-password")
+	cfg := config.Load()
+	security.Configure(cfg)
+	if err := store.Init(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	store.MutateDB(func(db *models.Database) interface{} {
+		db.Users = []models.User{
+			{ID: "usr_lite", Username: "lite-user", Name: "Lite User", Enabled: true, SubscriptionTier: subscription.TierLite},
+			{ID: "usr_base", Username: "base-user", Name: "Base User", Enabled: true, SubscriptionTier: subscription.TierBase},
+			{ID: "usr_max", Username: "max-user", Name: "Max User", Enabled: true, SubscriptionTier: subscription.TierMax},
+		}
+		return nil
+	})
+	db := store.ReadDB()
+	token := auth.SignTokenString(auth.TokenPayload{Role: "admin", Sub: "admin"}, db.AppSecret)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/subscriptions/global-tier", strings.NewReader(`{"subscriptionTier":"pro"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	middleware.RequireAdmin(handleAdminApplyGlobalSubscriptionTier)(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if got := payload["subscriptionTier"]; got != subscription.TierPro {
+		t.Fatalf("subscriptionTier = %#v, want %q", got, subscription.TierPro)
+	}
+	if got := int(payload["subscriptionRpmLimit"].(float64)); got != 50 {
+		t.Fatalf("subscriptionRpmLimit = %d, want 50", got)
+	}
+	if got := int(payload["changedUsers"].(float64)); got != 3 {
+		t.Fatalf("changedUsers = %d, want 3", got)
+	}
+	if got := int(payload["totalUsers"].(float64)); got != 3 {
+		t.Fatalf("totalUsers = %d, want 3", got)
+	}
+
+	updated := store.ReadDB()
+	for _, user := range updated.Users {
+		if got := user.SubscriptionTier; got != subscription.TierPro {
+			t.Fatalf("user %s subscriptionTier = %q, want %q", user.ID, got, subscription.TierPro)
+		}
+	}
+}
