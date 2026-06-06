@@ -145,10 +145,16 @@ func VerifyPassword(password, storedHash string) bool {
 		return false
 	}
 
-	hash := pbkdf2([]byte(password), []byte(salt), iterations, 32, sha256.New)
-	hashStr := base64urlEncode(hash)
+	if saltBytes, err := base64urlDecode(salt); err == nil {
+		hash := pbkdf2([]byte(password), saltBytes, iterations, 32, sha256.New)
+		if SafeEqual(base64urlEncode(hash), expectedHash) {
+			return true
+		}
+	}
 
-	return SafeEqual(hashStr, expectedHash)
+	// Compatibility for hashes produced by callers that used the stored salt text directly.
+	hash := pbkdf2([]byte(password), []byte(salt), iterations, 32, sha256.New)
+	return SafeEqual(base64urlEncode(hash), expectedHash)
 }
 
 func pbkdf2(password, salt []byte, iter, keyLen int, h func() hash.Hash) []byte {

@@ -226,6 +226,73 @@ func TestAdminCanBanAndUnbanAPIKeys(t *testing.T) {
 	}
 }
 
+func TestAdminResetPasswordAllowsUserLoginWithNewPassword(t *testing.T) {
+	middleware.ResetSecurityStateForTest()
+	t.Setenv("SAPI_DATA_FILE", filepath.Join(t.TempDir(), "sapi.json"))
+	t.Setenv("SAPI_ADMIN_USER", "admin")
+	t.Setenv("SAPI_ADMIN_PASSWORD", "secret-password")
+	t.Setenv("SAPI_POSTGRES_URL", " ")
+	t.Setenv("DATABASE_URL", " ")
+	t.Setenv("SAPI_REDIS_URL", " ")
+	t.Setenv("REDIS_URL", " ")
+	cfg := config.Load()
+	security.Configure(cfg)
+	if err := store.Init(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	store.MutateDB(func(db *models.Database) interface{} {
+		db.Users = []models.User{{
+			ID:           "usr_password_reset",
+			Name:         "Password Reset User",
+			Username:     "password-reset",
+			Email:        "password-reset@example.com",
+			PasswordHash: auth.HashPassword("old-password-123"),
+			Enabled:      true,
+		}}
+		return nil
+	})
+	token := auth.SignTokenString(auth.TokenPayload{Role: "admin", Sub: "admin"}, store.ReadDB().AppSecret)
+
+	resetReq := httptest.NewRequest(http.MethodPut, "/api/admin/users/usr_password_reset/password", strings.NewReader(`{"password":"new-password-123"}`))
+	resetReq.SetPathValue("id", "usr_password_reset")
+	resetReq.Header.Set("Authorization", "Bearer "+token)
+	resetReq.Header.Set("Content-Type", "application/json")
+	resetRec := httptest.NewRecorder()
+
+	middleware.RequireAdmin(handleAdminResetUserPassword)(resetRec, resetReq)
+
+	if resetRec.Code != http.StatusOK {
+		t.Fatalf("password reset returned %d body=%s", resetRec.Code, resetRec.Body.String())
+	}
+
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"password-reset","password":"new-password-123"}`))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+
+	handleAuthLogin(loginRec, loginReq)
+
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login with new password returned %d body=%s", loginRec.Code, loginRec.Body.String())
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(loginRec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["role"] != "user" {
+		t.Fatalf("role = %#v, want user", payload["role"])
+	}
+
+	oldLoginReq := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"password-reset","password":"old-password-123"}`))
+	oldLoginReq.Header.Set("Content-Type", "application/json")
+	oldLoginRec := httptest.NewRecorder()
+
+	handleAuthLogin(oldLoginRec, oldLoginReq)
+
+	if oldLoginRec.Code != http.StatusUnauthorized {
+		t.Fatalf("login with old password returned %d, want 401 body=%s", oldLoginRec.Code, oldLoginRec.Body.String())
+	}
+}
+
 func TestAdminUpdateProviderRejectsInvalidBaseURL(t *testing.T) {
 	middleware.ResetSecurityStateForTest()
 	t.Setenv("SAPI_DATA_FILE", filepath.Join(t.TempDir(), "sapi.json"))
