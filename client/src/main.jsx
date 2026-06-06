@@ -88,6 +88,7 @@ function App() {
   const [userToken, setUserToken] = useState(localStorage.getItem(USER_TOKEN_KEY) || "");
   const [userSession, setUserSession] = useState(null);
   const [adminState, setAdminState] = useState(null);
+  const [adminUsage, setAdminUsage] = useState(null);
   const [userUsage, setUserUsage] = useState(null);
   const [toast, setToast] = useState({ open: false, message: "", severity: "success" });
   const [confirm, setConfirm] = useState(null);
@@ -103,6 +104,10 @@ function App() {
   const [themeMode, setThemeMode] = useState(getInitialThemeMode);
   const theme = useMemo(() => createAppTheme(themeMode), [themeMode]);
   const compact = useMediaQuery(theme.breakpoints.down("md"));
+  const adminStateWithUsage = useMemo(
+    () => (adminState ? { ...adminState, usage: adminUsage } : adminState),
+    [adminState, adminUsage]
+  );
 
   const toggleThemeMode = useCallback(() => {
     setThemeMode((current) => {
@@ -185,7 +190,16 @@ function App() {
 
   const loadAdminState = useCallback(async () => {
     const state = await request("/api/admin/state");
-    setAdminState(state);
+    if (state?.usage) {
+      setAdminUsage(state.usage);
+    }
+    setAdminState(state ? { ...state, usage: undefined } : state);
+  }, []);
+
+  const loadAdminUsage = useCallback(async () => {
+    const data = await request("/api/admin/usage?days=30");
+    setAdminUsage(data);
+    return data;
   }, []);
 
   const loadUserUsage = useCallback(async () => {
@@ -232,6 +246,7 @@ function App() {
     localStorage.removeItem(ADMIN_TOKEN_KEY);
     setAdminToken("");
     setAdminState(null);
+    setAdminUsage(null);
   }, []);
 
   const userLogout = useCallback(() => {
@@ -279,12 +294,14 @@ function App() {
 
   useEffect(() => {
     if (route === "admin" && adminToken) {
-      loadAdminState().catch((error) => {
-        logout();
-        showToast(error.message, "error");
-      });
+      loadAdminState()
+        .then(() => loadAdminUsage().catch(() => setAdminUsage(null)))
+        .catch((error) => {
+          logout();
+          showToast(error.message, "error");
+        });
     }
-  }, [route, adminToken, loadAdminState, logout, showToast]);
+  }, [route, adminToken, loadAdminState, loadAdminUsage, logout, showToast]);
 
   useEffect(() => {
     if (route === "portal" || route === "home") {
@@ -328,6 +345,7 @@ function App() {
       setUserToken(token);
       setAdminToken("");
       setAdminState(null);
+      setAdminUsage(null);
 
       try {
         const session = await request("/api/user/me", {
@@ -365,8 +383,8 @@ function App() {
     setUserSession(null);
     setSelectedKey("");
     showToast(message);
-    await loadAdminState();
-    await loadPublicConfig();
+    await Promise.all([loadAdminState(), loadPublicConfig()]);
+    loadAdminUsage().catch(() => setAdminUsage(null));
     navigate("admin");
   };
 
@@ -387,6 +405,7 @@ function App() {
     setUserToken(data.token);
     setAdminToken("");
     setAdminState(null);
+    setAdminUsage(null);
     const session = await request("/api/user/me", {
       admin: false,
       token: data.token
@@ -488,6 +507,7 @@ function App() {
     setUserToken(data.token);
     setAdminToken("");
     setAdminState(null);
+    setAdminUsage(null);
     const session = await request("/api/user/me", {
       admin: false,
       token: data.token
@@ -573,9 +593,18 @@ function App() {
     showToast("已复制");
   };
 
-  const afterAdminChange = async (message) => {
-    await Promise.all([loadAdminState(), loadProviderHealth(), loadModelAvailability()]);
+  const afterAdminChange = async (message, options = {}) => {
+    const refreshes = [loadAdminState()];
+    if (options.refreshUsage) refreshes.push(loadAdminUsage());
+    if (options.refreshProviders) {
+      refreshes.push(loadProviderHealth(), loadModelAvailability());
+    }
+    await Promise.all(refreshes);
     showToast(message);
+  };
+
+  const afterProviderChange = async (message) => {
+    await afterAdminChange(message, { refreshProviders: true });
   };
 
   const dismissAnnouncement = (id) => {
@@ -842,7 +871,7 @@ function App() {
             ) : (
               <AdminView
                 page={adminPage}
-                state={adminState}
+                state={adminStateWithUsage}
                 providerHealth={providerHealth}
                 modelAvailability={modelAvailability}
                 onLogout={() => {
@@ -851,12 +880,13 @@ function App() {
                 }}
                 onCopy={copyText}
                 onRefresh={() =>
-                  Promise.all([loadAdminState(), loadProviderHealth(), loadModelAvailability()])
+                  Promise.all([loadAdminState(), loadAdminUsage(), loadProviderHealth(), loadModelAvailability()])
                     .then(() => showToast("已刷新"))
                     .catch((error) => showToast(error.message, "error"))
                 }
                 onConfirm={setConfirm}
                 afterChange={afterAdminChange}
+                afterProviderChange={afterProviderChange}
                 onToast={showToast}
                 adminToken={adminToken}
                 ModelAvailabilityDashboard={ModelAvailabilityDashboard}

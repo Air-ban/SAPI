@@ -67,13 +67,12 @@ func handleAdminState(w http.ResponseWriter, r *http.Request) {
 	db := store.ReadDB()
 	smtp := getSMTPConfig(db)
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	payload := map[string]interface{}{
 		"providers":          store.RedactProviders(db.Providers),
 		"users":              sanitizeUsers(db.Users),
 		"adminApiKeys":       sanitizeAdminAPIKeys(db.AdminAPIKeys),
 		"adminPasskeys":      sanitizeAdminPasskeys(db.AdminPasskeys),
 		"publicConfig":       serviceConfig(),
-		"usage":              usage.GetUsageStats(db, "", 30),
 		"invitationCodes":    db.InvitationCodes,
 		"announcements":      db.Announcements,
 		"suggestions":        db.Suggestions,
@@ -91,7 +90,19 @@ func handleAdminState(w http.ResponseWriter, r *http.Request) {
 			"from":    smtp.From,
 			"hasPass": smtp.Pass != "",
 		},
-	})
+	}
+	if includeAdminStateUsage(r) {
+		payload["usage"] = usage.GetUsageStats(db, "", 30)
+	}
+	json.NewEncoder(w).Encode(payload)
+}
+
+func includeAdminStateUsage(r *http.Request) bool {
+	value := strings.TrimSpace(r.URL.Query().Get("includeUsage"))
+	if value == "" {
+		value = strings.TrimSpace(r.URL.Query().Get("usage"))
+	}
+	return value == "1" || strings.EqualFold(value, "true") || strings.EqualFold(value, "yes")
 }
 
 func handleAdminUsage(w http.ResponseWriter, r *http.Request) {

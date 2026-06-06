@@ -43,6 +43,7 @@ export function AdminView({
   onRefresh,
   onConfirm,
   afterChange,
+  afterProviderChange = afterChange,
   onToast,
   adminToken,
   ModelAvailabilityDashboard,
@@ -126,7 +127,7 @@ export function AdminView({
           onCopy={onCopy}
           onAddProvider={() => setProviderDialogOpen(true)}
           onEditProvider={{
-            afterChange,
+            afterChange: afterProviderChange,
             onConfirm,
             onToast,
             open: (provider) => {
@@ -157,7 +158,7 @@ export function AdminView({
                 <ProviderRow
                   key={provider.id}
                   provider={provider}
-                  afterChange={afterChange}
+                  afterChange={afterProviderChange}
                   onConfirm={onConfirm}
                   onToast={onToast}
                   onEdit={() => {
@@ -180,7 +181,7 @@ export function AdminView({
           setProviderDialogOpen(false);
           setEditingProvider(null);
         }}
-        afterChange={afterChange}
+        afterChange={afterProviderChange}
         onToast={onToast}
       />
 
