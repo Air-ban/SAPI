@@ -3,7 +3,6 @@ package middleware
 import (
 	"context"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -11,6 +10,7 @@ import (
 	"sapi/models"
 	"sapi/security"
 	"sapi/store"
+	"sapi/subscription"
 	"sapi/utils"
 )
 
@@ -181,10 +181,7 @@ func CheckRPMLimit(user *models.User, apiKeyRecord *models.APIKeyRecord, db *mod
 		return true, 0, 0
 	}
 
-	limit := defaultRPMLimitForUser(user, db)
-	if apiKeyRecord != nil && apiKeyRecord.RPMLimit > 0 {
-		limit = apiKeyRecord.RPMLimit
-	}
+	limit := subscription.EffectiveAPIKeyRPMLimit(user, apiKeyRecord)
 
 	key := ""
 	if apiKeyRecord != nil {
@@ -229,16 +226,7 @@ func CheckRPMLimit(user *models.User, apiKeyRecord *models.APIKeyRecord, db *mod
 }
 
 func defaultRPMLimitForUser(user *models.User, db *models.Database) int {
-	if user != nil && (user.Source == "github" || user.GitHubID != "") {
-		return 100
-	}
-	if user != nil && (user.Source == "edu" || strings.HasSuffix(strings.ToLower(strings.TrimSpace(user.Email)), ".edu.cn")) {
-		return 30
-	}
-	if db != nil && db.DefaultRPMLimit > 0 {
-		return db.DefaultRPMLimit
-	}
-	return 30
+	return subscription.RPMLimitForUser(user)
 }
 
 type failureLimiter struct {

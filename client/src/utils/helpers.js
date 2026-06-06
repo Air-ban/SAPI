@@ -35,6 +35,17 @@ export function formatNumber(value) {
   return Number(value || 0).toLocaleString();
 }
 
+export function formatRpmLimit(value) {
+  return Number(value || 0) > 0 ? `${Number(value).toLocaleString()} RPM` : "不限 RPM";
+}
+
+export function subscriptionTierLabel(tier, tiers = []) {
+  const item = tiers.find((entry) => entry.id === tier);
+  if (item) return item.name || item.id;
+  if (tier === "MAX") return "MAX";
+  return tier ? tier.charAt(0).toUpperCase() + tier.slice(1) : "Lite";
+}
+
 export function formatDuration(value) {
   const ms = Number(value || 0);
   if (!ms) return "-";
@@ -82,6 +93,7 @@ export function getUserApiKeys(user) {
       key: user.apiKey,
       preview: user.apiKey,
       enabled: true,
+      effectiveRpmLimit: user.subscriptionRpmLimit ?? user.defaultRpmLimit ?? 0,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
       lastUsedAt: ""

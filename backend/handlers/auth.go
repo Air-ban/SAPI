@@ -13,6 +13,7 @@ import (
 	"sapi/models"
 	"sapi/security"
 	"sapi/store"
+	"sapi/subscription"
 	"sapi/utils"
 )
 
@@ -285,6 +286,7 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 			Enabled:                  true,
 			ReceiveAnnouncementEmail: true,
 			Source:                   userSourceForEmail(email),
+			SubscriptionTier:         subscription.TierLite,
 			CreatedAt:                createdAt,
 			UpdatedAt:                createdAt,
 		}
@@ -520,8 +522,10 @@ func sanitizeUser(user *models.User) map[string]interface{} {
 
 	sanitizedKeys := make([]map[string]interface{}, len(apiKeys))
 	for i, k := range apiKeys {
-		sanitizedKeys[i] = sanitizeAPIKeyRecord(&k)
+		sanitizedKeys[i] = sanitizeUserAPIKeyRecord(user, &k)
 	}
+	tier := subscription.TierForUser(user)
+	rpmLimit := subscription.RPMLimitForUser(user)
 
 	return map[string]interface{}{
 		"id":                       user.ID,
@@ -538,7 +542,9 @@ func sanitizeUser(user *models.User) map[string]interface{} {
 		"githubLogin":              user.GitHubLogin,
 		"githubAvatarUrl":          user.GitHubAvatarURL,
 		"githubLinkedAt":           user.GitHubLinkedAt,
-		"defaultRpmLimit":          defaultRPMLimitForUser(user, nil),
+		"subscriptionTier":         tier,
+		"subscriptionRpmLimit":     rpmLimit,
+		"defaultRpmLimit":          rpmLimit,
 		"createdAt":                user.CreatedAt,
 		"updatedAt":                user.UpdatedAt,
 	}
@@ -575,22 +581,31 @@ func getPrimaryAPIKey(user *models.User) string {
 }
 
 func sanitizeAPIKeyRecord(record *models.APIKeyRecord) map[string]interface{} {
+	return sanitizeAPIKeyRecordWithEffective(record, 0)
+}
+
+func sanitizeUserAPIKeyRecord(user *models.User, record *models.APIKeyRecord) map[string]interface{} {
+	return sanitizeAPIKeyRecordWithEffective(record, subscription.EffectiveAPIKeyRPMLimit(user, record))
+}
+
+func sanitizeAPIKeyRecordWithEffective(record *models.APIKeyRecord, effectiveRpmLimit int) map[string]interface{} {
 	key := ""
 	if record != nil {
 		key = record.Key
 	}
 	preview := maskKey(key)
 	return map[string]interface{}{
-		"id":            getRecordID(record),
-		"name":          getRecordName(record),
-		"key":           key,
-		"preview":       preview,
-		"enabled":       getRecordEnabled(record),
-		"allowedModels": getRecordAllowedModels(record),
-		"rpmLimit":      getRecordRPMLimit(record),
-		"createdAt":     getRecordCreatedAt(record),
-		"updatedAt":     getRecordUpdatedAt(record),
-		"lastUsedAt":    getRecordLastUsedAt(record),
+		"id":                getRecordID(record),
+		"name":              getRecordName(record),
+		"key":               key,
+		"preview":           preview,
+		"enabled":           getRecordEnabled(record),
+		"allowedModels":     getRecordAllowedModels(record),
+		"rpmLimit":          getRecordRPMLimit(record),
+		"effectiveRpmLimit": effectiveRpmLimit,
+		"createdAt":         getRecordCreatedAt(record),
+		"updatedAt":         getRecordUpdatedAt(record),
+		"lastUsedAt":        getRecordLastUsedAt(record),
 	}
 }
 

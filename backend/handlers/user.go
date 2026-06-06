@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"sapi/auth"
 	"sapi/middleware"
 	"sapi/models"
 	"sapi/security"
 	"sapi/store"
+	"sapi/subscription"
 	"sapi/usage"
 	"sapi/utils"
 )
@@ -213,7 +213,7 @@ func handleUserUpdateAPIKey(w http.ResponseWriter, r *http.Request) {
 							k.AllowedModels = models
 						}
 						if rpm, ok := body["rpmLimit"].(float64); ok {
-							k.RPMLimit = max(0, int(rpm))
+							k.RPMLimit = subscription.ClampAPIKeyRPMLimit(u, int(rpm))
 						}
 						now := store.Now()
 						k.UpdatedAt = now
@@ -361,9 +361,7 @@ func createUserAPIKeyRecord(user *models.User, db *models.Database, name string,
 	if keyName == "" {
 		keyName = "API Key " + toString(len(user.APIKeys)+1)
 	}
-	if rpmLimit <= 0 {
-		rpmLimit = defaultRPMLimitForUser(user, db)
-	}
+	rpmLimit = subscription.ClampAPIKeyRPMLimit(user, rpmLimit)
 
 	record := models.APIKeyRecord{
 		ID:            auth.RandomID("key"),
@@ -385,16 +383,7 @@ func createUserAPIKeyRecord(user *models.User, db *models.Database, name string,
 }
 
 func defaultRPMLimitForUser(user *models.User, db *models.Database) int {
-	if user != nil && (user.Source == "github" || user.GitHubID != "") {
-		return 100
-	}
-	if user != nil && (user.Source == "edu" || strings.HasSuffix(strings.ToLower(strings.TrimSpace(user.Email)), ".edu.cn")) {
-		return 30
-	}
-	if db != nil && db.DefaultRPMLimit > 0 {
-		return db.DefaultRPMLimit
-	}
-	return 30
+	return subscription.RPMLimitForUser(user)
 }
 
 func toString(v interface{}) string {

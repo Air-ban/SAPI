@@ -56,6 +56,7 @@ export function AdminView({
   const providers = state?.providers || [];
   const users = state?.users || [];
   const usage = state?.usage;
+  const subscriptionTiers = state?.subscriptionTiers || [];
   const currentPage = ["overview", "usage", "providers", "responses", "users", "invitations", "smtp", "announcements", "suggestions"].includes(page)
     ? page
     : "overview";
@@ -195,6 +196,7 @@ export function AdminView({
                       key={user.id}
                       user={user}
                       usage={userUsage}
+                      subscriptionTiers={subscriptionTiers}
                       afterChange={afterChange}
                       onConfirm={onConfirm}
                       onCopy={onCopy}
@@ -252,9 +254,7 @@ export function AdminView({
             onToast={onToast}
           />
           <RpmLimitSection
-            defaultRpmLimit={state?.defaultRpmLimit ?? 30}
-            afterChange={afterChange}
-            onToast={onToast}
+            subscriptionTiers={subscriptionTiers}
           />
         </Stack>
       ) : null}

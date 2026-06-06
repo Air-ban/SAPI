@@ -74,6 +74,7 @@ type User struct {
 	GitHubLogin              string         `json:"githubLogin"`
 	GitHubAvatarURL          string         `json:"githubAvatarUrl"`
 	GitHubLinkedAt           string         `json:"githubLinkedAt"`
+	SubscriptionTier         string         `json:"subscriptionTier"`
 	CreatedAt                string         `json:"createdAt"`
 	UpdatedAt                string         `json:"updatedAt"`
 }

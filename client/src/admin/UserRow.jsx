@@ -6,8 +6,12 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControl,
   FormControlLabel,
   IconButton,
+  InputLabel,
+  MenuItem,
+  Select,
   Switch,
   Stack,
   TextField,
@@ -21,11 +25,20 @@ import KeyIcon from "@mui/icons-material/Key";
 import SettingsIcon from "@mui/icons-material/Settings";
 import VpnKeyIcon from "@mui/icons-material/VpnKey";
 import { EntityRow } from "../components/EntityRow";
-import { formatDate, getUserApiKeys } from "../utils/helpers";
+import { formatDate, formatRpmLimit, getUserApiKeys, subscriptionTierLabel } from "../utils/helpers";
 import { request } from "../utils/api";
 import { ApiKeyRpmRow } from "./ApiKeyRpmRow";
 
-export function UserRow({ user, usage, afterChange, onConfirm, onCopy, onToast }) {
+const FALLBACK_TIERS = [
+  { id: "lite", name: "Lite", rpmLimit: 10 },
+  { id: "base", name: "Base", rpmLimit: 30 },
+  { id: "pro", name: "Pro", rpmLimit: 50 },
+  { id: "ultra", name: "Ultra", rpmLimit: 100 },
+  { id: "MAX", name: "MAX", rpmLimit: 0 }
+];
+
+export function UserRow({ user, usage, subscriptionTiers = FALLBACK_TIERS, afterChange, onConfirm, onCopy, onToast }) {
+  const tiers = subscriptionTiers.length ? subscriptionTiers : FALLBACK_TIERS;
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [passwordLoading, setPasswordLoading] = useState(false);
@@ -37,7 +50,8 @@ export function UserRow({ user, usage, afterChange, onConfirm, onCopy, onToast }
     username: user.username || "",
     email: user.email || "",
     enabled: Boolean(user.enabled),
-    receiveAnnouncementEmail: Boolean(user.receiveAnnouncementEmail)
+    receiveAnnouncementEmail: Boolean(user.receiveAnnouncementEmail),
+    subscriptionTier: user.subscriptionTier || "lite"
   });
 
   useEffect(() => {
@@ -47,7 +61,8 @@ export function UserRow({ user, usage, afterChange, onConfirm, onCopy, onToast }
         username: user.username || "",
         email: user.email || "",
         enabled: Boolean(user.enabled),
-        receiveAnnouncementEmail: Boolean(user.receiveAnnouncementEmail)
+        receiveAnnouncementEmail: Boolean(user.receiveAnnouncementEmail),
+        subscriptionTier: user.subscriptionTier || "lite"
       });
     }
   }, [editOpen, user]);
@@ -104,7 +119,8 @@ export function UserRow({ user, usage, afterChange, onConfirm, onCopy, onToast }
           username: editForm.username,
           email: editForm.email,
           enabled: editForm.enabled,
-          receiveAnnouncementEmail: editForm.receiveAnnouncementEmail
+          receiveAnnouncementEmail: editForm.receiveAnnouncementEmail,
+          subscriptionTier: editForm.subscriptionTier
         }
       });
       setEditOpen(false);
@@ -128,6 +144,7 @@ export function UserRow({ user, usage, afterChange, onConfirm, onCopy, onToast }
     ["API Key", apiKeys.length ? `${apiKeys.length} 个` : "未创建"],
     ["账号", user.username || "-"],
     ["邮箱", user.email || "-"],
+    ["订阅", `${subscriptionTierLabel(user.subscriptionTier, tiers)} / ${formatRpmLimit(user.subscriptionRpmLimit ?? user.defaultRpmLimit)}`],
     ["来源", sourceLabel],
     ["创建时间", formatDate(user.createdAt)]
   ];
@@ -254,6 +271,21 @@ export function UserRow({ user, usage, afterChange, onConfirm, onCopy, onToast }
               onChange={(e) => setEditForm((current) => ({ ...current, email: e.target.value }))}
               fullWidth
             />
+            <FormControl fullWidth>
+              <InputLabel id={`subscription-tier-${user.id}`}>订阅套餐</InputLabel>
+              <Select
+                labelId={`subscription-tier-${user.id}`}
+                label="订阅套餐"
+                value={editForm.subscriptionTier}
+                onChange={(e) => setEditForm((current) => ({ ...current, subscriptionTier: e.target.value }))}
+              >
+                {tiers.map((tier) => (
+                  <MenuItem key={tier.id} value={tier.id}>
+                    {tier.name} / {formatRpmLimit(tier.rpmLimit)}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
             <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
               <FormControlLabel
                 control={

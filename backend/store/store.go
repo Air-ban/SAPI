@@ -19,6 +19,7 @@ import (
 	"sapi/auth"
 	"sapi/config"
 	"sapi/models"
+	"sapi/subscription"
 )
 
 var (
@@ -869,6 +870,12 @@ func normalizeDB(db *models.Database) bool {
 
 	for i := range db.Users {
 		u := &db.Users[i]
+		hadStoredSubscriptionTier := subscription.IsValidTier(u.SubscriptionTier)
+		normalizedTier := subscription.NormalizeTier(u.SubscriptionTier)
+		if u.SubscriptionTier != normalizedTier {
+			u.SubscriptionTier = normalizedTier
+			changed = true
+		}
 		if u.Username == "" {
 			u.Username = strings.ToLower(strings.TrimSpace(u.Name))
 			changed = true
@@ -940,6 +947,10 @@ func normalizeDB(db *models.Database) bool {
 			if k.UpdatedAt == "" {
 				k.UpdatedAt = u.UpdatedAt
 			}
+			if !hadStoredSubscriptionTier && isLegacyDefaultKeyRPMForUser(k.RPMLimit, u) {
+				k.RPMLimit = 0
+				itemChanged = true
+			}
 			if itemChanged {
 				changed = true
 			}
@@ -964,6 +975,19 @@ func normalizeDB(db *models.Database) bool {
 	}
 
 	return changed
+}
+
+func isLegacyDefaultKeyRPMForUser(value int, user *models.User) bool {
+	if value == 30 {
+		return true
+	}
+	if value != 100 || user == nil {
+		return false
+	}
+	if user.Source == "github" || user.GitHubID != "" {
+		return true
+	}
+	return false
 }
 
 func RedactProvider(p models.Provider) map[string]interface{} {

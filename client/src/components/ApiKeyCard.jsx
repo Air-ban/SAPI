@@ -26,6 +26,10 @@ function formatNumber(value) {
   return Number(value || 0).toLocaleString();
 }
 
+function formatRpmLimit(value) {
+  return Number(value || 0) > 0 ? `${Number(value).toLocaleString()} RPM` : "不限 RPM";
+}
+
 const inlineCodeSx = {
   display: "inline",
   px: 0.5,
@@ -94,7 +98,10 @@ export const ApiKeyCard = React.memo(function ApiKeyCard({ apiKey, usage, onCopy
             最近使用：{formatDate(apiKey.lastUsedAt)}
           </Typography>
           <Typography variant="caption" color="text.secondary">
-            RPM 限制：{apiKey.rpmLimit > 0 ? apiKey.rpmLimit : "默认"}
+            有效 RPM：{formatRpmLimit(apiKey.effectiveRpmLimit)}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            单 Key：{apiKey.rpmLimit > 0 ? formatRpmLimit(apiKey.rpmLimit) : "跟随订阅"}
           </Typography>
         </Stack>
       </Stack>

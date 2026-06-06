@@ -17,6 +17,7 @@ import (
 	"sapi/models"
 	"sapi/security"
 	"sapi/store"
+	"sapi/subscription"
 	"sapi/utils"
 )
 
@@ -365,6 +366,7 @@ func upsertGitHubUser(profile *githubUserProfile, emails []githubEmailRecord, cf
 			GitHubLogin:              login,
 			GitHubAvatarURL:          avatar,
 			GitHubLinkedAt:           now,
+			SubscriptionTier:         subscription.TierLite,
 			CreatedAt:                now,
 			UpdatedAt:                now,
 		}

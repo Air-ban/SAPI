@@ -16,6 +16,7 @@ import (
 	"sapi/proxy"
 	"sapi/security"
 	"sapi/store"
+	"sapi/subscription"
 	"sapi/usage"
 	"sapi/utils"
 )
@@ -77,6 +78,7 @@ func handleAdminState(w http.ResponseWriter, r *http.Request) {
 		"maintenanceEndTime": db.MaintenanceEndTime,
 		"siteEmail":          db.SiteEmail,
 		"defaultRpmLimit":    db.DefaultRPMLimit,
+		"subscriptionTiers":  subscription.Tiers,
 		"smtpConfig": map[string]interface{}{
 			"host":    smtp.Host,
 			"port":    smtp.Port,
@@ -637,6 +639,17 @@ func handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	subscriptionTier, subscriptionTierSet := "", false
+	if raw, ok := body["subscriptionTier"].(string); ok {
+		subscriptionTierSet = true
+		subscriptionTier = security.SafeSingleLine(raw, 32)
+		if !subscription.IsValidTier(subscriptionTier) {
+			utils.SendError(w, 400, "Subscription tier is invalid.", "invalid_subscription_tier")
+			return
+		}
+		subscriptionTier = subscription.NormalizeTier(subscriptionTier)
+	}
+
 	result := store.MutateDB(func(db *models.Database) interface{} {
 		targetIdx := -1
 		for i := range db.Users {
@@ -691,6 +704,9 @@ func handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 		}
 		if receiveEmail, ok := body["receiveAnnouncementEmail"].(bool); ok {
 			u.ReceiveAnnouncementEmail = receiveEmail
+		}
+		if subscriptionTierSet {
+			u.SubscriptionTier = subscriptionTier
 		}
 		u.UpdatedAt = store.Now()
 		return u
@@ -784,12 +800,7 @@ func handleAdminUpdateUserAPIKey(w http.ResponseWriter, r *http.Request) {
 				for j := range u.APIKeys {
 					if u.APIKeys[j].ID == keyID {
 						if rpm, ok := body["rpmLimit"].(float64); ok {
-							v := int(rpm)
-							if v > 0 {
-								u.APIKeys[j].RPMLimit = v
-							} else {
-								u.APIKeys[j].RPMLimit = 0
-							}
+							u.APIKeys[j].RPMLimit = subscription.ClampAPIKeyRPMLimit(u, int(rpm))
 						}
 						u.APIKeys[j].UpdatedAt = store.Now()
 						return u

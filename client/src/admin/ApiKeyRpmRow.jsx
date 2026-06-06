@@ -8,6 +8,7 @@ import {
   Typography
 } from "@mui/material";
 import { request } from "../utils/api";
+import { formatRpmLimit } from "../utils/helpers";
 
 export function ApiKeyRpmRow({ apiKey, userId, afterChange, onToast }) {
   const [rpm, setRpm] = useState(apiKey.rpmLimit > 0 ? String(apiKey.rpmLimit) : "");
@@ -31,16 +32,21 @@ export function ApiKeyRpmRow({ apiKey, userId, afterChange, onToast }) {
   return (
     <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "app.paperAlt" }}>
       <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems="center">
-        <Typography variant="body2" sx={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          <strong>{apiKey.name}</strong> <code>{apiKey.preview || apiKey.key?.slice(0, 12) + "..."}</code>
-        </Typography>
+        <Stack spacing={0.25} sx={{ minWidth: 0, flex: 1 }}>
+          <Typography variant="body2" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <strong>{apiKey.name}</strong> <code>{apiKey.preview || apiKey.key?.slice(0, 12) + "..."}</code>
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            有效限制：{formatRpmLimit(apiKey.effectiveRpmLimit)}
+          </Typography>
+        </Stack>
         <TextField
-          label="RPM 限制"
+          label="单 Key RPM"
           type="number"
           size="small"
           value={rpm}
           onChange={(e) => setRpm(e.target.value)}
-          placeholder={apiKey.rpmLimit > 0 ? String(apiKey.rpmLimit) : "全局默认"}
+          placeholder={apiKey.rpmLimit > 0 ? String(apiKey.rpmLimit) : "跟随订阅"}
           inputProps={{ min: 1 }}
           sx={{ width: 140, flexShrink: 0 }}
         />
