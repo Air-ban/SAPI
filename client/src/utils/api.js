@@ -16,6 +16,22 @@ function makeRequestError(message, status = 0, code = "") {
   return error;
 }
 
+function makeNetworkError(error) {
+  const message = error?.message || "";
+  if (/failed to fetch|load failed|networkerror/i.test(message)) {
+    return makeRequestError("无法连接到服务器，请检查 HTTPS 证书、CDN 回源、代理或防火墙配置。", 0, "network_error");
+  }
+  return makeRequestError(message || "无法连接到服务器，请稍后重试。", 0, "network_error");
+}
+
+async function fetchNoCache(path, options) {
+  try {
+    return await fetch(withNoCacheParam(path), options);
+  } catch (error) {
+    throw makeNetworkError(error);
+  }
+}
+
 export async function request(path, options = {}) {
   const method = (options.method || "GET").toUpperCase();
   const headers = {
@@ -34,7 +50,7 @@ export async function request(path, options = {}) {
     }
   }
 
-  const response = await fetch(withNoCacheParam(path), {
+  const response = await fetchNoCache(path, {
     ...options,
     method,
     cache: "no-store",
@@ -90,7 +106,7 @@ export async function requestBlob(path, options = {}) {
     }
   }
 
-  const response = await fetch(withNoCacheParam(path), {
+  const response = await fetchNoCache(path, {
     ...options,
     method,
     cache: "no-store",

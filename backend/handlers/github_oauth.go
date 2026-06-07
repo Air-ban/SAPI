@@ -118,7 +118,7 @@ func handleGitHubStart(w http.ResponseWriter, r *http.Request) {
 	params.Set("scope", "read:user user:email")
 	params.Set("state", state)
 
-	http.Redirect(w, r, "https://github.com/login/oauth/authorize?"+params.Encode(), http.StatusFound)
+	writeBrowserRedirectPage(w, "https://github.com/login/oauth/authorize?"+params.Encode())
 }
 
 func handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
@@ -557,12 +557,34 @@ func redirectGitHubAuthToBase(w http.ResponseWriter, base, token, errCode string
 	if encoded := params.Encode(); encoded != "" {
 		target += "?" + encoded
 	}
-	writeRedirect(w, target)
+	writeBrowserRedirectPage(w, target)
 }
 
-func writeRedirect(w http.ResponseWriter, target string) {
-	w.Header().Set("Location", target)
-	w.WriteHeader(http.StatusFound)
+func writeBrowserRedirectPage(w http.ResponseWriter, target string) {
+	targetJSON, _ := json.Marshal(target)
+	targetHTML := strings.NewReplacer(
+		"&", "&amp;",
+		"<", "&lt;",
+		">", "&gt;",
+		`"`, "&quot;",
+	).Replace(target)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w, `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="robots" content="noindex">
+  <meta http-equiv="refresh" content="0;url=%s">
+  <title>Redirecting</title>
+</head>
+<body>
+  <p>Redirecting...</p>
+  <p><a href="%s">Continue</a></p>
+  <script>window.location.replace(%s);</script>
+</body>
+</html>`, targetHTML, targetHTML, string(targetJSON))
 }
 
 func signGitHubPayload(payload interface{}, secret string) (string, error) {
@@ -676,7 +698,6 @@ func githubOAuthAppForRequest(r *http.Request, cfg *config.Config) (config.GitHu
 	if cfg == nil {
 		return config.GitHubOAuthApp{}, false
 	}
-	requestHost := normalizedRequestHost(r)
 	if cfg.GitHubClientID == "" || cfg.GitHubClientSecret == "" {
 		return config.GitHubOAuthApp{}, false
 	}
@@ -685,7 +706,8 @@ func githubOAuthAppForRequest(r *http.Request, cfg *config.Config) (config.GitHu
 	if oauthBaseURL == "" {
 		return config.GitHubOAuthApp{}, false
 	}
-	if requestHost != "" && !publicBaseURLMatchesHost(oauthBaseURL, requestHost) {
+	requestBaseURL, matchedRequestHost := publicBaseURLForRequestMatch(r, cfg)
+	if matchedRequestHost && !samePublicBaseURL(requestBaseURL, oauthBaseURL) {
 		return config.GitHubOAuthApp{}, false
 	}
 
@@ -707,28 +729,36 @@ func githubRedirectURLForRequest(r *http.Request, cfg *config.Config) string {
 }
 
 func publicBaseURLForRequest(r *http.Request, cfg *config.Config) string {
+	baseURL, _ := publicBaseURLForRequestMatch(r, cfg)
+	return baseURL
+}
+
+func publicBaseURLForRequestMatch(r *http.Request, cfg *config.Config) (string, bool) {
 	if cfg == nil {
-		return ""
+		return "", false
 	}
-	requestHost := normalizedRequestHost(r)
-	for _, base := range cfg.PublicBaseURLs {
-		if publicBaseURLMatchesHost(base, requestHost) {
-			return strings.TrimRight(strings.TrimSpace(base), "/")
+
+	for _, requestHost := range normalizedRequestHosts(r) {
+		for _, base := range cfg.PublicBaseURLs {
+			if publicBaseURLMatchesHost(base, requestHost) {
+				return strings.TrimRight(strings.TrimSpace(base), "/"), true
+			}
+		}
+		if publicBaseURLMatchesHost(cfg.PublicBaseURL, requestHost) {
+			return strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/"), true
+		}
+		if strings.TrimSpace(cfg.GitHubRedirectURL) != "" {
+			githubBaseURL := publicBaseURLFromAbsoluteURL(cfg.GitHubRedirectURL)
+			if publicBaseURLMatchesHost(githubBaseURL, requestHost) {
+				return githubBaseURL, true
+			}
 		}
 	}
-	if publicBaseURLMatchesHost(cfg.PublicBaseURL, requestHost) {
-		return strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/")
-	}
-	if strings.TrimSpace(cfg.GitHubRedirectURL) != "" {
-		githubBaseURL := publicBaseURLFromAbsoluteURL(cfg.GitHubRedirectURL)
-		if publicBaseURLMatchesHost(githubBaseURL, requestHost) {
-			return githubBaseURL
-		}
-	}
+
 	if strings.TrimSpace(cfg.PublicBaseURL) != "" {
-		return strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/")
+		return strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/"), false
 	}
-	return ""
+	return "", false
 }
 
 func samePublicBaseURL(left, right string) bool {
@@ -763,15 +793,52 @@ func publicBaseURLFromAbsoluteURL(value string) string {
 	return strings.ToLower(parsed.Scheme) + "://" + normalizeHost(parsed.Host)
 }
 
-func normalizedRequestHost(r *http.Request) string {
+func normalizedRequestHosts(r *http.Request) []string {
 	if r == nil {
+		return nil
+	}
+	var hosts []string
+	addHost := func(value string) {
+		host := normalizeHost(value)
+		if host == "" {
+			return
+		}
+		for _, existing := range hosts {
+			if existing == host {
+				return
+			}
+		}
+		hosts = append(hosts, host)
+	}
+
+	addHost(security.SafeSingleLine(r.Host, 255))
+	addHost(firstHeaderValue(r.Header.Get("X-Forwarded-Host")))
+	addHost(firstForwardedHeaderParam(r.Header.Get("Forwarded"), "host"))
+	addHost(firstHeaderValue(r.Header.Get("X-Original-Host")))
+
+	return hosts
+}
+
+func firstHeaderValue(value string) string {
+	if idx := strings.Index(value, ","); idx >= 0 {
+		value = value[:idx]
+	}
+	return security.SafeSingleLine(strings.TrimSpace(value), 255)
+}
+
+func firstForwardedHeaderParam(value, param string) string {
+	value = firstHeaderValue(value)
+	if value == "" {
 		return ""
 	}
-	host := security.SafeSingleLine(r.Host, 255)
-	if host == "" {
-		host = security.SafeSingleLine(r.Header.Get("X-Forwarded-Host"), 255)
+	for _, part := range strings.Split(value, ";") {
+		key, raw, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok || !strings.EqualFold(strings.TrimSpace(key), param) {
+			continue
+		}
+		return strings.Trim(strings.TrimSpace(raw), `"`)
 	}
-	return normalizeHost(host)
+	return ""
 }
 
 func publicBaseURLMatchesHost(base, requestHost string) bool {

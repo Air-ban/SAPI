@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -92,10 +93,10 @@ func TestGitHubOnlyEnabledForExplicitCallbackHost(t *testing.T) {
 
 	handleGitHubStart(rec, req)
 
-	if rec.Code != http.StatusFound {
-		t.Fatalf("status = %d, want 302 body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s", rec.Code, rec.Body.String())
 	}
-	location := rec.Header().Get("Location")
+	location := browserRedirectTarget(t, rec)
 	parsed, err := url.Parse(location)
 	if err != nil {
 		t.Fatal(err)
@@ -134,8 +135,8 @@ func TestGitHubStartBindsAcceptedTermsToOAuthState(t *testing.T) {
 
 	handleGitHubStart(rec, req)
 
-	if rec.Code != http.StatusFound {
-		t.Fatalf("status = %d, want 302 body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s", rec.Code, rec.Body.String())
 	}
 
 	var stateCookie, termsCookie *http.Cookie
@@ -157,7 +158,7 @@ func TestGitHubStartBindsAcceptedTermsToOAuthState(t *testing.T) {
 		t.Fatalf("terms cookie = %q, want state %q", termsCookie.Value, stateCookie.Value)
 	}
 
-	location := rec.Header().Get("Location")
+	location := browserRedirectTarget(t, rec)
 	parsed, err := url.Parse(location)
 	if err != nil {
 		t.Fatal(err)
@@ -175,6 +176,93 @@ func TestGitHubStartBindsAcceptedTermsToOAuthState(t *testing.T) {
 	}
 	if !state.TermsAccepted {
 		t.Fatal("expected signed state to preserve terms acceptance")
+	}
+}
+
+func TestGitHubStartPageCarriesOAuthCookiesBeforeGitHubNavigation(t *testing.T) {
+	t.Setenv("SAPI_GITHUB_CLIENT_ID", "client-id")
+	t.Setenv("SAPI_GITHUB_CLIENT_SECRET", "client-secret")
+	t.Setenv("SAPI_PUBLIC_BASE_URL", "https://sapi.eterultimate.asia")
+	t.Setenv("SAPI_GITHUB_REDIRECT_URL", "https://sapi.eterultimate.asia/api/auth/github/callback")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/github/start?terms=1", nil)
+	req.Host = "sapi.eterultimate.asia"
+	rec := httptest.NewRecorder()
+
+	handleGitHubStart(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Location"); got != "" {
+		t.Fatalf("Location = %q, want empty so CDN cannot follow oauth redirect", got)
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "text/html") {
+		t.Fatalf("Content-Type = %q, want html", got)
+	}
+	target := browserRedirectTarget(t, rec)
+	if !strings.HasPrefix(target, "https://github.com/login/oauth/authorize?") {
+		t.Fatalf("target = %q, want GitHub authorize URL", target)
+	}
+	cookies := rec.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("expected oauth cookies to be set before browser navigation")
+	}
+}
+
+func TestGitHubCallbackPageCarriesTokenWithoutFollowableRedirect(t *testing.T) {
+	rec := httptest.NewRecorder()
+
+	redirectGitHubAuthToBase(rec, "https://sapi.eterultimate.asia", "signed-token", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Location"); got != "" {
+		t.Fatalf("Location = %q, want empty so CDN cannot follow callback redirect", got)
+	}
+	target := browserRedirectTarget(t, rec)
+	if !strings.HasPrefix(target, "https://sapi.eterultimate.asia/#github-auth?") {
+		t.Fatalf("target = %q, want app github-auth route", target)
+	}
+	parsed, err := url.Parse(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fragmentQuery := ""
+	if idx := strings.Index(parsed.Fragment, "?"); idx >= 0 {
+		fragmentQuery = parsed.Fragment[idx+1:]
+	}
+	params, err := url.ParseQuery(fragmentQuery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := params.Get("token"); got != "signed-token" {
+		t.Fatalf("token = %q, want signed-token", got)
+	}
+}
+
+func TestPublicBaseURLUsesForwardedHostBehindProxy(t *testing.T) {
+	cfg := &config.Config{
+		PublicBaseURL: "https://sapi.eterultimate.asia",
+		PublicBaseURLs: []string{
+			"https://sapi.eterultimate.asia",
+		},
+		GitHubRedirectURL:         "https://sapi.eterultimate.asia/api/auth/github/callback",
+		GitHubRedirectURLExplicit: true,
+		GitHubClientID:            "client-id",
+		GitHubClientSecret:        "client-secret",
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/github/start", nil)
+	req.Host = "127.0.0.1:3000"
+	req.Header.Set("X-Forwarded-Host", "sapi.eterultimate.asia")
+
+	got := publicBaseURLForRequest(req, cfg)
+	if got != "https://sapi.eterultimate.asia" {
+		t.Fatalf("public base URL = %q, want forwarded public host", got)
+	}
+	if _, ok := githubOAuthAppForRequest(req, cfg); !ok {
+		t.Fatal("expected GitHub OAuth to be enabled for forwarded public host")
 	}
 }
 
@@ -202,6 +290,26 @@ func TestGitHubOAuthStateRejectsUnconfiguredReturnBaseURL(t *testing.T) {
 	if _, err := verifyGitHubOAuthState(state, app, cfg); err == nil {
 		t.Fatal("expected unconfigured return URL to be rejected")
 	}
+}
+
+func browserRedirectTarget(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	body := rec.Body.String()
+	marker := "window.location.replace("
+	start := strings.Index(body, marker)
+	if start < 0 {
+		t.Fatalf("start page missing redirect script: %s", body)
+	}
+	start += len(marker)
+	end := strings.Index(body[start:], ");")
+	if end < 0 {
+		t.Fatalf("start page has malformed redirect script: %s", body)
+	}
+	var target string
+	if err := json.Unmarshal([]byte(body[start:start+end]), &target); err != nil {
+		t.Fatalf("parse redirect target: %v body=%s", err, body)
+	}
+	return target
 }
 
 func TestGitHubFollowCheckUsesPublicFollowingEndpoint(t *testing.T) {
