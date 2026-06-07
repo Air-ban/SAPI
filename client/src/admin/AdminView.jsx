@@ -1,17 +1,24 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Box,
   Button,
-  Stack
+  IconButton,
+  InputAdornment,
+  Stack,
+  TextField,
+  Tooltip,
+  Typography
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
 import AnalyticsIcon from "@mui/icons-material/Analytics";
 import ApiIcon from "@mui/icons-material/Api";
 import BarChartIcon from "@mui/icons-material/BarChart";
+import ClearIcon from "@mui/icons-material/Clear";
 import DnsIcon from "@mui/icons-material/Dns";
 import KeyIcon from "@mui/icons-material/Key";
 import LogoutIcon from "@mui/icons-material/Logout";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import SearchIcon from "@mui/icons-material/Search";
 import { PageHeader } from "../components/PageHeader";
 import { Metric } from "../components/Metric";
 import { Section } from "../components/Section";
@@ -53,11 +60,23 @@ export function AdminView({
 }) {
   const [providerDialogOpen, setProviderDialogOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState(null);
+  const [userSearch, setUserSearch] = useState("");
 
   const providers = state?.providers || [];
   const users = state?.users || [];
   const usage = state?.usage;
   const subscriptionTiers = state?.subscriptionTiers || [];
+  const normalizedUserSearch = userSearch.trim().toLowerCase();
+  const filteredUsers = useMemo(() => {
+    if (!normalizedUserSearch) {
+      return users;
+    }
+    return users.filter((user) => {
+      const username = String(user.username || "").toLowerCase();
+      const email = String(user.email || "").toLowerCase();
+      return username.includes(normalizedUserSearch) || email.includes(normalizedUserSearch);
+    });
+  }, [users, normalizedUserSearch]);
   const currentPage = ["overview", "usage", "providers", "responses", "users", "invitations", "smtp", "announcements", "suggestions"].includes(page)
     ? page
     : "overview";
@@ -190,7 +209,50 @@ export function AdminView({
           <Section title="用户账号" icon={<KeyIcon />}>
             {users.length ? (
               <Stack spacing={1.5}>
-                {users.map((user) => {
+                <Stack
+                  direction={{ xs: "column", sm: "row" }}
+                  spacing={1}
+                  alignItems={{ xs: "stretch", sm: "center" }}
+                  justifyContent="space-between"
+                >
+                  <TextField
+                    size="small"
+                    label="查找用户"
+                    placeholder="邮箱或用户名"
+                    value={userSearch}
+                    onChange={(event) => setUserSearch(event.target.value)}
+                    sx={{ width: { xs: "100%", sm: 360 }, maxWidth: "100%" }}
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <SearchIcon fontSize="small" />
+                        </InputAdornment>
+                      ),
+                      endAdornment: userSearch ? (
+                        <InputAdornment position="end">
+                          <Tooltip title="清空">
+                            <IconButton
+                              aria-label="清空用户查找"
+                              edge="end"
+                              size="small"
+                              onClick={() => setUserSearch("")}
+                            >
+                              <ClearIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        </InputAdornment>
+                      ) : null
+                    }}
+                  />
+                  <Typography
+                    variant="body2"
+                    color="text.secondary"
+                    sx={{ whiteSpace: "nowrap", alignSelf: { xs: "flex-start", sm: "center" } }}
+                  >
+                    {normalizedUserSearch ? `找到 ${filteredUsers.length} / ${users.length}` : `共 ${users.length} 个用户`}
+                  </Typography>
+                </Stack>
+                {filteredUsers.length ? filteredUsers.map((user) => {
                   const userUsage = usage?.byUser?.find((u) => u.userId === user.id);
                   return (
                     <UserRow
@@ -204,7 +266,9 @@ export function AdminView({
                       onToast={onToast}
                     />
                   );
-                })}
+                }) : (
+                  <EmptyState text="没有匹配的用户。" />
+                )}
               </Stack>
             ) : (
               <EmptyState text="还没有注册用户。" />
