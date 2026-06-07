@@ -132,6 +132,13 @@ done
 
 生产环境不要清理全部 Redis，只清理当前 `SAPI_REDIS_KEY_PREFIX` 下的 key。
 
+常见 key 前缀:
+
+- `rpm:*`: API Key RPM 滑窗。
+- `api-key-ip:*`: 无效 API Key 尝试限制。
+- `api-key-body:*`: 不合规代理请求体计数。
+- `passkey:*`: 管理员 Passkey 一次性会话 nonce。
+
 ## PostgreSQL 维护
 连接检查:
 
@@ -163,6 +170,22 @@ psql "$SAPI_POSTGRES_URL" -c "delete from sapi_request_logs where timestamp < no
 psql "$SAPI_POSTGRES_URL" -c "vacuum analyze sapi_request_logs;"
 ```
 
+## 管理端性能
+管理端高频操作包括订阅切换、修改用户、删除 Provider、修改 RPM。当前设计中:
+
+- `/api/admin/state` 默认只返回轻量状态，不内联 usage。
+- `/api/admin/usage?days=30` 单独聚合用量。
+- `/api/admin/state?includeUsage=true` 仅用于兼容旧调用，不建议普通后台操作使用。
+- Provider 变更才需要刷新 Provider health 和模型可用性。
+
+如果后台操作变慢，按顺序检查:
+
+1. 前端是否在每次操作后请求 `/api/admin/state?includeUsage=true`。
+2. 请求日志是否过多且未启用 PostgreSQL。
+3. PostgreSQL `sapi_request_logs` 是否超过保留周期，是否需要 `vacuum analyze`。
+4. `/api/ready` 中 Redis 或 PostgreSQL 是否 `degraded`。
+5. 浏览器 Network 中慢请求是状态接口、usage 接口还是 Provider 健康检查。
+
 ## 高流量配置
 建议生产配置:
 
@@ -182,9 +205,10 @@ SAPI_TRUSTED_PROXY_CIDRS=10.0.0.0/8
 - 多实例部署必须配置 Redis，保证登录、防爆破、API Key 失败、RPM 限流跨实例生效。
 - 高请求日志量必须配置 PostgreSQL，避免 JSON 文件成为写入瓶颈。
 - PostgreSQL 请求日志自动清理 7 天前数据，清理动作最多每分钟触发一次，避免高并发请求逐条执行清理。
+- 管理后台普通操作使用轻量 `/api/admin/state`，usage 单独拉取。
 - 只在可信代理 CIDR 内启用代理头读取。
 - 根据业务上限调小或调大 `SAPI_PROXY_BODY_LIMIT_BYTES`。
-- 为 Provider 设置合理的模型白名单和 Key 级 RPM。
+- 为用户设置合理订阅分组，为单 Key 设置必要的额外 RPM 上限。
 
 ## 密钥轮换
 管理员密码:
@@ -226,11 +250,13 @@ SMTP 密码:
 | --- | --- | --- |
 | `401 invalid_api_key` | Key 是否存在、启用、Header 是否正确。 | 使用 `Authorization: Bearer sk-sapi-...` 或 `X-API-Key`。 |
 | `429 login_rate_limited` | 登录失败次数过多。 | 等待 `Retry-After`，确认 Redis key 和客户端 IP。 |
-| `429 rate_limit_exceeded` | Key RPM 超限。 | 调整默认 RPM 或 Key 级 RPM。 |
+| `429 rate_limit_exceeded` | Key RPM 超限。 | 调整用户订阅分组或 Key 级 RPM。 |
+| `429 api_key_banned` | Key 被手动封禁或因请求体不合规自动封禁。 | 检查 Key 的 `bannedUntil`、`banReason`、`invalidRequestCount`，必要时由管理员解封。 |
 | `503 maintenance_mode` | 维护模式是否开启。 | 管理后台关闭维护模式或等待恢复时间。 |
 | `503 no_provider` | 是否有启用 Provider 和模型。 | 启用 Provider，配置 Base URL/API Key/模型。 |
 | `502 upstream_request_failed` | 上游网络、鉴权、模型名。 | 检查 Provider API Key、Base URL、上游状态。 |
 | `400 smtp_not_configured` | SMTP 是否完整。 | 配置 Host/User/Pass，并测试邮件。 |
+| 管理端操作慢 | state/usage/health 是否混在一次刷新。 | 使用轻量 `/api/admin/state`，usage 调 `/api/admin/usage`，检查 PostgreSQL 请求日志表。 |
 | `/api/ready` Redis `degraded` | Redis ping 失败。 | 检查 `SAPI_REDIS_URL`、网络、连接池。 |
 | `/api/ready` PostgreSQL `degraded` | PostgreSQL ping 失败。 | 检查 `SAPI_POSTGRES_URL`、连接数、数据库权限。 |
 

@@ -14,6 +14,7 @@ type Config struct {
 	AdminUser                  string
 	AdminPassword              string
 	PublicBaseURL              string
+	PublicBaseURLs             []string
 	DataFile                   string
 	PostgresURL                string
 	PostgresMaxConns           int
@@ -31,6 +32,7 @@ type Config struct {
 	GitHubClientID             string
 	GitHubClientSecret         string
 	GitHubRedirectURL          string
+	GitHubOAuthApps            map[string]GitHubOAuthApp
 	GitHubRequiredFollowTarget string
 	SmtpHost                   string
 	SmtpPort                   int
@@ -38,6 +40,12 @@ type Config struct {
 	SmtpUser                   string
 	SmtpPass                   string
 	SmtpFrom                   string
+}
+
+type GitHubOAuthApp struct {
+	ClientID     string
+	ClientSecret string
+	RedirectURL  string
 }
 
 var HopByHopHeaders = map[string]bool{
@@ -63,6 +71,7 @@ func Load() *Config {
 		AdminUser:                  getEnv("SAPI_ADMIN_USER", "admin"),
 		AdminPassword:              getEnv("SAPI_ADMIN_PASSWORD", "sapi-admin"),
 		PublicBaseURL:              getEnv("SAPI_PUBLIC_BASE_URL", "http://localhost:"+strconv.Itoa(port)),
+		PublicBaseURLs:             splitCSV(getEnv("SAPI_PUBLIC_BASE_URLS", "")),
 		DataFile:                   getEnv("SAPI_DATA_FILE", ""),
 		PostgresURL:                getEnv("SAPI_POSTGRES_URL", getEnv("DATABASE_URL", "")),
 		PostgresMaxConns:           intEnv("SAPI_POSTGRES_MAX_CONNS", 20),
@@ -80,6 +89,7 @@ func Load() *Config {
 		GitHubClientID:             getEnv("SAPI_GITHUB_CLIENT_ID", ""),
 		GitHubClientSecret:         getEnv("SAPI_GITHUB_CLIENT_SECRET", ""),
 		GitHubRedirectURL:          getEnv("SAPI_GITHUB_REDIRECT_URL", ""),
+		GitHubOAuthApps:            map[string]GitHubOAuthApp{},
 		GitHubRequiredFollowTarget: strings.TrimPrefix(strings.TrimSpace(getEnv("SAPI_GITHUB_REQUIRED_FOLLOW_TARGET", "")), "@"),
 		SmtpHost:                   getEnv("SAPI_SMTP_HOST", ""),
 		SmtpPort:                   intEnv("SAPI_SMTP_PORT", 587),
@@ -92,11 +102,88 @@ func Load() *Config {
 	if cfg.PublicBaseURL == "" {
 		cfg.PublicBaseURL = "http://localhost:" + strconv.Itoa(port)
 	}
+	cfg.PublicBaseURLs = appendPublicBaseURL(cfg.PublicBaseURLs, cfg.PublicBaseURL)
 	if cfg.GitHubRedirectURL == "" && cfg.PublicBaseURL != "" {
 		cfg.GitHubRedirectURL = strings.TrimRight(cfg.PublicBaseURL, "/") + "/api/auth/github/callback"
 	}
+	cfg.GitHubOAuthApps = loadGitHubOAuthApps(cfg.PublicBaseURLs)
 
 	return cfg
+}
+
+func appendPublicBaseURL(items []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return items
+	}
+	for _, item := range items {
+		if strings.EqualFold(strings.TrimRight(strings.TrimSpace(item), "/"), strings.TrimRight(value, "/")) {
+			return items
+		}
+	}
+	return append(items, value)
+}
+
+func loadGitHubOAuthApps(baseURLs []string) map[string]GitHubOAuthApp {
+	apps := map[string]GitHubOAuthApp{}
+	for _, base := range baseURLs {
+		host := hostFromURL(base)
+		if host == "" {
+			continue
+		}
+		suffix := envSuffixForHost(host)
+		clientID := getEnv("SAPI_GITHUB_CLIENT_ID_"+suffix, "")
+		clientSecret := getEnv("SAPI_GITHUB_CLIENT_SECRET_"+suffix, "")
+		if clientID == "" || clientSecret == "" {
+			continue
+		}
+		redirectURL := getEnv("SAPI_GITHUB_REDIRECT_URL_"+suffix, strings.TrimRight(strings.TrimSpace(base), "/")+"/api/auth/github/callback")
+		apps[host] = GitHubOAuthApp{
+			ClientID:     clientID,
+			ClientSecret: clientSecret,
+			RedirectURL:  redirectURL,
+		}
+	}
+	return apps
+}
+
+func hostFromURL(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	withoutScheme := value
+	if idx := strings.Index(withoutScheme, "://"); idx >= 0 {
+		withoutScheme = withoutScheme[idx+3:]
+	}
+	if idx := strings.IndexAny(withoutScheme, "/?#"); idx >= 0 {
+		withoutScheme = withoutScheme[:idx]
+	}
+	if idx := strings.LastIndex(withoutScheme, "@"); idx >= 0 {
+		withoutScheme = withoutScheme[idx+1:]
+	}
+	if strings.HasPrefix(withoutScheme, "[") {
+		if idx := strings.Index(withoutScheme, "]"); idx >= 0 {
+			return strings.ToLower(withoutScheme[1:idx])
+		}
+	}
+	if idx := strings.LastIndex(withoutScheme, ":"); idx >= 0 {
+		withoutScheme = withoutScheme[:idx]
+	}
+	return strings.ToLower(strings.TrimSpace(withoutScheme))
+}
+
+func envSuffixForHost(host string) string {
+	host = strings.ToUpper(strings.TrimSpace(host))
+	var b strings.Builder
+	for _, c := range host {
+		if (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
+			b.WriteRune(c)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	return strings.Trim(b.String(), "_")
 }
 
 func loadDotenv() {

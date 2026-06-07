@@ -42,12 +42,12 @@ export function RpmLimitSection({ subscriptionTiers = [], afterChange, onConfirm
     <Section title="订阅 RPM 档位" icon={<SpeedIcon />}>
       <Stack spacing={2}>
         <Typography variant="body2" color="text.secondary">
-          用户默认分组为 Lite。管理员在用户账号编辑窗口调整订阅分组，API Key 留空时跟随订阅分组，填写数值时只会作为更低的单 Key 限制。
+          普通邮箱默认 Email，教育邮箱、邀请码和 GitHub 注册默认 Lite。API Key 留空时跟随订阅分组，填写数值时只会作为更低的单 Key 限制。
         </Typography>
         <Stack
           sx={{
             display: "grid",
-            gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))", lg: "repeat(5, minmax(0, 1fr))" },
+            gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))", lg: "repeat(6, minmax(0, 1fr))" },
             gap: 1
           }}
         >

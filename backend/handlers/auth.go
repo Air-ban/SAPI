@@ -33,6 +33,12 @@ func MountAuthRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/admin/passkeys/{id}", middleware.RequireAdmin(handleAdminPasskeyDelete))
 }
 
+const adminLoginTokenTTL = 30 * 24 * time.Hour
+
+func signAdminLoginToken(cfg *config.Config, appSecret string) string {
+	return auth.SignTokenStringWithTTL(auth.TokenPayload{Role: "admin", Sub: cfg.AdminUser}, appSecret, adminLoginTokenTTL)
+}
+
 func handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	cfg := config.Load()
 	body, ok := readJSONBody(w, r)
@@ -56,7 +62,7 @@ func handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	clearLoginFailures(username)
 
 	db := store.ReadDB()
-	token := auth.SignTokenString(auth.TokenPayload{Role: "admin", Sub: cfg.AdminUser}, db.AppSecret)
+	token := signAdminLoginToken(cfg, db.AppSecret)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"token":    token,
 		"username": cfg.AdminUser,
@@ -80,7 +86,7 @@ func handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	if auth.SafeEqual(identifier, normalizeUsername(cfg.AdminUser)) && auth.SafeEqual(password, cfg.AdminPassword) {
 		clearLoginFailures(identifier)
 		db := store.ReadDB()
-		token := auth.SignTokenString(auth.TokenPayload{Role: "admin", Sub: cfg.AdminUser}, db.AppSecret)
+		token := signAdminLoginToken(cfg, db.AppSecret)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"role":     "admin",
 			"token":    token,
@@ -208,11 +214,10 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	email := strings.ToLower(security.SafeSingleLine(fmt.Sprintf("%v", body["email"]), 254))
 	password, _ := body["password"].(string)
 	verificationCode := security.SafeSingleLine(fmt.Sprintf("%v", body["verificationCode"]), 16)
-	invitationCode := security.SafeSingleLine(fmt.Sprintf("%v", body["invitationCode"]), 128)
-	isEduEmail := strings.HasSuffix(email, ".edu.cn")
+	invitationCode := security.SafeSingleLine(toString(body["invitationCode"]), 128)
 
-	if !isEduEmail && invitationCode == "" {
-		utils.SendError(w, 400, "Invitation code is required for non-edu emails.", "invitation_code_required")
+	if !toBool(body["termsAccepted"]) {
+		utils.SendError(w, 400, "You must accept the user agreement and privacy policy before registering.", "terms_required")
 		return
 	}
 
@@ -286,7 +291,7 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 			Enabled:                  true,
 			ReceiveAnnouncementEmail: true,
 			Source:                   userSourceForEmail(email),
-			SubscriptionTier:         subscription.TierLite,
+			SubscriptionTier:         subscriptionTierForRegistration(email, invitationCode),
 			CreatedAt:                createdAt,
 			UpdatedAt:                createdAt,
 		}
@@ -557,6 +562,13 @@ func userSourceForEmail(email string) string {
 	return "email"
 }
 
+func subscriptionTierForRegistration(email, invitationCode string) string {
+	if userSourceForEmail(email) == "email" && strings.TrimSpace(invitationCode) == "" {
+		return subscription.TierEmail
+	}
+	return subscription.TierLite
+}
+
 func getAPIKeys(user *models.User) []models.APIKeyRecord {
 	keys := make([]models.APIKeyRecord, 0)
 	for _, k := range user.APIKeys {
@@ -569,15 +581,24 @@ func getAPIKeys(user *models.User) []models.APIKeyRecord {
 
 func getPrimaryAPIKey(user *models.User) string {
 	keys := getAPIKeys(user)
+	if key := primaryAPIKeyFromRecords(keys); key != "" {
+		return key
+	}
+	return user.APIKey
+}
+
+func primaryAPIKeyFromRecords(keys []models.APIKeyRecord) string {
 	for _, k := range keys {
-		if k.Enabled {
+		if k.Enabled && k.Key != "" {
 			return k.Key
 		}
 	}
-	if len(keys) > 0 {
-		return keys[0].Key
+	for _, k := range keys {
+		if k.Key != "" {
+			return k.Key
+		}
 	}
-	return user.APIKey
+	return ""
 }
 
 func sanitizeAPIKeyRecord(record *models.APIKeyRecord) map[string]interface{} {

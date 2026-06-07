@@ -11,6 +11,7 @@ func TestRPMLimitForTier(t *testing.T) {
 		tier string
 		want int
 	}{
+		{tier: TierEmail, want: 5},
 		{tier: TierLite, want: 10},
 		{tier: TierBase, want: 30},
 		{tier: TierPro, want: 50},

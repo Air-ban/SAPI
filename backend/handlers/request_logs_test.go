@@ -69,44 +69,44 @@ func setupRequestLogTest(t *testing.T) (*http.ServeMux, string, string, string) 
 	return mux, adminToken, ownerToken, otherToken
 }
 
-func TestAdminStateOmitsUsageByDefault(t *testing.T) {
+func TestAdminSessionOmitsUsageByDefault(t *testing.T) {
 	mux, adminToken, _, _ := setupRequestLogTest(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/state", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/session", nil)
 	req.Header.Set("Authorization", "Bearer "+adminToken)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected admin state to return 200, got %d body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("expected admin session to return 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
 	if strings.Contains(body, `"usage"`) || strings.Contains(body, "requestContent") ||
 		strings.Contains(body, "hasRequestContent") || strings.Contains(body, "large-secret-payload") {
-		t.Fatalf("admin state should be lightweight by default, body=%s", body)
+		t.Fatalf("admin session should be lightweight by default, body=%s", body)
 	}
 }
 
-func TestAdminStateCanIncludeUsageWithoutRequestContent(t *testing.T) {
+func TestAdminSessionCanIncludeUsageWithoutRequestContent(t *testing.T) {
 	mux, adminToken, _, _ := setupRequestLogTest(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/state?includeUsage=true", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/session?includeUsage=true", nil)
 	req.Header.Set("Authorization", "Bearer "+adminToken)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected admin state to return 200, got %d body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("expected admin session to return 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, `"usage"`) {
-		t.Fatalf("admin state should include usage when requested, body=%s", body)
+		t.Fatalf("admin session should include usage when requested, body=%s", body)
 	}
 	if strings.Contains(body, "requestContent") || strings.Contains(body, "large-secret-payload") {
-		t.Fatalf("admin state usage should not include full request content, body=%s", body)
+		t.Fatalf("admin session usage should not include full request content, body=%s", body)
 	}
 	if !strings.Contains(body, `"hasRequestContent":true`) {
-		t.Fatalf("admin state usage should include request content marker, body=%s", body)
+		t.Fatalf("admin session usage should include request content marker, body=%s", body)
 	}
 }
 

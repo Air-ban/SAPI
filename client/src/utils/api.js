@@ -1,8 +1,27 @@
 import { ADMIN_TOKEN_KEY, USER_TOKEN_KEY } from "../constants";
 
+function withNoCacheParam(path) {
+  const url = new URL(path, window.location.origin);
+  url.searchParams.set("_sapi_no_cache", `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  if (url.origin === window.location.origin) {
+    return `${url.pathname}${url.search}${url.hash}`;
+  }
+  return url.toString();
+}
+
+function makeRequestError(message, status = 0, code = "") {
+  const error = new Error(message);
+  error.status = status;
+  if (code) error.code = code;
+  return error;
+}
+
 export async function request(path, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
   const headers = {
     "Content-Type": "application/json",
+    "Cache-Control": "no-store",
+    "Pragma": "no-cache",
     ...(options.headers || {})
   };
 
@@ -15,8 +34,10 @@ export async function request(path, options = {}) {
     }
   }
 
-  const response = await fetch(path, {
+  const response = await fetch(withNoCacheParam(path), {
     ...options,
+    method,
+    cache: "no-store",
     headers,
     body: options.body ? JSON.stringify(options.body) : undefined
   });
@@ -24,7 +45,7 @@ export async function request(path, options = {}) {
 
   if (!text.trim()) {
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+      throw makeRequestError(`HTTP ${response.status}`, response.status);
     }
     return null;
   }
@@ -35,20 +56,28 @@ export async function request(path, options = {}) {
   if (!looksLikeJson) {
     const status = response.status;
     const snippet = text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
-    throw new Error(`服务器暂时不可用 (${status})${snippet ? "：" + snippet : ""}`);
+    throw makeRequestError(`服务器暂时不可用 (${status})${snippet ? "：" + snippet : ""}`, status);
   }
 
-  const data = text ? JSON.parse(text) : null;
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    throw makeRequestError(`服务器返回异常 (${response.status})`, response.status);
+  }
 
   if (!response.ok) {
-    throw new Error(data?.error?.message || `HTTP ${response.status}`);
+    throw makeRequestError(data?.error?.message || `HTTP ${response.status}`, response.status, data?.error?.code || "");
   }
 
   return data;
 }
 
 export async function requestBlob(path, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
   const headers = {
+    "Cache-Control": "no-store",
+    "Pragma": "no-cache",
     ...(options.headers || {})
   };
 
@@ -61,8 +90,10 @@ export async function requestBlob(path, options = {}) {
     }
   }
 
-  const response = await fetch(path, {
+  const response = await fetch(withNoCacheParam(path), {
     ...options,
+    method,
+    cache: "no-store",
     headers,
     body: options.body ? JSON.stringify(options.body) : undefined
   });
@@ -73,15 +104,15 @@ export async function requestBlob(path, options = {}) {
     if (contentType.includes("application/json") || /^\s*[{\[]/.test(text)) {
       try {
         const data = JSON.parse(text);
-        throw new Error(data?.error?.message || `HTTP ${response.status}`);
+        throw makeRequestError(data?.error?.message || `HTTP ${response.status}`, response.status, data?.error?.code || "");
       } catch (error) {
         if (error instanceof SyntaxError) {
-          throw new Error(`HTTP ${response.status}`);
+          throw makeRequestError(`HTTP ${response.status}`, response.status);
         }
         throw error;
       }
     }
-    throw new Error(`HTTP ${response.status}`);
+    throw makeRequestError(`HTTP ${response.status}`, response.status);
   }
 
   const blob = await response.blob();

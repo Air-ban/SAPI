@@ -28,10 +28,19 @@ type TokenPayload struct {
 	Exp  int64  `json:"exp"`
 }
 
+const DefaultTokenTTL = 12 * time.Hour
+
 func SignToken(payload TokenPayload, secret string) []byte {
+	return SignTokenWithTTL(payload, secret, DefaultTokenTTL)
+}
+
+func SignTokenWithTTL(payload TokenPayload, secret string, ttl time.Duration) []byte {
 	header := map[string]string{"alg": "HS256", "typ": "JWT"}
 
-	payload.Exp = time.Now().Unix() + 12*60*60
+	if ttl <= 0 {
+		ttl = DefaultTokenTTL
+	}
+	payload.Exp = time.Now().Add(ttl).Unix()
 
 	headerJSON, _ := json.Marshal(header)
 	bodyJSON, _ := json.Marshal(payload)
@@ -50,6 +59,10 @@ func SignToken(payload TokenPayload, secret string) []byte {
 
 func SignTokenString(payload TokenPayload, secret string) string {
 	return string(SignToken(payload, secret))
+}
+
+func SignTokenStringWithTTL(payload TokenPayload, secret string, ttl time.Duration) string {
+	return string(SignTokenWithTTL(payload, secret, ttl))
 }
 
 func VerifyToken(token string, secret string) *TokenPayload {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"sapi/auth"
+	"sapi/config"
 	"sapi/models"
 	"sapi/security"
 	"sapi/store"
@@ -18,6 +19,7 @@ import (
 type contextKey string
 
 const userContextKey contextKey = "user"
+const tokenPayloadContextKey contextKey = "tokenPayload"
 
 const (
 	apiKeyFailureLimit  = 60
@@ -36,7 +38,7 @@ const (
 func CORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-API-Key, anthropic-version, anthropic-beta")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-API-Key, Cache-Control, Pragma, anthropic-version, anthropic-beta")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 
 		if r.Method == "OPTIONS" {
@@ -54,11 +56,13 @@ func RequireAdmin(next http.HandlerFunc) http.HandlerFunc {
 		db := store.ReadDB()
 		payload := auth.VerifyToken(token, db.AppSecret)
 
-		if payload == nil || payload.Role != "admin" {
+		cfg := config.Load()
+		if payload == nil || payload.Role != "admin" || !auth.SafeEqual(payload.Sub, cfg.AdminUser) {
 			utils.SendError(w, 401, "Admin authentication is required.", "unauthorized")
 			return
 		}
-		next(w, r)
+		ctx := context.WithValue(r.Context(), tokenPayloadContextKey, payload)
+		next(w, r.WithContext(ctx))
 	}
 }
 
@@ -80,6 +84,7 @@ func RequireUserAccount(next http.HandlerFunc) http.HandlerFunc {
 					return
 				}
 				ctx := context.WithValue(r.Context(), userContextKey, &u)
+				ctx = context.WithValue(ctx, tokenPayloadContextKey, payload)
 				next(w, r.WithContext(ctx))
 				return
 			}
@@ -92,6 +97,11 @@ func RequireUserAccount(next http.HandlerFunc) http.HandlerFunc {
 func GetUser(r *http.Request) *models.User {
 	u, _ := r.Context().Value(userContextKey).(*models.User)
 	return u
+}
+
+func GetTokenPayload(r *http.Request) *auth.TokenPayload {
+	payload, _ := r.Context().Value(tokenPayloadContextKey).(*auth.TokenPayload)
+	return payload
 }
 
 type FindUserByKeyResult struct {

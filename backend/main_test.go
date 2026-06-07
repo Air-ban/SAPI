@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
 
 func TestIsAPIPathUsesPathSegments(t *testing.T) {
 	tests := []struct {
@@ -36,4 +41,36 @@ func TestIsAPIPathUsesPathSegments(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDynamicNoStoreResponseWriterOverridesCacheableHeaders(t *testing.T) {
+	rec := httptest.NewRecorder()
+	wrapped := newDynamicNoStoreResponseWriter(rec)
+
+	wrapped.Header().Set("Cache-Control", "public, max-age=300")
+	wrapped.WriteHeader(http.StatusOK)
+
+	cacheControl := rec.Header().Get("Cache-Control")
+	if !strings.Contains(cacheControl, "no-store") || strings.Contains(cacheControl, "public") {
+		t.Fatalf("Cache-Control = %q, want no-store without public cache directive", cacheControl)
+	}
+	if got := rec.Header().Get("CDN-Cache-Control"); got != "no-store" {
+		t.Fatalf("CDN-Cache-Control = %q, want no-store", got)
+	}
+	for _, want := range []string{"Authorization", "X-API-Key", "Cookie"} {
+		if !headerHasVaryValue(rec.Header(), want) {
+			t.Fatalf("Vary = %q, missing %s", rec.Header().Values("Vary"), want)
+		}
+	}
+}
+
+func headerHasVaryValue(header http.Header, want string) bool {
+	for _, value := range header.Values("Vary") {
+		for _, part := range strings.Split(value, ",") {
+			if strings.EqualFold(strings.TrimSpace(part), want) {
+				return true
+			}
+		}
+	}
+	return false
 }

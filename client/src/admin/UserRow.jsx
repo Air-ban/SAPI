@@ -37,6 +37,7 @@ import { RequestHeatmap } from "../user/RequestHeatmap";
 import { ApiKeyRpmRow } from "./ApiKeyRpmRow";
 
 const FALLBACK_TIERS = [
+  { id: "email", name: "Email", rpmLimit: 5 },
   { id: "lite", name: "Lite", rpmLimit: 10 },
   { id: "base", name: "Base", rpmLimit: 30 },
   { id: "pro", name: "Pro", rpmLimit: 50 },

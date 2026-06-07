@@ -55,33 +55,33 @@ export function Sidebar({
     checking: { label: "检查中", color: "warning.main" }
   }[health];
   const portalPages = [
-    { id: "overview", icon: <AnalyticsIcon />, primary: "概览", secondary: "Key、模型与端点摘要" },
-    { id: "key", icon: <KeyIcon />, primary: "API Key", secondary: "复制、创建与轮换" },
-    { id: "usage", icon: <BarChartIcon />, primary: "请求与用量", secondary: "Token 与请求记录" },
-    { id: "models", icon: <ApiIcon />, primary: "模型与端点", secondary: "可用模型和接口" },
-    { id: "example", icon: <RocketLaunchIcon />, primary: "调用示例", secondary: "curl 请求模板" },
-    { id: "suggestion", icon: <FeedbackIcon />, primary: "提建议", secondary: "提交功能建议或反馈" },
-    { id: "swagger", icon: <SchoolIcon />, primary: "API 文档", secondary: "Swagger 接口文档（新窗口）" },
-    { id: "settings", icon: <SettingsIcon />, primary: "通知设置", secondary: "邮件通知偏好设置" }
+    { id: "overview", icon: <AnalyticsIcon />, primary: "首页概览", secondary: "账号、Key、模型总览" },
+    { id: "key", icon: <KeyIcon />, primary: "我的 Key", secondary: "复制、创建、轮换" },
+    { id: "usage", icon: <BarChartIcon />, primary: "我的用量", secondary: "请求记录和 Token" },
+    { id: "models", icon: <ApiIcon />, primary: "可用模型", secondary: "模型列表和接口" },
+    { id: "example", icon: <RocketLaunchIcon />, primary: "怎么调用", secondary: "直接复制示例" },
+    { id: "suggestion", icon: <FeedbackIcon />, primary: "反馈建议", secondary: "提交问题或想法" },
+    { id: "swagger", icon: <SchoolIcon />, primary: "接口文档", secondary: "打开 Swagger" },
+    { id: "settings", icon: <SettingsIcon />, primary: "通知开关", secondary: "是否接收公告邮件" }
   ];
   const adminNavGroups = [
     {
-      label: "运营",
+      label: "日常管理",
       pages: [
-        { id: "responses", icon: <DnsIcon />, primary: "代理设置", secondary: "端点、用量、上游地址" },
-        { id: "overview", icon: <AnalyticsIcon />, primary: "概览", secondary: "用量、供应商、用户摘要" },
-        { id: "usage", icon: <BarChartIcon />, primary: "请求与用量", secondary: "全局统计和明细" },
-        { id: "providers", icon: <ApiIcon />, primary: "上游供应商", secondary: "API、模型和密钥" },
-        { id: "users", icon: <KeyIcon />, primary: "用户账号", secondary: "用户 Key 与权限" },
-        { id: "announcements", icon: <CampaignOutlinedIcon />, primary: "公告管理", secondary: "发布和管理系统公告" },
-        { id: "suggestions", icon: <FeedbackIcon />, primary: "建议反馈", secondary: "查看用户提交的建议" }
+        { id: "overview", icon: <AnalyticsIcon />, primary: "后台首页", secondary: "用量、用户、来源总览" },
+        { id: "usage", icon: <BarChartIcon />, primary: "用量日志", secondary: "请求明细和统计" },
+        { id: "users", icon: <KeyIcon />, primary: "用户和 Key", secondary: "账号、权限、限速" },
+        { id: "providers", icon: <ApiIcon />, primary: "模型来源", secondary: "上游 API 和模型" },
+        { id: "responses", icon: <DnsIcon />, primary: "代理入口", secondary: "端点和转发说明" },
+        { id: "announcements", icon: <CampaignOutlinedIcon />, primary: "站内公告", secondary: "发布用户通知" },
+        { id: "suggestions", icon: <FeedbackIcon />, primary: "用户反馈", secondary: "查看和回复建议" }
       ]
     },
     {
-      label: "系统",
+      label: "站点设置",
       pages: [
-        { id: "invitations", icon: <VpnKeyIcon />, primary: "邀请码", secondary: "创建与管理邀请码" },
-        { id: "smtp", icon: <SettingsIcon />, primary: "SMTP 设置", secondary: "邮件服务配置" }
+        { id: "invitations", icon: <VpnKeyIcon />, primary: "邀请码", secondary: "发放注册名额" },
+        { id: "smtp", icon: <SettingsIcon />, primary: "总设置", secondary: "邮箱、横幅、维护、限速" }
       ]
     }
   ];
@@ -213,11 +213,25 @@ export function Sidebar({
             </Box>
             <Button
               size="small"
-              color="inherit"
               variant="outlined"
               startIcon={<LogoutIcon />}
               onClick={onUserLogout}
-              sx={{ borderColor: "app.sidebarBorder", borderRadius: 1, color: "app.sidebarText" }}
+              sx={{
+                borderColor: "app.sidebarBorder",
+                borderRadius: 1,
+                color: "app.sidebarText",
+                bgcolor: "transparent",
+                "&:hover": {
+                  bgcolor: "app.sidebarHover",
+                  borderColor: "app.sidebarText"
+                },
+                "& .MuiButton-startIcon": {
+                  color: "inherit"
+                },
+                "& .MuiSvgIcon-root": {
+                  color: "inherit"
+                }
+              }}
             >
               退出用户
             </Button>

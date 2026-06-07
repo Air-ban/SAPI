@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/mail"
 	"net/smtp"
 	"net/url"
 	"sort"
@@ -88,6 +89,61 @@ func sendMail(info SMTPInfo, to, subject, body string) error {
 	auth := smtp.PlainAuth("", info.User, info.Pass, info.Host)
 	addr := fmt.Sprintf("%s:%d", info.Host, info.Port)
 	return sendSMTPMail(info, addr, auth, from, []string{to}, []byte(msg))
+}
+
+func parseSiteEmails(values []string) ([]string, []string) {
+	emails := make([]string, 0, len(values))
+	invalid := []string{}
+	seen := map[string]bool{}
+
+	for _, value := range values {
+		parts := strings.FieldsFunc(value, func(r rune) bool {
+			return r == ',' || r == ';' || r == '\n' || r == '\r' || r == '\t' || r == ' '
+		})
+		for _, part := range parts {
+			email := strings.ToLower(security.SafeSingleLine(part, 254))
+			if email == "" {
+				continue
+			}
+			if !isPlainEmailAddress(email) {
+				invalid = append(invalid, email)
+				continue
+			}
+			if !seen[email] {
+				seen[email] = true
+				emails = append(emails, email)
+			}
+		}
+	}
+
+	return emails, invalid
+}
+
+func isPlainEmailAddress(email string) bool {
+	if email == "" || !strings.Contains(email, "@") || strings.ContainsAny(email, "<>") {
+		return false
+	}
+	parsed, err := mail.ParseAddress(email)
+	return err == nil && strings.EqualFold(parsed.Address, email)
+}
+
+func siteEmailsFromDB(db *models.Database) []string {
+	if db == nil {
+		return nil
+	}
+	emails, _ := parseSiteEmails(db.SiteEmails)
+	if len(emails) > 0 {
+		return emails
+	}
+	emails, _ = parseSiteEmails([]string{db.SiteEmail})
+	return emails
+}
+
+func firstSiteEmail(emails []string) string {
+	if len(emails) == 0 {
+		return ""
+	}
+	return emails[0]
 }
 
 func sendSMTPMail(info SMTPInfo, addr string, auth smtp.Auth, from string, recipients []string, msg []byte) error {
@@ -179,16 +235,25 @@ func sanitizeMailHeader(value string) string {
 }
 
 func publicConfig() map[string]interface{} {
+	return publicConfigForRequest(nil)
+}
+
+func publicConfigForRequest(r *http.Request) map[string]interface{} {
 	cfg := config.Load()
+	baseURL := publicBaseURLForRequest(r, cfg)
+	if baseURL == "" {
+		baseURL = cfg.PublicBaseURL
+	}
+	_, githubEnabled := githubOAuthAppForRequest(r, cfg)
 	return map[string]interface{}{
 		"name":    "SAPI",
-		"baseUrl": cfg.PublicBaseURL,
+		"baseUrl": baseURL,
 		"captcha": map[string]interface{}{
 			"enabled": cfg.TencentCaptchaAppID != "" && cfg.TencentCaptchaAppSecretKey != "",
 			"appId":   cfg.TencentCaptchaAppID,
 		},
 		"github": map[string]interface{}{
-			"enabled":              cfg.GitHubClientID != "" && cfg.GitHubClientSecret != "",
+			"enabled":              githubEnabled,
 			"requiredFollowTarget": cfg.GitHubRequiredFollowTarget,
 		},
 		"adminPasskey": map[string]interface{}{
@@ -198,13 +263,21 @@ func publicConfig() map[string]interface{} {
 }
 
 func serviceConfig() map[string]interface{} {
+	return serviceConfigForRequest(nil)
+}
+
+func serviceConfigForRequest(r *http.Request) map[string]interface{} {
 	cfg := config.Load()
 	db := store.ReadDB()
 	modelsList := availableModelsForKey(db, nil)
+	baseURL := publicBaseURLForRequest(r, cfg)
+	if baseURL == "" {
+		baseURL = cfg.PublicBaseURL
+	}
 
 	return map[string]interface{}{
 		"name":    "SAPI",
-		"baseUrl": cfg.PublicBaseURL,
+		"baseUrl": baseURL,
 		"endpoints": []map[string]string{
 			{"method": "GET", "path": "/v1/models", "description": "列出当前可用模型"},
 			{"method": "GET", "path": "/v1/models/{model}", "description": "查询单个 OpenAI 兼容模型"},
@@ -267,7 +340,7 @@ func handleReady(w http.ResponseWriter, r *http.Request) {
 }
 
 func handlePublicConfig(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(publicConfig())
+	json.NewEncoder(w).Encode(publicConfigForRequest(r))
 }
 
 func handlePublicKey(w http.ResponseWriter, r *http.Request) {
@@ -283,7 +356,7 @@ func handlePublicKey(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"valid":  true,
-		"config": serviceConfig(),
+		"config": serviceConfigForRequest(r),
 	})
 }
 
@@ -575,31 +648,44 @@ func handlePostSuggestion(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 
-	siteEmail := db.SiteEmail
-	if siteEmail != "" && strings.Contains(siteEmail, "@") {
+	siteEmails := siteEmailsFromDB(db)
+	if len(siteEmails) > 0 {
 		smtpCfg := getSMTPConfig(db)
-		go sendMail(smtpCfg, siteEmail, "[SAPI 建议反馈] "+title,
-			"用户提交了新的建议反馈。\n\n标题："+title+"\n内容："+content+"\n"+
-				func() string {
-					if contact != "" {
-						return "联系方式：" + contact + "\n"
-					}
-					return ""
-				}()+
-				func() string {
-					if userName != "" {
-						return "提交用户：" + userName + "\n"
-					}
-					return ""
-				}()+
-				"提交时间："+suggestion.CreatedAt+"\n\n请在管理后台查看详情。",
-		)
+		body := buildSuggestionEmailBody(title, content, contact, userName, suggestion.CreatedAt)
+		go func() {
+			for _, email := range siteEmails {
+				_ = sendMail(smtpCfg, email, "[SAPI 建议反馈] "+title, body)
+			}
+		}()
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":    true,
 		"suggestion": suggestion,
 	})
+}
+
+func buildSuggestionEmailBody(title, content, contact, userName, createdAt string) string {
+	var b strings.Builder
+	b.WriteString("用户提交了新的建议反馈。\n\n标题：")
+	b.WriteString(title)
+	b.WriteString("\n内容：")
+	b.WriteString(content)
+	b.WriteString("\n")
+	if contact != "" {
+		b.WriteString("联系方式：")
+		b.WriteString(contact)
+		b.WriteString("\n")
+	}
+	if userName != "" {
+		b.WriteString("提交用户：")
+		b.WriteString(userName)
+		b.WriteString("\n")
+	}
+	b.WriteString("提交时间：")
+	b.WriteString(createdAt)
+	b.WriteString("\n\n请在管理后台查看详情。")
+	return b.String()
 }
 
 func handleSwaggerJSON(w http.ResponseWriter, r *http.Request) {

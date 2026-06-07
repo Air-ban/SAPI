@@ -67,7 +67,7 @@ export function AdminView({
     providers: { title: "上游供应商", description: "配置模型来源、密钥和启用状态。" },
     users: { title: "用户账号", description: "管理用户 Key 和访问状态。" },
     invitations: { title: "邀请码管理", description: "创建、发送和管理邀请码。" },
-    smtp: { title: "SMTP 设置", description: "配置邮件发送服务。" },
+    smtp: { title: "总设置", description: "集中配置邮件服务、站点横幅、维护模式和全局 RPM 档位。" },
     announcements: { title: "公告管理", description: "发布和管理系统公告。" },
     suggestions: { title: "建议反馈", description: "查看用户提交的功能建议和反馈。" }
   }[currentPage] || {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash"
 	"testing"
+	"time"
 )
 
 func TestHashPasswordVerifiesGeneratedHash(t *testing.T) {
@@ -28,6 +29,21 @@ func TestVerifyPasswordKeepsLegacySaltTextCompatibility(t *testing.T) {
 
 	if !VerifyPassword(password, stored) {
 		t.Fatal("expected legacy salt-text password hash to verify")
+	}
+}
+
+func TestSignTokenStringWithTTLUsesRequestedExpiry(t *testing.T) {
+	before := time.Now()
+	token := SignTokenStringWithTTL(TokenPayload{Role: "admin", Sub: "admin"}, "test-secret", 30*24*time.Hour)
+	verified := VerifyToken(token, "test-secret")
+	if verified == nil {
+		t.Fatal("expected signed token to verify")
+	}
+
+	minExp := before.Add(30*24*time.Hour - time.Minute).Unix()
+	maxExp := time.Now().Add(30*24*time.Hour + time.Minute).Unix()
+	if verified.Exp < minExp || verified.Exp > maxExp {
+		t.Fatalf("exp = %d, want between %d and %d", verified.Exp, minExp, maxExp)
 	}
 }
 

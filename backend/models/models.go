@@ -22,6 +22,7 @@ type Database struct {
 	Suggestions        []Suggestion       `json:"suggestions"`
 	SMTPConfig         *SMTPConfig        `json:"smtpConfig"`
 	SiteEmail          string             `json:"siteEmail"`
+	SiteEmails         []string           `json:"siteEmails"`
 	DefaultRPMLimit    int                `json:"defaultRpmLimit"`
 	SiteBanner         *SiteBanner        `json:"siteBanner"`
 	MaintenanceMode    bool               `json:"maintenanceMode"`

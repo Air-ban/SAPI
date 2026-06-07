@@ -68,7 +68,7 @@ func main() {
 
 	handler := security.RequestGuard(middleware.CORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isAPIPath(r.URL.Path) {
-			mux.ServeHTTP(w, r)
+			mux.ServeHTTP(newDynamicNoStoreResponseWriter(w), r)
 			return
 		}
 
@@ -143,6 +143,36 @@ func setStaticCacheHeader(w http.ResponseWriter, requestPath string) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
+}
+
+type dynamicNoStoreResponseWriter struct {
+	http.ResponseWriter
+}
+
+func newDynamicNoStoreResponseWriter(w http.ResponseWriter) http.ResponseWriter {
+	setDynamicNoStoreHeaders(w.Header())
+	return &dynamicNoStoreResponseWriter{ResponseWriter: w}
+}
+
+func (rw *dynamicNoStoreResponseWriter) WriteHeader(code int) {
+	setDynamicNoStoreHeaders(rw.Header())
+	rw.ResponseWriter.WriteHeader(code)
+}
+
+func (rw *dynamicNoStoreResponseWriter) Write(data []byte) (int, error) {
+	setDynamicNoStoreHeaders(rw.Header())
+	return rw.ResponseWriter.Write(data)
+}
+
+func setDynamicNoStoreHeaders(header http.Header) {
+	header.Set("Cache-Control", "no-store, no-cache, max-age=0, must-revalidate, private")
+	header.Set("CDN-Cache-Control", "no-store")
+	header.Set("Surrogate-Control", "no-store")
+	header.Set("Pragma", "no-cache")
+	header.Set("Expires", "0")
+	addVaryHeader(header, "Authorization")
+	addVaryHeader(header, "X-API-Key")
+	addVaryHeader(header, "Cookie")
 }
 
 func serveGzipStaticFile(w http.ResponseWriter, r *http.Request, filePath string, info os.FileInfo) bool {
@@ -291,15 +321,15 @@ func (rw *responseWriter) WriteHeader(code int) {
 }
 
 func getBaseDir() string {
+	exe, err := os.Executable()
+	if err == nil {
+		return filepath.Dir(exe)
+	}
 	_, file, _, ok := runtime.Caller(0)
 	if ok {
 		return filepath.Dir(file)
 	}
-	exe, err := os.Executable()
-	if err != nil {
-		return "."
-	}
-	return filepath.Dir(exe)
+	return "."
 }
 
 func setupDiagnosticLog() {

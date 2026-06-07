@@ -7,6 +7,7 @@ import (
 )
 
 const (
+	TierEmail = "email"
 	TierLite  = "lite"
 	TierBase  = "base"
 	TierPro   = "pro"
@@ -21,6 +22,7 @@ type TierInfo struct {
 }
 
 var Tiers = []TierInfo{
+	{ID: TierEmail, Name: "Email", RPMLimit: 5},
 	{ID: TierLite, Name: "Lite", RPMLimit: 10},
 	{ID: TierBase, Name: "Base", RPMLimit: 30},
 	{ID: TierPro, Name: "Pro", RPMLimit: 50},
@@ -30,6 +32,8 @@ var Tiers = []TierInfo{
 
 func NormalizeTier(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
+	case TierEmail:
+		return TierEmail
 	case TierLite:
 		return TierLite
 	case TierBase:

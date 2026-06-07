@@ -57,6 +57,7 @@ const GITHUB_AUTH_ERROR_MESSAGES = {
   token_exchange_failed: "GitHub 授权换取令牌失败，请重试",
   profile_fetch_failed: "无法读取 GitHub 账号信息，请重试",
   invalid_profile: "GitHub 账号信息不完整",
+  terms_required: "请先同意用户协议和隐私政策",
   user_disabled: "账号已被禁用"
 };
 
@@ -75,6 +76,47 @@ function getInitialThemeMode() {
   return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
+function decodeJwtPayload(token) {
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return null;
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    return JSON.parse(atob(padded));
+  } catch {
+    return null;
+  }
+}
+
+function makeSessionError(message, code = "session_mismatch") {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+function isAdminAuthFailure(error) {
+  return error?.status === 401 || error?.status === 403 || error?.code === "session_mismatch";
+}
+
+function assertSessionMatchesToken(token, session, expectedRole, expectedSub = "") {
+  const local = decodeJwtPayload(token);
+  if (!local || local.role !== expectedRole) {
+    throw makeSessionError("登录状态无效，请重新登录");
+  }
+  if (!session) {
+    throw makeSessionError("登录状态暂时无法恢复，请刷新重试", "session_unavailable");
+  }
+  if (session.role !== expectedRole) {
+    throw makeSessionError("登录状态无效，请重新登录");
+  }
+  if (local.role !== session.role || local.sub !== session.sub || local.exp !== session.exp) {
+    throw makeSessionError("登录状态不一致，请重新登录");
+  }
+  if (expectedSub && session.sub !== expectedSub) {
+    throw makeSessionError("登录状态不匹配，请重新登录");
+  }
+}
+
 function App() {
   const [route, setRoute] = useState(getInitialRoute);
   const [portalPage, setPortalPage] = useState("overview");
@@ -88,6 +130,8 @@ function App() {
   const [userToken, setUserToken] = useState(localStorage.getItem(USER_TOKEN_KEY) || "");
   const [userSession, setUserSession] = useState(null);
   const [adminState, setAdminState] = useState(null);
+  const [adminRestoring, setAdminRestoring] = useState(() => Boolean(localStorage.getItem(ADMIN_TOKEN_KEY)));
+  const [adminRestoreError, setAdminRestoreError] = useState("");
   const [adminUsage, setAdminUsage] = useState(null);
   const [userUsage, setUserUsage] = useState(null);
   const [toast, setToast] = useState({ open: false, message: "", severity: "success" });
@@ -189,11 +233,21 @@ function App() {
   }, []);
 
   const loadAdminState = useCallback(async () => {
-    const state = await request("/api/admin/state");
+    const token = localStorage.getItem(ADMIN_TOKEN_KEY);
+    if (!token) {
+      throw makeSessionError("请先登录管理员账号");
+    }
+    const state = await request("/api/admin/session", {
+      method: "POST",
+      token
+    });
+    assertSessionMatchesToken(token, state?.session, "admin");
     if (state?.usage) {
       setAdminUsage(state.usage);
     }
-    setAdminState(state ? { ...state, usage: undefined } : state);
+    const nextState = state ? { ...state, usage: undefined } : state;
+    setAdminState(nextState);
+    return nextState;
   }, []);
 
   const loadAdminUsage = useCallback(async () => {
@@ -226,17 +280,19 @@ function App() {
     return data?.requestLog?.requestContent || null;
   }, []);
 
-  const loadUserSession = useCallback(async () => {
-    const token = localStorage.getItem(USER_TOKEN_KEY);
+  const loadUserSession = useCallback(async (tokenOverride = "") => {
+    const token = tokenOverride || localStorage.getItem(USER_TOKEN_KEY);
     if (!token) {
       setUserSession(null);
       return null;
     }
 
-    const data = await request("/api/user/me", {
+    const data = await request("/api/user/session", {
+      method: "POST",
       admin: false,
       token
     });
+    assertSessionMatchesToken(token, data?.session, "user", data?.user?.id || "");
     setUserSession(data);
     setSelectedKey(data.user.apiKey || "");
     return data;
@@ -246,6 +302,8 @@ function App() {
     localStorage.removeItem(ADMIN_TOKEN_KEY);
     setAdminToken("");
     setAdminState(null);
+    setAdminRestoring(false);
+    setAdminRestoreError("");
     setAdminUsage(null);
   }, []);
 
@@ -294,11 +352,22 @@ function App() {
 
   useEffect(() => {
     if (route === "admin" && adminToken) {
+      setAdminRestoring(true);
+      setAdminRestoreError("");
       loadAdminState()
         .then(() => loadAdminUsage().catch(() => setAdminUsage(null)))
         .catch((error) => {
-          logout();
-          showToast(error.message, "error");
+          if (isAdminAuthFailure(error)) {
+            logout();
+            showToast(error.message, "error");
+            return;
+          }
+          setAdminState(null);
+          setAdminRestoreError("管理后台暂时无法恢复，请刷新重试");
+          showToast(error.message || "管理后台暂时无法恢复，请刷新重试", "error");
+        })
+        .finally(() => {
+          setAdminRestoring(false);
         });
     }
   }, [route, adminToken, loadAdminState, loadAdminUsage, logout, showToast]);
@@ -311,11 +380,12 @@ function App() {
 
   useEffect(() => {
     if (userToken) {
-      loadUserSession().catch((error) => {
-        userLogout();
-        showToast(error.message, "error");
-      });
-      loadUserUsage().catch(() => setUserUsage(null));
+      loadUserSession(userToken)
+        .then(() => loadUserUsage().catch(() => setUserUsage(null)))
+        .catch((error) => {
+          userLogout();
+          showToast(error.message, "error");
+        });
     }
   }, [loadUserSession, loadUserUsage, showToast, userLogout, userToken]);
 
@@ -345,13 +415,12 @@ function App() {
       setUserToken(token);
       setAdminToken("");
       setAdminState(null);
+      setAdminRestoring(false);
+      setAdminRestoreError("");
       setAdminUsage(null);
 
       try {
-        const session = await request("/api/user/me", {
-          admin: false,
-          token
-        });
+        const session = await loadUserSession(token);
         setUserSession(session);
         setSelectedKey(session.user.apiKey || "");
         await loadUserUsage().catch(() => setUserUsage(null));
@@ -382,8 +451,14 @@ function App() {
     setUserToken("");
     setUserSession(null);
     setSelectedKey("");
+    setAdminRestoring(true);
+    setAdminRestoreError("");
     showToast(message);
-    await Promise.all([loadAdminState(), loadPublicConfig()]);
+    try {
+      await Promise.all([loadAdminState(), loadPublicConfig()]);
+    } finally {
+      setAdminRestoring(false);
+    }
     loadAdminUsage().catch(() => setAdminUsage(null));
     navigate("admin");
   };
@@ -405,11 +480,10 @@ function App() {
     setUserToken(data.token);
     setAdminToken("");
     setAdminState(null);
+    setAdminRestoring(false);
+    setAdminRestoreError("");
     setAdminUsage(null);
-    const session = await request("/api/user/me", {
-      admin: false,
-      token: data.token
-    });
+    const session = await loadUserSession(data.token);
     setUserSession(session);
     setSelectedKey(data.user.apiKey || "");
     showToast("已登录");
@@ -496,22 +570,21 @@ function App() {
     });
   };
 
-  const userRegister = async ({ username, email, password, verificationCode, invitationCode, captchaTicket, captchaRandstr }) => {
+  const userRegister = async ({ username, email, password, verificationCode, invitationCode, termsAccepted, captchaTicket, captchaRandstr }) => {
     const data = await request("/api/auth/register", {
       method: "POST",
       admin: false,
-      body: { username, email, password, verificationCode, invitationCode, captchaTicket, captchaRandstr }
+      body: { username, email, password, verificationCode, invitationCode, termsAccepted, captchaTicket, captchaRandstr }
     });
     localStorage.setItem(USER_TOKEN_KEY, data.token);
     localStorage.removeItem(ADMIN_TOKEN_KEY);
     setUserToken(data.token);
     setAdminToken("");
     setAdminState(null);
+    setAdminRestoring(false);
+    setAdminRestoreError("");
     setAdminUsage(null);
-    const session = await request("/api/user/me", {
-      admin: false,
-      token: data.token
-    });
+    const session = await loadUserSession(data.token);
     setUserSession(session);
     setSelectedKey(data.user.apiKey || "");
     showToast("注册成功");
@@ -568,10 +641,7 @@ function App() {
       admin: false,
       token: userToken
     });
-    const session = await request("/api/user/me", {
-      admin: false,
-      token: userToken
-    });
+    const session = await loadUserSession(userToken);
     setUserSession(session);
     setSelectedKey(session.user.apiKey || "");
     showToast("API Key 已删除");
@@ -725,6 +795,16 @@ function App() {
       <ThemeProvider theme={theme}>
         <CssBaseline />
         <LoadingPage text="正在完成 GitHub 登录" />
+        {snackbar}
+      </ThemeProvider>
+    );
+  }
+
+  if (route === "admin" && adminToken && (adminRestoring || !adminState)) {
+    return (
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <LoadingPage text={adminRestoreError || "正在恢复管理后台"} />
         {snackbar}
       </ThemeProvider>
     );

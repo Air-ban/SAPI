@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"sapi/auth"
 	"sapi/middleware"
@@ -17,7 +18,8 @@ import (
 )
 
 func MountUserRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/user/me", middleware.RequireUserAccount(handleUserMe))
+	mux.HandleFunc("GET /api/user/me", handleDeprecatedSessionGET)
+	mux.HandleFunc("POST /api/user/session", middleware.RequireUserAccount(handleUserSession))
 	mux.HandleFunc("POST /api/user/api-key", middleware.RequireUserAccount(handleUserCreateAPIKey))
 	mux.HandleFunc("POST /api/user/api-key/rotate", middleware.RequireUserAccount(handleUserRotateAPIKey))
 	mux.HandleFunc("POST /api/user/api-keys/{id}/rotate", middleware.RequireUserAccount(handleUserRotateSpecificKey))
@@ -29,16 +31,68 @@ func MountUserRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/user/suggestions", middleware.RequireUserAccount(handleUserSuggestions))
 }
 
-func handleUserMe(w http.ResponseWriter, r *http.Request) {
+func handleUserSession(w http.ResponseWriter, r *http.Request) {
+	writeUserSession(w, r, true)
+}
+
+func handleDeprecatedSessionGET(w http.ResponseWriter, r *http.Request) {
+	setSessionNoStoreHeaders(w.Header())
+	utils.SendError(w, http.StatusGone, "This session endpoint has been replaced by POST session validation.", "session_endpoint_deprecated")
+}
+
+func setSessionNoStoreHeaders(header http.Header) {
+	header.Set("Cache-Control", "no-store, no-cache, max-age=0, must-revalidate, private")
+	header.Set("CDN-Cache-Control", "no-store")
+	header.Set("Surrogate-Control", "no-store")
+	header.Set("Pragma", "no-cache")
+	header.Set("Expires", "0")
+	addHeaderValue(header, "Vary", "Authorization")
+	addHeaderValue(header, "Vary", "X-API-Key")
+	addHeaderValue(header, "Vary", "Cookie")
+}
+
+func addHeaderValue(header http.Header, key, value string) {
+	for _, existing := range header.Values(key) {
+		for _, part := range strings.Split(existing, ",") {
+			if strings.EqualFold(strings.TrimSpace(part), value) {
+				return
+			}
+		}
+	}
+	header.Add(key, value)
+}
+
+func writeUserSession(w http.ResponseWriter, r *http.Request, includeSession bool) {
 	user := middleware.GetUser(r)
 	if user == nil {
 		utils.SendError(w, 401, "User not found.", "not_found")
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	payload := map[string]interface{}{
 		"user":   sanitizeUser(user),
-		"config": serviceConfig(),
-	})
+		"config": serviceConfigForRequest(r),
+	}
+	if includeSession {
+		session := currentSessionPayload(r)
+		if session == nil || session["role"] != "user" || session["sub"] != user.ID {
+			utils.SendError(w, 401, "User authentication is invalid.", "unauthorized")
+			return
+		}
+		payload["session"] = session
+	}
+	json.NewEncoder(w).Encode(payload)
+}
+
+func currentSessionPayload(r *http.Request) map[string]interface{} {
+	payload := middleware.GetTokenPayload(r)
+	if payload == nil {
+		return nil
+	}
+	return map[string]interface{}{
+		"role": payload.Role,
+		"sub":  payload.Sub,
+		"exp":  payload.Exp,
+	}
 }
 
 func handleUserCreateAPIKey(w http.ResponseWriter, r *http.Request) {
@@ -126,7 +180,7 @@ func handleUserRotateAPIKey(w http.ResponseWriter, r *http.Request) {
 						u.APIKeys[j].UpdatedAt = now
 					}
 				}
-				u.APIKey = getPrimaryAPIKey(u)
+				u.APIKey = primaryAPIKeyFromRecords(getAPIKeys(u))
 				u.UpdatedAt = now
 				return u
 			}
@@ -157,7 +211,7 @@ func handleUserRotateSpecificKey(w http.ResponseWriter, r *http.Request) {
 						now := store.Now()
 						u.APIKeys[j].Key = auth.RandomAPIKey()
 						u.APIKeys[j].UpdatedAt = now
-						u.APIKey = getPrimaryAPIKey(u)
+						u.APIKey = primaryAPIKeyFromRecords(getAPIKeys(u))
 						u.UpdatedAt = now
 						return u
 					}
@@ -217,7 +271,7 @@ func handleUserUpdateAPIKey(w http.ResponseWriter, r *http.Request) {
 						}
 						now := store.Now()
 						k.UpdatedAt = now
-						u.APIKey = getPrimaryAPIKey(u)
+						u.APIKey = primaryAPIKeyFromRecords(getAPIKeys(u))
 						u.UpdatedAt = now
 						return u
 					}
@@ -260,7 +314,7 @@ func handleUserDeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 				removed := before != len(filtered)
 				if removed {
 					u.APIKeys = filtered
-					u.APIKey = getPrimaryAPIKey(u)
+					u.APIKey = primaryAPIKeyFromRecords(getAPIKeys(u))
 					u.UpdatedAt = store.Now()
 				}
 				return removed

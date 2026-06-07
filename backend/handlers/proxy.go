@@ -1195,6 +1195,11 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 		sendInvalidProxyBodyError(w, info, 400, "Model name is too long.", "invalid_model")
 		return
 	}
+	isChatCompletionsRequest := isChatCompletionsRequestPath(r.URL.Path)
+	if isChatCompletionsRequest && proxy.IsGPTModelID(model) {
+		sendGPTChatCompletionsDisabledError(w, model)
+		return
+	}
 	streamReq, _ := body["stream"].(bool)
 	log.Printf("[V1CHAT] BODY_PARSE model=%s stream=%v messages=%d", model, streamReq, len(extractMessages(body)))
 
@@ -1203,6 +1208,14 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[V1CHAT] NO_PROVIDER model=%s", model)
 		utils.SendError(w, 503, "No enabled upstream provider is configured.", "no_provider")
 		return
+	}
+	if isChatCompletionsRequest {
+		var blocked bool
+		candidates, blocked = filterGPTChatCompletionsCandidates(candidates)
+		if blocked && len(candidates) == 0 {
+			sendGPTChatCompletionsDisabledError(w, model)
+			return
+		}
 	}
 	log.Printf("[V1CHAT] PROVIDERS count=%d model=%s", len(candidates), model)
 	for i, c := range candidates {
@@ -1577,4 +1590,30 @@ func extractMessages(body map[string]interface{}) []interface{} {
 		return msgs
 	}
 	return nil
+}
+
+func isChatCompletionsRequestPath(path string) bool {
+	cleaned := strings.Trim(path, "/")
+	return cleaned == "chat/completions" || cleaned == "v1/chat/completions"
+}
+
+func filterGPTChatCompletionsCandidates(candidates []proxy.ProviderCandidate) ([]proxy.ProviderCandidate, bool) {
+	filtered := make([]proxy.ProviderCandidate, 0, len(candidates))
+	blocked := false
+	for _, candidate := range candidates {
+		if proxy.IsGPTModelID(candidate.UpstreamModel) {
+			blocked = true
+			continue
+		}
+		filtered = append(filtered, candidate)
+	}
+	return filtered, blocked
+}
+
+func sendGPTChatCompletionsDisabledError(w http.ResponseWriter, model string) {
+	message := "GPT models are disabled for Chat Completions."
+	if strings.TrimSpace(model) != "" {
+		message = fmt.Sprintf("GPT model %q is disabled for Chat Completions.", model)
+	}
+	utils.SendError(w, http.StatusForbidden, message, "gpt_chat_completions_disabled")
 }

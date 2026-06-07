@@ -201,6 +201,51 @@ func TestAnthropicMessagesProxyUsesForcedNativeAnthropicFormat(t *testing.T) {
 	}
 }
 
+func TestChatCompletionsRejectsGPTModels(t *testing.T) {
+	app, apiKey := setupForcedFormatProxyTest(t, models.Provider{
+		ID:             "prv_gpt",
+		Name:           "OpenAI",
+		BaseURL:        "http://127.0.0.1:1/v1",
+		APIKey:         "upstream-key",
+		UpstreamFormat: models.UpstreamFormatOpenAI,
+		Models:         []models.Model{{ID: "gpt-4o-mini", Name: "gpt-4o-mini"}},
+		ModelMappings:  map[string]string{"public-gpt": "gpt-4o-mini"},
+		Enabled:        true,
+		HealthStatus:   "unknown",
+		Availability7d: 100,
+		CreatedAt:      store.Now(),
+		UpdatedAt:      store.Now(),
+	})
+
+	tests := []struct {
+		name  string
+		path  string
+		model string
+	}{
+		{name: "v1 direct gpt", path: "/v1/chat/completions", model: "gpt-4o-mini"},
+		{name: "root direct gpt", path: "/chat/completions", model: "chatgpt-4o-latest"},
+		{name: "mapped upstream gpt", path: "/v1/chat/completions", model: "public-gpt"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := postJSON(t, app, tt.path, map[string]interface{}{
+				"model": tt.model,
+				"messages": []map[string]string{{
+					"role":    "user",
+					"content": "hello",
+				}},
+			}, apiKey)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("%s returned %d body=%s", tt.path, rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "gpt_chat_completions_disabled") {
+				t.Fatalf("expected gpt_chat_completions_disabled error, got %s", rec.Body.String())
+			}
+		})
+	}
+}
+
 func setupForcedFormatProxyTest(t *testing.T, provider models.Provider) (http.Handler, string) {
 	t.Helper()
 	middleware.ResetSecurityStateForTest()

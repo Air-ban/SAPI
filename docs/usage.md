@@ -1,5 +1,13 @@
 # 使用
-SAPI 提供管理端、用户端和 OpenAI/Anthropic 兼容 API 转发。
+SAPI 提供管理端、用户端和 OpenAI/Anthropic/Responses/Gemini 兼容 API 转发。
+
+相关文档:
+- [架构](architecture.md)
+- [实现](implementation.md)
+- [API 参考](reference.md)
+- [配置](configuration.md)
+- [部署](deployment.md)
+- [维护](maintenance.md)
 
 ## 启动
 ```bash
@@ -10,7 +18,6 @@ go run .
 ```
 
 默认地址:
-
 - 首页: `http://localhost:3000`
 - 登录: `http://localhost:3000/#login`
 - 用户注册: `http://localhost:3000/#register`
@@ -20,21 +27,19 @@ go run .
 
 ## 管理员登录
 默认账号:
-
 ```text
 username: admin
 password: sapi-admin
 ```
 
 生产环境在 `.env` 中修改:
-
 ```bash
 SAPI_ADMIN_USER=admin
 SAPI_ADMIN_PASSWORD=change-this-password
+SAPI_PUBLIC_BASE_URL=https://sapi.example.com
 ```
 
 登录接口:
-
 ```bash
 curl http://localhost:3000/api/admin/login \
   -H "Content-Type: application/json" \
@@ -42,25 +47,42 @@ curl http://localhost:3000/api/admin/login \
 ```
 
 响应包含 `token`。管理端 API 使用:
-
 ```text
 Authorization: Bearer <admin-jwt>
 ```
 
+## 管理员 Passkey
+管理员可在管理后台注册 Passkey，之后登录页可用系统 Passkey 登录。
+
+要求:
+- 必须使用 HTTPS 域名，或本地 `localhost`。
+- `SAPI_PUBLIC_BASE_URL` 必须配置为真实访问域名。
+- 首次注册 Passkey 需要先用管理员密码登录。
+
+Passkey 登录接口:
+```bash
+curl http://localhost:3000/api/admin/passkeys/login/options \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+前端会调用浏览器 WebAuthn API 完成 `finish`，普通 `curl` 不能直接模拟完整 Passkey 登录。
+
 ## 管理上游 Provider
 在管理后台配置 Provider:
-
 - 名称
 - Base URL
 - API Key
 - 启用状态
+- 上游格式
 - 模型列表
 - 模型映射
+- 优先级
+- 故障阈值
 
 Base URL 必须是 `http` 或 `https`，不能包含用户信息、空字节、回车或换行。
 
 获取上游模型:
-
 ```bash
 curl http://localhost:3000/api/admin/providers/models \
   -H "Authorization: Bearer <admin-jwt>" \
@@ -68,49 +90,83 @@ curl http://localhost:3000/api/admin/providers/models \
   -d '{"baseUrl":"https://api.openai.com/v1","apiKey":"sk-..."}'
 ```
 
+## 上游格式
+Provider 的 `upstreamFormat` 支持:
+
+| 值 | 行为 |
+| --- | --- |
+| `auto` | 根据 Provider 名称和 Base URL 推断 OpenAI、Anthropic 或 Gemini。 |
+| `openai` | 强制 OpenAI 兼容格式。 |
+| `anthropic` | 强制把 OpenAI Chat 转为 Anthropic Messages。 |
+| `gemini` | 强制把 OpenAI Chat 转为 Gemini generateContent。 |
+
+当上游模型实际可用，但应用层因为请求体格式报错时，优先在 Provider 里手动选择 `anthropic` 或 `gemini`，不要只依赖 `auto` 推断。
+
 ## 用户注册和登录
 用户注册入口:
-
 ```text
 http://localhost:3000/#register
 ```
 
 注册要求:
-
 - 用户名 3 到 64 位，只能包含字母、数字、点、下划线、短横线。
 - 密码至少 8 位。
 - 邮箱验证码 6 位。
 - 非 `.edu.cn` 邮箱需要邀请码。
 
 用户登录入口:
-
 ```text
 http://localhost:3000/#login
 ```
 
-如果管理员配置了 GitHub OAuth，登录页会显示 GitHub 登录入口。首次通过 GitHub 登录会自动创建用户账号，GitHub 账号默认 API Key RPM 为 100。
+如果管理员配置了 GitHub OAuth，登录页会显示 GitHub 登录入口。首次通过 GitHub 登录会自动创建用户账号。若配置 `SAPI_GITHUB_REQUIRED_FOLLOW_TARGET=EterUltimate`，首次 GitHub 注册或绑定账号必须关注目标 GitHub 用户；已绑定用户可继续登录。
 
 用户控制台接口使用:
-
 ```text
 Authorization: Bearer <user-jwt>
 ```
 
-## 账号 RPM 策略
-默认创建 API Key 时会按账号来源设置 RPM:
+## 订阅和 RPM
+新用户默认订阅分组为 `lite`。教育邮箱和 GitHub 账号来源会被记录，但当前默认 RPM 由订阅分组决定，不再自动按来源设置 `rpm30` 或 `rpm100`。
 
-- `.edu.cn` 教育邮箱注册账号: 30 RPM。
-- GitHub 登录创建或绑定账号: 100 RPM。
-- 管理员 API Key: 不限速。
-- 其他普通账号: 使用管理后台设置的全局默认 RPM。
+订阅分组:
 
-管理后台可以继续对单个用户 API Key 设置独立 RPM。
+| 分组 | RPM | 说明 |
+| --- | --- | --- |
+| `lite` | 10 | 默认分组。 |
+| `base` | 30 | 基础分组。 |
+| `pro` | 50 | 专业分组。 |
+| `ultra` | 100 | 高配分组。 |
+| `MAX` | 不限速 | 管理员授予的最高分组。 |
+
+规则:
+- 管理员 API Key 不限速。
+- 用户 API Key 默认跟随用户订阅。
+- 管理员可给单个用户切换订阅。
+- 管理员可一键切换所有用户订阅。
+- 单个 API Key 可设置更低 RPM 作为额外限制。
+- API Key 的显式 RPM 不能超过用户订阅 RPM。
+
+全局切换所有用户到 `base`:
+```bash
+curl -X PUT http://localhost:3000/api/admin/subscriptions/global-tier \
+  -H "Authorization: Bearer <admin-jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{"subscriptionTier":"base"}'
+```
+
+切换单个用户到 `pro`:
+```bash
+curl -X PUT http://localhost:3000/api/admin/users/usr_id \
+  -H "Authorization: Bearer <admin-jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{"subscriptionTier":"pro"}'
+```
 
 ## 创建 API Key
 用户控制台创建自己的 API Key，管理端也可以创建和管理 API Key。
 
 API Key 调用转发接口时使用任一 Header:
-
 ```text
 Authorization: Bearer sk-sapi-...
 ```
@@ -119,6 +175,38 @@ Authorization: Bearer sk-sapi-...
 X-API-Key: sk-sapi-...
 ```
 
+用户创建 API Key:
+```bash
+curl http://localhost:3000/api/user/api-key \
+  -H "Authorization: Bearer <user-jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"default","allowedModels":["gpt-4o-mini"]}'
+```
+
+## API Key 封禁
+管理员可在管理后台一键封禁或解封用户 API Key、管理员 API Key。
+
+封禁用户 Key:
+```bash
+curl -X PUT http://localhost:3000/api/admin/users/usr_id/api-keys/key_id \
+  -H "Authorization: Bearer <admin-jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{"banned":true}'
+```
+
+解封用户 Key:
+```bash
+curl -X PUT http://localhost:3000/api/admin/users/usr_id/api-keys/key_id \
+  -H "Authorization: Bearer <admin-jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{"banned":false}'
+```
+
+自动封禁:
+- 同一 API Key 在 1 小时内超过 20 次提交不合规代理请求体，会自动封禁 1 小时。
+- 封禁期间返回 `429 api_key_banned`。
+- 响应包含 `Retry-After`。
+
 ## 查看可用模型
 ```bash
 curl http://localhost:3000/v1/models \
@@ -126,7 +214,6 @@ curl http://localhost:3000/v1/models \
 ```
 
 也可调用:
-
 ```bash
 curl http://localhost:3000/models \
   -H "Authorization: Bearer sk-sapi-..."
@@ -135,25 +222,56 @@ curl http://localhost:3000/models \
 返回模型受 Provider 启用状态、模型映射、API Key 模型白名单影响。
 
 查询单个模型:
-
 ```bash
 curl http://localhost:3000/v1/models/gpt-4o-mini \
   -H "Authorization: Bearer sk-sapi-..."
 ```
 
-模型 ID 如果包含 `/`，调用方应按 URL path 规则编码。SAPI 会按同一套 Provider 启用状态、模型映射和 API Key 白名单返回结果。
+模型 ID 如果包含 `/`，调用方应按 URL path 规则编码。
+
+## 模型可用性 Dashboard
+公开接口:
+```bash
+curl http://localhost:3000/api/health/models
+```
+
+特性:
+- 展示模型当前可用性。
+- 服务端数据 TTL 为 5 分钟。
+- 管理后台 Provider 变更后会刷新模型可用性。
+- 可用于判断上游是否因为故障阈值、禁用状态或模型映射导致不可用。
+
+## 管理端用量和导出
+全局 usage:
+```bash
+curl "http://localhost:3000/api/admin/usage?days=30" \
+  -H "Authorization: Bearer <admin-jwt>"
+```
+
+用户 usage:
+```bash
+curl "http://localhost:3000/api/admin/users/usr_id/usage?days=365" \
+  -H "Authorization: Bearer <admin-jwt>"
+```
+
+导出用户请求日志:
+```bash
+curl "http://localhost:3000/api/admin/users/usr_id/request-logs/export?days=7" \
+  -H "Authorization: Bearer <admin-jwt>" \
+  -o user-request-logs.json
+```
+
+管理后台热力图基于 usage 中的按小时和按天聚合数据生成。
 
 ## AstrBot 接入
 AstrBot 使用 OpenAI 兼容提供商接入 SAPI。
 
 在 AstrBot 管理面板进入 `服务提供商`，新增提供商时选择 `OpenAI`:
-
 - API Base URL: `https://sapi.eterultimate.asia/v1`
 - API Key: 用户控制台或管理员创建的 `sk-sapi-...`
 - 模型: 点击获取模型列表后选择需要启用的模型
 
 本地开发环境可把 API Base URL 改为:
-
 ```text
 http://localhost:3000/v1
 ```
@@ -169,7 +287,6 @@ curl http://localhost:3000/v1/chat/completions \
 ```
 
 根路径兼容:
-
 ```bash
 curl http://localhost:3000/chat/completions \
   -H "Authorization: Bearer sk-sapi-..." \
@@ -202,7 +319,6 @@ curl http://localhost:3000/responses \
 ```
 
 兼容路径:
-
 ```bash
 curl http://localhost:3000/v1/responses \
   -H "Authorization: Bearer sk-sapi-..." \
@@ -220,7 +336,6 @@ curl http://localhost:3000/v1/messages \
 ```
 
 根路径兼容:
-
 ```bash
 curl http://localhost:3000/messages \
   -H "Authorization: Bearer sk-sapi-..." \
@@ -239,7 +354,6 @@ curl http://localhost:3000/v1/messages/count_tokens \
 ```
 
 根路径兼容:
-
 ```bash
 curl http://localhost:3000/messages/count_tokens \
   -H "Authorization: Bearer sk-sapi-..." \
@@ -257,17 +371,16 @@ curl http://localhost:3000/api/maintenance
 curl http://localhost:3000/api/banner
 curl http://localhost:3000/api/announcements
 curl http://localhost:3000/api/health/providers
+curl http://localhost:3000/api/health/models
 ```
 
 校验 API Key 并返回服务配置:
-
 ```bash
 curl http://localhost:3000/api/public/key \
   -H "Authorization: Bearer sk-sapi-..."
 ```
 
 提交建议:
-
 ```bash
 curl http://localhost:3000/api/suggestions \
   -H "Content-Type: application/json" \
@@ -276,8 +389,7 @@ curl http://localhost:3000/api/suggestions \
 
 ## 请求内容留存
 模型转发请求会把用户提交的请求 JSON 内容写入请求日志，保留 7 天:
-
-- JSON 存储模式: 写入 `data/sapi.json` 的 `requestLogs[].requestContent`。
+- JSON 存储模式: 写入 `data/sapi.json` 或旁路日志摘要中的请求内容。
 - PostgreSQL 存储模式: 写入 `sapi_request_logs.request_content` JSONB 字段。
 - 响应正文不会被持久化保存。
 
@@ -285,7 +397,6 @@ curl http://localhost:3000/api/suggestions \
 
 ## 错误格式
 统一错误响应:
-
 ```json
 {"error":{"message":"Invalid or disabled SAPI API key.","type":"invalid_api_key","code":"invalid_api_key"}}
 ```
@@ -295,11 +406,16 @@ curl http://localhost:3000/api/suggestions \
 | 状态码 | code | 场景 |
 | --- | --- | --- |
 | `400` | `invalid_json` | 请求体不是单个 JSON 对象。 |
+| `400` | `invalid_model` | 模型字段不合法。 |
 | `401` | `missing_api_key` | 转发接口缺少 API Key。 |
 | `401` | `invalid_api_key` | API Key 不存在、禁用或无效。 |
+| `401` | `unauthorized` | 控制面 JWT 缺失或无效。 |
+| `403` | `user_disabled` | 用户被禁用。 |
 | `403` | `model_not_allowed` | API Key 不允许调用该模型。 |
 | `413` | `request_too_large` | 请求体超过配置限制。 |
 | `429` | `login_rate_limited` | 登录失败次数过多。 |
+| `429` | `api_key_rate_limited` | API Key 失败尝试过多。 |
+| `429` | `api_key_banned` | API Key 被手动或自动封禁。 |
 | `429` | `rate_limit_exceeded` | API Key RPM 超限。 |
 | `503` | `maintenance_mode` | 站点维护中。 |
 | `503` | `no_provider` | 没有可用上游 Provider。 |

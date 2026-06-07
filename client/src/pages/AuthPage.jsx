@@ -54,7 +54,7 @@ export function AuthPage({
   const [codeLoading, setCodeLoading] = useState(false);
   const [countdown, setCountdown] = useState(0);
   const [forgotOpen, setForgotOpen] = useState(false);
-  const [registerMethod, setRegisterMethod] = useState("edu");
+  const [registerMethod, setRegisterMethod] = useState("email");
   const [agreed, setAgreed] = useState(false);
   const [termsOpen, setTermsOpen] = useState(false);
 
@@ -101,6 +101,16 @@ export function AuthPage({
     }
   };
 
+  const startGitHubAuth = () => {
+    if (isRegister && !agreed) {
+      onToast("请先同意用户协议和隐私政策", "warning");
+      return;
+    }
+    window.location.href = isRegister
+      ? "/api/auth/github/start?terms=1"
+      : "/api/auth/github/start";
+  };
+
   const submit = async (event) => {
     event.preventDefault();
 
@@ -140,7 +150,8 @@ export function AuthPage({
           email: form.email,
           password: form.password,
           verificationCode: form.verificationCode,
-          invitationCode: form.invitationCode
+          invitationCode: registerMethod === "invite" ? form.invitationCode : "",
+          termsAccepted: agreed
         });
       } else {
         await onLogin({
@@ -279,6 +290,7 @@ export function AuthPage({
                         if (value) setRegisterMethod(value);
                       }}
                     >
+                      <ToggleButton value="email">普通邮箱注册</ToggleButton>
                       <ToggleButton value="edu">教育邮箱注册</ToggleButton>
                       <ToggleButton value="invite">邀请码注册</ToggleButton>
                     </ToggleButtonGroup>
@@ -296,9 +308,13 @@ export function AuthPage({
                           }
                         }}
                       />
-                    ) : (
+                    ) : registerMethod === "edu" ? (
                       <Typography variant="body2" color="text.secondary">
                         使用 .edu.cn 教育邮箱注册，无需邀请码。
+                      </Typography>
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">
+                        普通邮箱可直接注册，默认限速 5 RPM。
                       </Typography>
                     )}
                   </>
@@ -348,11 +364,9 @@ export function AuthPage({
                       variant="outlined"
                       size="large"
                       startIcon={<GitHubIcon />}
-                      onClick={() => {
-                        window.location.href = "/api/auth/github/start";
-                      }}
+                      onClick={startGitHubAuth}
                     >
-                      使用 GitHub 登录
+                      {isRegister ? "使用 GitHub 注册" : "使用 GitHub 登录"}
                     </Button>
                     {githubRequiredFollowTarget ? (
                       <Typography variant="caption" color="text.secondary" textAlign="center">

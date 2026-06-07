@@ -820,16 +820,13 @@ func normalizeDB(db *models.Database) bool {
 		db.Suggestions = []models.Suggestion{}
 		changed = true
 	}
-	if db.SiteEmail == "" {
-		for _, user := range db.Users {
-			if user.Email != "" {
-				db.SiteEmail = user.Email
-				break
-			}
-		}
-		if db.SiteEmail == "" {
-			changed = true
-		}
+	if len(db.SiteEmails) == 0 && db.SiteEmail != "" {
+		db.SiteEmails = []string{db.SiteEmail}
+		changed = true
+	}
+	if len(db.SiteEmails) > 0 && db.SiteEmail != db.SiteEmails[0] {
+		db.SiteEmail = db.SiteEmails[0]
+		changed = true
 	}
 	if db.DefaultRPMLimit == 0 {
 		db.DefaultRPMLimit = 30

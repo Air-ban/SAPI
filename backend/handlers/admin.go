@@ -23,7 +23,8 @@ import (
 )
 
 func MountAdminRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/admin/state", middleware.RequireAdmin(handleAdminState))
+	mux.HandleFunc("GET /api/admin/state", handleDeprecatedSessionGET)
+	mux.HandleFunc("POST /api/admin/session", middleware.RequireAdmin(handleAdminSession))
 	mux.HandleFunc("GET /api/admin/usage", middleware.RequireAdmin(handleAdminUsage))
 	mux.HandleFunc("GET /api/admin/request-logs/{id}", middleware.RequireAdmin(handleAdminRequestLog))
 	mux.HandleFunc("GET /api/admin/smtp-config", middleware.RequireAdmin(handleAdminGetSMTP))
@@ -63,7 +64,11 @@ func MountAdminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/admin/maintenance", middleware.RequireAdmin(handleAdminUpdateMaintenance))
 }
 
-func handleAdminState(w http.ResponseWriter, r *http.Request) {
+func handleAdminSession(w http.ResponseWriter, r *http.Request) {
+	writeAdminState(w, r, true)
+}
+
+func writeAdminState(w http.ResponseWriter, r *http.Request, includeSession bool) {
 	db := store.ReadDB()
 	smtp := getSMTPConfig(db)
 
@@ -72,14 +77,15 @@ func handleAdminState(w http.ResponseWriter, r *http.Request) {
 		"users":              sanitizeUsers(db.Users),
 		"adminApiKeys":       sanitizeAdminAPIKeys(db.AdminAPIKeys),
 		"adminPasskeys":      sanitizeAdminPasskeys(db.AdminPasskeys),
-		"publicConfig":       serviceConfig(),
+		"publicConfig":       serviceConfigForRequest(r),
 		"invitationCodes":    db.InvitationCodes,
 		"announcements":      db.Announcements,
 		"suggestions":        db.Suggestions,
 		"siteBanner":         db.SiteBanner,
 		"maintenanceMode":    db.MaintenanceMode,
 		"maintenanceEndTime": db.MaintenanceEndTime,
-		"siteEmail":          db.SiteEmail,
+		"siteEmail":          firstSiteEmail(siteEmailsFromDB(db)),
+		"siteEmails":         siteEmailsFromDB(db),
 		"defaultRpmLimit":    db.DefaultRPMLimit,
 		"subscriptionTiers":  subscription.Tiers,
 		"smtpConfig": map[string]interface{}{
@@ -93,6 +99,15 @@ func handleAdminState(w http.ResponseWriter, r *http.Request) {
 	}
 	if includeAdminStateUsage(r) {
 		payload["usage"] = usage.GetUsageStats(db, "", 30)
+	}
+	if includeSession {
+		session := currentSessionPayload(r)
+		sub, _ := session["sub"].(string)
+		if session == nil || session["role"] != "admin" || !auth.SafeEqual(sub, config.Load().AdminUser) {
+			utils.SendError(w, 401, "Admin authentication is invalid.", "unauthorized")
+			return
+		}
+		payload["session"] = session
 	}
 	json.NewEncoder(w).Encode(payload)
 }
@@ -1129,8 +1144,10 @@ func handleAdminDeleteSuggestion(w http.ResponseWriter, r *http.Request) {
 
 func handleAdminGetSiteEmail(w http.ResponseWriter, r *http.Request) {
 	db := store.ReadDB()
+	emails := siteEmailsFromDB(db)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"siteEmail": db.SiteEmail,
+		"siteEmail":  firstSiteEmail(emails),
+		"siteEmails": emails,
 	})
 }
 
@@ -1140,18 +1157,32 @@ func handleAdminUpdateSiteEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	email := security.SafeSingleLine(toString(body["siteEmail"]), 254)
-	if email != "" && !strings.Contains(email, "@") {
-		utils.SendError(w, 400, "Valid email address is required.", "invalid_email")
+	rawEmails := []string{}
+	if items, ok := body["siteEmails"].([]interface{}); ok {
+		for _, item := range items {
+			rawEmails = append(rawEmails, toString(item))
+		}
+	}
+	if raw := toString(body["siteEmail"]); raw != "" {
+		rawEmails = append(rawEmails, raw)
+	}
+
+	emails, invalid := parseSiteEmails(rawEmails)
+	if len(invalid) > 0 {
+		utils.SendError(w, 400, "Valid email addresses are required.", "invalid_email")
 		return
 	}
 
 	store.MutateDB(func(db *models.Database) interface{} {
-		db.SiteEmail = email
+		db.SiteEmails = emails
+		db.SiteEmail = firstSiteEmail(emails)
 		return nil
 	})
 
-	json.NewEncoder(w).Encode(map[string]interface{}{"siteEmail": email})
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"siteEmail":  firstSiteEmail(emails),
+		"siteEmails": emails,
+	})
 }
 
 func handleAdminUpdateRPMLimit(w http.ResponseWriter, r *http.Request) {

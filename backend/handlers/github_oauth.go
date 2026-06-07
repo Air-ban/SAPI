@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -21,7 +22,10 @@ import (
 	"sapi/utils"
 )
 
-const githubStateCookieName = "sapi_github_oauth_state"
+const (
+	githubStateCookieName = "sapi_github_oauth_state"
+	githubTermsCookieName = "sapi_github_terms_state"
+)
 
 var (
 	githubAPIBaseURL = "https://api.github.com"
@@ -50,7 +54,8 @@ type githubTokenResponse struct {
 
 func handleGitHubStart(w http.ResponseWriter, r *http.Request) {
 	cfg := config.Load()
-	if cfg.GitHubClientID == "" || cfg.GitHubClientSecret == "" {
+	app, ok := githubOAuthAppForRequest(r, cfg)
+	if !ok {
 		utils.SendError(w, 404, "GitHub login is not configured.", "github_not_configured")
 		return
 	}
@@ -65,10 +70,23 @@ func handleGitHubStart(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		Secure:   shouldUseSecureCookie(r, cfg),
 	})
+	if githubTermsAcceptedFromStart(r) {
+		http.SetCookie(w, &http.Cookie{
+			Name:     githubTermsCookieName,
+			Value:    state,
+			Path:     "/api/auth/github",
+			MaxAge:   600,
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+			Secure:   shouldUseSecureCookie(r, cfg),
+		})
+	} else {
+		clearGitHubTermsCookie(w, r, cfg)
+	}
 
 	params := url.Values{}
-	params.Set("client_id", cfg.GitHubClientID)
-	params.Set("redirect_uri", cfg.GitHubRedirectURL)
+	params.Set("client_id", app.ClientID)
+	params.Set("redirect_uri", app.RedirectURL)
 	params.Set("scope", "read:user user:email")
 	params.Set("state", state)
 
@@ -77,13 +95,19 @@ func handleGitHubStart(w http.ResponseWriter, r *http.Request) {
 
 func handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 	cfg := config.Load()
-	if cfg.GitHubClientID == "" || cfg.GitHubClientSecret == "" {
+	app, ok := githubOAuthAppForRequest(r, cfg)
+	if !ok {
 		redirectGitHubAuth(w, r, cfg, "", "github_not_configured")
 		return
 	}
 
 	cookie, err := r.Cookie(githubStateCookieName)
+	termsAccepted := false
+	if err == nil {
+		termsAccepted = githubTermsAcceptedForState(r, cookie.Value)
+	}
 	clearGitHubStateCookie(w, r, cfg)
+	clearGitHubTermsCookie(w, r, cfg)
 	state := security.SafeSingleLine(r.URL.Query().Get("state"), 256)
 	if err != nil || state == "" || !auth.SafeEqual(cookie.Value, state) {
 		redirectGitHubAuth(w, r, cfg, "", "invalid_state")
@@ -99,7 +123,7 @@ func handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
-	accessToken, err := exchangeGitHubCode(ctx, cfg, code)
+	accessToken, err := exchangeGitHubCode(ctx, app, code)
 	if err != nil {
 		redirectGitHubAuth(w, r, cfg, "", "token_exchange_failed")
 		return
@@ -121,7 +145,7 @@ func handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	userResult := upsertGitHubUser(profile, emails, cfg, followAllowed)
+	userResult := upsertGitHubUser(profile, emails, cfg, followAllowed, termsAccepted)
 	if errCode, ok := userResult.(string); ok {
 		redirectGitHubAuth(w, r, cfg, "", errCode)
 		return
@@ -133,12 +157,12 @@ func handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 	redirectGitHubAuth(w, r, cfg, token, "")
 }
 
-func exchangeGitHubCode(ctx context.Context, cfg *config.Config, code string) (string, error) {
+func exchangeGitHubCode(ctx context.Context, app config.GitHubOAuthApp, code string) (string, error) {
 	form := url.Values{}
-	form.Set("client_id", cfg.GitHubClientID)
-	form.Set("client_secret", cfg.GitHubClientSecret)
+	form.Set("client_id", app.ClientID)
+	form.Set("client_secret", app.ClientSecret)
 	form.Set("code", code)
-	form.Set("redirect_uri", cfg.GitHubRedirectURL)
+	form.Set("redirect_uri", app.RedirectURL)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://github.com/login/oauth/access_token", strings.NewReader(form.Encode()))
 	if err != nil {
@@ -280,7 +304,7 @@ func githubAPIURL(path string) string {
 	return strings.TrimRight(githubAPIBaseURL, "/") + path
 }
 
-func upsertGitHubUser(profile *githubUserProfile, emails []githubEmailRecord, cfg *config.Config, allowGitHubRegistration bool) interface{} {
+func upsertGitHubUser(profile *githubUserProfile, emails []githubEmailRecord, cfg *config.Config, allowGitHubRegistration, termsAccepted bool) interface{} {
 	githubID := strconv.FormatInt(profile.ID, 10)
 	if githubID == "" || githubID == "0" {
 		return "invalid_profile"
@@ -319,8 +343,13 @@ func upsertGitHubUser(profile *githubUserProfile, emails []githubEmailRecord, cf
 			if u.GitHubID != "" && !auth.SafeEqual(u.GitHubID, githubID) {
 				return "github_account_conflict"
 			}
-			if u.GitHubID == "" && !allowGitHubRegistration {
-				return "github_follow_required"
+			if u.GitHubID == "" {
+				if !termsAccepted {
+					return "terms_required"
+				}
+				if !allowGitHubRegistration {
+					return "github_follow_required"
+				}
 			}
 			u.GitHubID = githubID
 			u.GitHubLogin = login
@@ -344,6 +373,9 @@ func upsertGitHubUser(profile *githubUserProfile, emails []githubEmailRecord, cf
 			return u
 		}
 
+		if !termsAccepted {
+			return "terms_required"
+		}
 		if !allowGitHubRegistration {
 			return "github_follow_required"
 		}
@@ -468,7 +500,7 @@ func uniqueFallbackGitHubUsername(db *models.Database, adminUser string) string 
 }
 
 func redirectGitHubAuth(w http.ResponseWriter, r *http.Request, cfg *config.Config, token, errCode string) {
-	base := strings.TrimRight(cfg.PublicBaseURL, "/")
+	base := strings.TrimRight(publicBaseURLForRequest(r, cfg), "/")
 	if base == "" {
 		base = "/"
 	}
@@ -498,12 +530,134 @@ func clearGitHubStateCookie(w http.ResponseWriter, r *http.Request, cfg *config.
 	})
 }
 
+func clearGitHubTermsCookie(w http.ResponseWriter, r *http.Request, cfg *config.Config) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     githubTermsCookieName,
+		Value:    "",
+		Path:     "/api/auth/github",
+		MaxAge:   -1,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   shouldUseSecureCookie(r, cfg),
+	})
+}
+
+func githubTermsAcceptedFromStart(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	value := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("terms")))
+	return value == "1" || value == "true" || value == "yes"
+}
+
+func githubTermsAcceptedForState(r *http.Request, state string) bool {
+	if r == nil || strings.TrimSpace(state) == "" {
+		return false
+	}
+	cookie, err := r.Cookie(githubTermsCookieName)
+	if err != nil {
+		return false
+	}
+	return auth.SafeEqual(cookie.Value, state)
+}
+
 func shouldUseSecureCookie(r *http.Request, cfg *config.Config) bool {
 	if r != nil && r.TLS != nil {
 		return true
 	}
-	if cfg != nil && strings.HasPrefix(strings.ToLower(cfg.PublicBaseURL), "https://") {
+	if cfg != nil && strings.HasPrefix(strings.ToLower(publicBaseURLForRequest(r, cfg)), "https://") {
 		return true
 	}
 	return false
+}
+
+func githubOAuthAppForRequest(r *http.Request, cfg *config.Config) (config.GitHubOAuthApp, bool) {
+	if cfg == nil {
+		return config.GitHubOAuthApp{}, false
+	}
+	requestHost := normalizedRequestHost(r)
+	if cfg.GitHubOAuthApps != nil && requestHost != "" {
+		if app, ok := cfg.GitHubOAuthApps[requestHost]; ok && app.ClientID != "" && app.ClientSecret != "" {
+			if strings.TrimSpace(app.RedirectURL) == "" {
+				app.RedirectURL = githubRedirectURLForRequest(r, cfg)
+			}
+			return app, true
+		}
+	}
+	if cfg.GitHubClientID == "" || cfg.GitHubClientSecret == "" {
+		return config.GitHubOAuthApp{}, false
+	}
+	return config.GitHubOAuthApp{
+		ClientID:     cfg.GitHubClientID,
+		ClientSecret: cfg.GitHubClientSecret,
+		RedirectURL:  githubRedirectURLForRequest(r, cfg),
+	}, true
+}
+
+func githubRedirectURLForRequest(r *http.Request, cfg *config.Config) string {
+	if base := publicBaseURLForRequest(r, cfg); base != "" {
+		return strings.TrimRight(base, "/") + "/api/auth/github/callback"
+	}
+	if cfg != nil && strings.TrimSpace(cfg.GitHubRedirectURL) != "" {
+		return strings.TrimSpace(cfg.GitHubRedirectURL)
+	}
+	return "/api/auth/github/callback"
+}
+
+func publicBaseURLForRequest(r *http.Request, cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	requestHost := normalizedRequestHost(r)
+	for _, base := range cfg.PublicBaseURLs {
+		if publicBaseURLMatchesHost(base, requestHost) {
+			return strings.TrimRight(strings.TrimSpace(base), "/")
+		}
+	}
+	if publicBaseURLMatchesHost(cfg.PublicBaseURL, requestHost) {
+		return strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/")
+	}
+	if strings.TrimSpace(cfg.PublicBaseURL) != "" {
+		return strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/")
+	}
+	if strings.TrimSpace(cfg.GitHubRedirectURL) != "" {
+		parsed, err := url.Parse(strings.TrimSpace(cfg.GitHubRedirectURL))
+		if err == nil && parsed.Scheme != "" && parsed.Host != "" {
+			return parsed.Scheme + "://" + parsed.Host
+		}
+	}
+	return ""
+}
+
+func normalizedRequestHost(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	host := security.SafeSingleLine(r.Host, 255)
+	if host == "" {
+		host = security.SafeSingleLine(r.Header.Get("X-Forwarded-Host"), 255)
+	}
+	return normalizeHost(host)
+}
+
+func publicBaseURLMatchesHost(base, requestHost string) bool {
+	if requestHost == "" || strings.TrimSpace(base) == "" {
+		return false
+	}
+	parsed, err := url.Parse(strings.TrimSpace(base))
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	return strings.EqualFold(normalizeHost(parsed.Host), requestHost)
+}
+
+func normalizeHost(host string) string {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return ""
+	}
+	if splitHost, _, err := net.SplitHostPort(host); err == nil {
+		host = splitHost
+	}
+	return strings.Trim(host, "[]")
 }

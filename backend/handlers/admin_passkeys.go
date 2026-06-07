@@ -303,7 +303,7 @@ func handleAdminPasskeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 
 	clearLoginFailures(normalizeUsername(cfg.AdminUser) + ":passkey")
 	fresh := store.ReadDB()
-	token := auth.SignTokenString(auth.TokenPayload{Role: "admin", Sub: cfg.AdminUser}, fresh.AppSecret)
+	token := signAdminLoginToken(cfg, fresh.AppSecret)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"role":     "admin",
 		"token":    token,
