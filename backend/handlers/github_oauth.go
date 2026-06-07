@@ -156,14 +156,15 @@ func handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
+	githubClient := githubClientForConfig(cfg)
 
-	accessToken, err := exchangeGitHubCode(ctx, app, code)
+	accessToken, err := exchangeGitHubCode(ctx, app, code, githubClient)
 	if err != nil {
 		redirectGitHubAuthToBase(w, returnBaseURL, "", "token_exchange_failed")
 		return
 	}
 
-	profile, emails, err := fetchGitHubProfile(ctx, accessToken)
+	profile, emails, err := fetchGitHubProfile(ctx, accessToken, githubClient)
 	if err != nil {
 		redirectGitHubAuthToBase(w, returnBaseURL, "", "profile_fetch_failed")
 		return
@@ -172,7 +173,7 @@ func handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 	followAllowed := true
 	if shouldCheckGitHubFollowRequirement(profile, cfg) {
 		var err error
-		followAllowed, err = checkGitHubFollowRequirement(ctx, accessToken, profile, cfg)
+		followAllowed, err = checkGitHubFollowRequirement(ctx, accessToken, profile, cfg, githubClient)
 		if err != nil {
 			redirectGitHubAuthToBase(w, returnBaseURL, "", "github_follow_check_failed")
 			return
@@ -191,7 +192,7 @@ func handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 	redirectGitHubAuthToBase(w, returnBaseURL, token, "")
 }
 
-func exchangeGitHubCode(ctx context.Context, app config.GitHubOAuthApp, code string) (string, error) {
+func exchangeGitHubCode(ctx context.Context, app config.GitHubOAuthApp, code string, clients ...*http.Client) (string, error) {
 	form := url.Values{}
 	form.Set("client_id", app.ClientID)
 	form.Set("client_secret", app.ClientSecret)
@@ -206,7 +207,7 @@ func exchangeGitHubCode(ctx context.Context, app config.GitHubOAuthApp, code str
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", "SAPI")
 
-	resp, err := githubHTTPClient.Do(req)
+	resp, err := githubDo(clients...).Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -226,21 +227,21 @@ func exchangeGitHubCode(ctx context.Context, app config.GitHubOAuthApp, code str
 	return payload.AccessToken, nil
 }
 
-func fetchGitHubProfile(ctx context.Context, token string) (*githubUserProfile, []githubEmailRecord, error) {
+func fetchGitHubProfile(ctx context.Context, token string, clients ...*http.Client) (*githubUserProfile, []githubEmailRecord, error) {
 	var profile githubUserProfile
-	if err := getGitHubJSON(ctx, token, githubAPIURL("/user"), &profile); err != nil {
+	if err := getGitHubJSON(ctx, token, githubAPIURL("/user"), &profile, clients...); err != nil {
 		return nil, nil, err
 	}
 
 	var emails []githubEmailRecord
-	if err := getGitHubJSON(ctx, token, githubAPIURL("/user/emails"), &emails); err != nil {
+	if err := getGitHubJSON(ctx, token, githubAPIURL("/user/emails"), &emails, clients...); err != nil {
 		emails = []githubEmailRecord{}
 	}
 
 	return &profile, emails, nil
 }
 
-func getGitHubJSON(ctx context.Context, token, endpoint string, target interface{}) error {
+func getGitHubJSON(ctx context.Context, token, endpoint string, target interface{}, clients ...*http.Client) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return err
@@ -249,7 +250,7 @@ func getGitHubJSON(ctx context.Context, token, endpoint string, target interface
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "SAPI")
 
-	resp, err := githubHTTPClient.Do(req)
+	resp, err := githubDo(clients...).Do(req)
 	if err != nil {
 		return err
 	}
@@ -262,7 +263,7 @@ func getGitHubJSON(ctx context.Context, token, endpoint string, target interface
 	return decoder.Decode(target)
 }
 
-func checkGitHubFollowRequirement(ctx context.Context, token string, profile *githubUserProfile, cfg *config.Config) (bool, error) {
+func checkGitHubFollowRequirement(ctx context.Context, token string, profile *githubUserProfile, cfg *config.Config, clients ...*http.Client) (bool, error) {
 	target := ""
 	if cfg != nil {
 		target = strings.TrimSpace(strings.TrimPrefix(cfg.GitHubRequiredFollowTarget, "@"))
@@ -277,7 +278,7 @@ func checkGitHubFollowRequirement(ctx context.Context, token string, profile *gi
 	if strings.EqualFold(login, target) {
 		return true, nil
 	}
-	return isGitHubUserFollowing(ctx, token, login, target)
+	return isGitHubUserFollowing(ctx, token, login, target, clients...)
 }
 
 func shouldCheckGitHubFollowRequirement(profile *githubUserProfile, cfg *config.Config) bool {
@@ -300,7 +301,7 @@ func shouldCheckGitHubFollowRequirement(profile *githubUserProfile, cfg *config.
 	return true
 }
 
-func isGitHubUserFollowing(ctx context.Context, token, username, target string) (bool, error) {
+func isGitHubUserFollowing(ctx context.Context, token, username, target string, clients ...*http.Client) (bool, error) {
 	endpoint := fmt.Sprintf("%s/users/%s/following/%s",
 		strings.TrimRight(githubAPIBaseURL, "/"),
 		url.PathEscape(strings.TrimSpace(username)),
@@ -317,7 +318,7 @@ func isGitHubUserFollowing(ctx context.Context, token, username, target string) 
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", "SAPI")
 
-	resp, err := githubHTTPClient.Do(req)
+	resp, err := githubDo(clients...).Do(req)
 	if err != nil {
 		return false, err
 	}
@@ -332,6 +333,15 @@ func isGitHubUserFollowing(ctx context.Context, token, username, target string) 
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		return false, fmt.Errorf("github follow check returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
+}
+
+func githubDo(clients ...*http.Client) *http.Client {
+	for _, client := range clients {
+		if client != nil {
+			return client
+		}
+	}
+	return githubHTTPClient
 }
 
 func githubAPIURL(path string) string {

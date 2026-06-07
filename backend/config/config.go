@@ -2,6 +2,7 @@ package config
 
 import (
 	"bufio"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -34,6 +35,7 @@ type Config struct {
 	GitHubRedirectURL          string
 	GitHubRedirectURLExplicit  bool
 	GitHubOAuthApps            map[string]GitHubOAuthApp
+	GitHubHostResolve          map[string]string
 	GitHubRequiredFollowTarget string
 	SmtpHost                   string
 	SmtpPort                   int
@@ -93,6 +95,7 @@ func Load() *Config {
 		GitHubRedirectURL:          githubRedirectURL,
 		GitHubRedirectURLExplicit:  strings.TrimSpace(githubRedirectURL) != "",
 		GitHubOAuthApps:            map[string]GitHubOAuthApp{},
+		GitHubHostResolve:          parseGitHubHostResolve(getEnv("SAPI_GITHUB_HOST_RESOLVE", "")),
 		GitHubRequiredFollowTarget: strings.TrimPrefix(strings.TrimSpace(getEnv("SAPI_GITHUB_REQUIRED_FOLLOW_TARGET", "")), "@"),
 		SmtpHost:                   getEnv("SAPI_SMTP_HOST", ""),
 		SmtpPort:                   intEnv("SAPI_SMTP_PORT", 587),
@@ -148,6 +151,30 @@ func loadGitHubOAuthApps(baseURLs []string) map[string]GitHubOAuthApp {
 		}
 	}
 	return apps
+}
+
+func parseGitHubHostResolve(value string) map[string]string {
+	items := splitCSV(value)
+	if len(items) == 0 {
+		return nil
+	}
+	result := map[string]string{}
+	for _, item := range items {
+		host, ipValue, ok := strings.Cut(item, "=")
+		if !ok {
+			continue
+		}
+		host = hostFromURL(host)
+		ip := net.ParseIP(strings.Trim(strings.TrimSpace(ipValue), "[]"))
+		if host == "" || ip == nil {
+			continue
+		}
+		result[host] = ip.String()
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func hostFromURL(value string) string {
