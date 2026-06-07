@@ -36,6 +36,7 @@ import { SmtpConfigSection } from "./SmtpConfigSection";
 import { MaintenanceSection } from "./MaintenanceSection";
 import { BannerEditSection } from "./BannerEditSection";
 import { RpmLimitSection } from "./RpmLimitSection";
+import { ModelsVisibilityToggle } from "./ModelsVisibilityToggle";
 import { AnnouncementsSection } from "./AnnouncementsSection";
 import { AdminSuggestionsSection } from "./AdminSuggestionsSection";
 import { AdminPasskeysSection } from "./AdminPasskeysSection";
@@ -158,10 +159,16 @@ export function AdminView({
       ) : null}
 
       {currentPage === "providers" ? (
-        <Section
-          title="上游供应商"
-          icon={<ApiIcon />}
-          action={
+        <>
+          <ModelsVisibilityToggle
+            showOnlyAvailableModels={state?.showOnlyAvailableModels}
+            afterChange={afterChange}
+            onToast={onToast}
+          />
+          <Section
+            title="上游供应商"
+            icon={<ApiIcon />}
+            action={
             <Button
               startIcon={<AddIcon />}
               variant="contained"
@@ -191,6 +198,7 @@ export function AdminView({
             <EmptyState text="还没有配置上游 API。添加后用户前台会显示对应模型。" />
           )}
         </Section>
+        </>
       ) : null}
 
       <ProviderDialog

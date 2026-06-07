@@ -25,8 +25,9 @@ type Database struct {
 	SiteEmails         []string           `json:"siteEmails"`
 	DefaultRPMLimit    int                `json:"defaultRpmLimit"`
 	SiteBanner         *SiteBanner        `json:"siteBanner"`
-	MaintenanceMode    bool               `json:"maintenanceMode"`
-	MaintenanceEndTime string             `json:"maintenanceEndTime"`
+	MaintenanceMode         bool   `json:"maintenanceMode"`
+	MaintenanceEndTime      string `json:"maintenanceEndTime"`
+	ShowOnlyAvailableModels bool   `json:"showOnlyAvailableModels"`
 	CreatedAt          string             `json:"createdAt"`
 	UpdatedAt          string             `json:"updatedAt"`
 }

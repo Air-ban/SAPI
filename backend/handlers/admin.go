@@ -62,6 +62,7 @@ func MountAdminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/admin/subscriptions/global-tier", middleware.RequireAdmin(handleAdminApplyGlobalSubscriptionTier))
 	mux.HandleFunc("PUT /api/admin/banner", middleware.RequireAdmin(handleAdminUpdateBanner))
 	mux.HandleFunc("PUT /api/admin/maintenance", middleware.RequireAdmin(handleAdminUpdateMaintenance))
+	mux.HandleFunc("PUT /api/admin/models-visibility", middleware.RequireAdmin(handleAdminUpdateModelsVisibility))
 }
 
 func handleAdminSession(w http.ResponseWriter, r *http.Request) {
@@ -84,6 +85,7 @@ func writeAdminState(w http.ResponseWriter, r *http.Request, includeSession bool
 		"siteBanner":         db.SiteBanner,
 		"maintenanceMode":    db.MaintenanceMode,
 		"maintenanceEndTime": db.MaintenanceEndTime,
+		"showOnlyAvailableModels": db.ShowOnlyAvailableModels,
 		"siteEmail":          firstSiteEmail(siteEmailsFromDB(db)),
 		"siteEmails":         siteEmailsFromDB(db),
 		"defaultRpmLimit":    db.DefaultRPMLimit,
@@ -1288,6 +1290,24 @@ func handleAdminUpdateMaintenance(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"maintenanceMode":    enabled,
 		"maintenanceEndTime": endTime,
+	})
+}
+
+func handleAdminUpdateModelsVisibility(w http.ResponseWriter, r *http.Request) {
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
+
+	showOnlyAvailable := toBool(body["showOnlyAvailableModels"])
+
+	store.MutateDB(func(db *models.Database) interface{} {
+		db.ShowOnlyAvailableModels = showOnlyAvailable
+		return nil
+	})
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"showOnlyAvailableModels": showOnlyAvailable,
 	})
 }
 
