@@ -32,6 +32,7 @@ type Config struct {
 	GitHubClientID             string
 	GitHubClientSecret         string
 	GitHubRedirectURL          string
+	GitHubRedirectURLExplicit  bool
 	GitHubOAuthApps            map[string]GitHubOAuthApp
 	GitHubRequiredFollowTarget string
 	SmtpHost                   string
@@ -66,6 +67,7 @@ func Load() *Config {
 
 	port, _ := strconv.Atoi(getEnv("SAPI_PORT", getEnv("PORT", "3000")))
 
+	githubRedirectURL := getEnv("SAPI_GITHUB_REDIRECT_URL", "")
 	cfg := &Config{
 		Port:                       port,
 		AdminUser:                  getEnv("SAPI_ADMIN_USER", "admin"),
@@ -88,7 +90,8 @@ func Load() *Config {
 		TencentSecretKey:           getEnv("SAPI_TENCENT_SECRET_KEY", ""),
 		GitHubClientID:             getEnv("SAPI_GITHUB_CLIENT_ID", ""),
 		GitHubClientSecret:         getEnv("SAPI_GITHUB_CLIENT_SECRET", ""),
-		GitHubRedirectURL:          getEnv("SAPI_GITHUB_REDIRECT_URL", ""),
+		GitHubRedirectURL:          githubRedirectURL,
+		GitHubRedirectURLExplicit:  strings.TrimSpace(githubRedirectURL) != "",
 		GitHubOAuthApps:            map[string]GitHubOAuthApp{},
 		GitHubRequiredFollowTarget: strings.TrimPrefix(strings.TrimSpace(getEnv("SAPI_GITHUB_REQUIRED_FOLLOW_TARGET", "")), "@"),
 		SmtpHost:                   getEnv("SAPI_SMTP_HOST", ""),

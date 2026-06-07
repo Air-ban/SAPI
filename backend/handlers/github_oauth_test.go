@@ -8,13 +8,36 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"sapi/config"
 	"sapi/models"
 	"sapi/store"
 )
 
-func TestGitHubRedirectURLUsesRequestHostAllowlist(t *testing.T) {
+func TestGitHubRedirectURLUsesExplicitCallbackWhenConfigured(t *testing.T) {
+	cfg := &config.Config{
+		PublicBaseURL:             "https://sapi.eterultimate.asia",
+		GitHubRedirectURL:         "https://sapi.eterultimate.asia/api/auth/github/callback",
+		GitHubRedirectURLExplicit: true,
+		PublicBaseURLs: []string{
+			"https://sapi.eterultimate.asia",
+			"https://sapi.hanguan.icu",
+			"https://sapicn.eterultimate.asia",
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/github/start", nil)
+	req.Host = "sapicn.eterultimate.asia"
+
+	got := githubRedirectURLForRequest(req, cfg)
+	want := "https://sapi.eterultimate.asia/api/auth/github/callback"
+	if got != want {
+		t.Fatalf("redirect URL = %q, want %q", got, want)
+	}
+}
+
+func TestGitHubRedirectURLUsesRequestHostAllowlistWithoutExplicitCallback(t *testing.T) {
 	cfg := &config.Config{
 		PublicBaseURL: "https://sapi.hanguan.icu",
 		PublicBaseURLs: []string{
@@ -40,15 +63,31 @@ func TestGitHubRedirectURLUsesRequestHostAllowlist(t *testing.T) {
 	}
 }
 
-func TestGitHubStartSendsRequestHostRedirectURI(t *testing.T) {
+func TestGitHubOnlyEnabledForExplicitCallbackHost(t *testing.T) {
 	t.Setenv("SAPI_GITHUB_CLIENT_ID", "client-id")
 	t.Setenv("SAPI_GITHUB_CLIENT_SECRET", "client-secret")
-	t.Setenv("SAPI_PUBLIC_BASE_URL", "https://sapi.hanguan.icu")
-	t.Setenv("SAPI_PUBLIC_BASE_URLS", "https://sapi.hanguan.icu,https://sapicn.eterultimate.asia")
-	t.Setenv("SAPI_GITHUB_REDIRECT_URL", "")
+	t.Setenv("SAPI_PUBLIC_BASE_URL", "https://sapi.eterultimate.asia")
+	t.Setenv("SAPI_PUBLIC_BASE_URLS", "https://sapi.eterultimate.asia,https://sapi.hanguan.icu,https://sapicn.eterultimate.asia")
+	t.Setenv("SAPI_GITHUB_REDIRECT_URL", "https://sapi.eterultimate.asia/api/auth/github/callback")
+
+	blockedReq := httptest.NewRequest(http.MethodGet, "/api/auth/github/start", nil)
+	blockedReq.Host = "sapicn.eterultimate.asia"
+	blockedRec := httptest.NewRecorder()
+
+	handleGitHubStart(blockedRec, blockedReq)
+
+	if blockedRec.Code != http.StatusNotFound {
+		t.Fatalf("blocked host status = %d, want 404 body=%s", blockedRec.Code, blockedRec.Body.String())
+	}
+
+	blockedConfig := publicConfigForRequest(blockedReq)
+	blockedGitHub := blockedConfig["github"].(map[string]interface{})
+	if blockedGitHub["enabled"] != false {
+		t.Fatalf("blocked host github enabled = %#v, want false", blockedGitHub["enabled"])
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/github/start", nil)
-	req.Host = "sapicn.eterultimate.asia"
+	req.Host = "sapi.eterultimate.asia"
 	rec := httptest.NewRecorder()
 
 	handleGitHubStart(rec, req)
@@ -62,9 +101,21 @@ func TestGitHubStartSendsRequestHostRedirectURI(t *testing.T) {
 		t.Fatal(err)
 	}
 	redirectURI := parsed.Query().Get("redirect_uri")
-	want := "https://sapicn.eterultimate.asia/api/auth/github/callback"
+	want := "https://sapi.eterultimate.asia/api/auth/github/callback"
 	if redirectURI != want {
 		t.Fatalf("redirect_uri = %q, want %q location=%s", redirectURI, want, location)
+	}
+	stateValue := parsed.Query().Get("state")
+	state, err := verifyGitHubOAuthState(stateValue, config.GitHubOAuthApp{
+		ClientID:     "client-id",
+		ClientSecret: "client-secret",
+		RedirectURL:  want,
+	}, config.Load())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := state.ReturnBaseURL; got != "https://sapi.eterultimate.asia" {
+		t.Fatalf("ReturnBaseURL = %q, want sapi host", got)
 	}
 	if cookie := rec.Header().Get("Set-Cookie"); !strings.Contains(cookie, "Secure") {
 		t.Fatalf("Set-Cookie = %q, want Secure for HTTPS public base URL", cookie)
@@ -113,6 +164,43 @@ func TestGitHubStartBindsAcceptedTermsToOAuthState(t *testing.T) {
 	}
 	if got := parsed.Query().Get("state"); got != stateCookie.Value {
 		t.Fatalf("oauth state = %q, want cookie state %q", got, stateCookie.Value)
+	}
+	state, err := verifyGitHubOAuthState(stateCookie.Value, config.GitHubOAuthApp{
+		ClientID:     "client-id",
+		ClientSecret: "client-secret",
+		RedirectURL:  "https://sapi.hanguan.icu/api/auth/github/callback",
+	}, config.Load())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.TermsAccepted {
+		t.Fatal("expected signed state to preserve terms acceptance")
+	}
+}
+
+func TestGitHubOAuthStateRejectsUnconfiguredReturnBaseURL(t *testing.T) {
+	cfg := &config.Config{
+		PublicBaseURL:  "https://sapi.hanguan.icu",
+		PublicBaseURLs: []string{"https://sapi.hanguan.icu"},
+	}
+	app := config.GitHubOAuthApp{
+		ClientID:     "client-id",
+		ClientSecret: "secret",
+		RedirectURL:  "https://sapi.hanguan.icu/api/auth/github/callback",
+	}
+	state, err := signGitHubPayload(githubOAuthState{
+		Kind:          githubStateKind,
+		Nonce:         "nonce",
+		ClientID:      app.ClientID,
+		RedirectURL:   app.RedirectURL,
+		ReturnBaseURL: "https://evil.example.com",
+		ExpiresAt:     time.Now().Add(time.Minute).Unix(),
+	}, app.ClientSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifyGitHubOAuthState(state, app, cfg); err == nil {
+		t.Fatal("expected unconfigured return URL to be rejected")
 	}
 }
 

@@ -338,15 +338,20 @@ func handleForgotPasswordSendCode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	db := store.ReadDB()
-	found := false
+	var foundUser *models.User
 	for _, u := range db.Users {
 		if u.Email == email {
-			found = true
+			user := u
+			foundUser = &user
 			break
 		}
 	}
-	if !found {
+	if foundUser == nil {
 		utils.SendError(w, 404, "No account found with this email.", "user_not_found")
+		return
+	}
+	if !canResetPasswordForUser(foundUser) {
+		utils.SendError(w, 403, "Password reset is unavailable for this account.", "password_reset_unavailable")
 		return
 	}
 
@@ -411,6 +416,24 @@ func handleForgotPasswordReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	db := store.ReadDB()
+	var foundUser *models.User
+	for _, u := range db.Users {
+		if u.Email == email {
+			user := u
+			foundUser = &user
+			break
+		}
+	}
+	if foundUser == nil {
+		utils.SendError(w, 404, "User not found.", "not_found")
+		return
+	}
+	if !canResetPasswordForUser(foundUser) {
+		utils.SendError(w, 403, "Password reset is unavailable for this account.", "password_reset_unavailable")
+		return
+	}
+
 	if !verifyEmailCode(email, verificationCode, "reset_password") {
 		utils.SendError(w, 400, "Invalid or expired verification code.", "invalid_verification_code")
 		return
@@ -433,6 +456,10 @@ func handleForgotPasswordReset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}
+
+func canResetPasswordForUser(user *models.User) bool {
+	return user != nil && user.PasswordHash != ""
 }
 
 func validateInvitationCode(code string) map[string]interface{} {

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"sapi/auth"
 	"sapi/config"
 	"sapi/models"
 	"sapi/store"
@@ -118,5 +119,140 @@ func TestRegistrationTierSelection(t *testing.T) {
 				t.Fatalf("subscriptionTierForRegistration() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestForgotPasswordRejectsGitHubOnlyUser(t *testing.T) {
+	t.Setenv("SAPI_DATA_FILE", filepath.Join(t.TempDir(), "sapi.json"))
+	t.Setenv("SAPI_POSTGRES_URL", " ")
+	t.Setenv("DATABASE_URL", " ")
+	t.Setenv("SAPI_REDIS_URL", " ")
+	t.Setenv("REDIS_URL", " ")
+
+	cfg := config.Load()
+	if err := store.Init(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	store.MutateDB(func(db *models.Database) interface{} {
+		db.Users = []models.User{{
+			ID:          "usr_github_only",
+			Username:    "github-only",
+			Email:       "github-only@example.com",
+			Name:        "GitHub Only",
+			Enabled:     true,
+			Source:      "github",
+			GitHubID:    "42",
+			GitHubLogin: "github-only",
+		}}
+		db.VerificationCodes = []models.VerificationCode{{
+			Email:     "github-only@example.com",
+			Code:      "654321",
+			Purpose:   "reset_password",
+			CreatedAt: store.Now(),
+		}}
+		return nil
+	})
+
+	sendReq := httptest.NewRequest(http.MethodPost, "/api/auth/forgot-password/send-code", strings.NewReader(`{"email":"github-only@example.com"}`))
+	sendReq.Header.Set("Content-Type", "application/json")
+	sendRec := httptest.NewRecorder()
+
+	handleForgotPasswordSendCode(sendRec, sendReq)
+
+	if sendRec.Code != http.StatusForbidden {
+		t.Fatalf("send-code status = %d, want 403 body=%s", sendRec.Code, sendRec.Body.String())
+	}
+	if !strings.Contains(sendRec.Body.String(), `"code":"password_reset_unavailable"`) {
+		t.Fatalf("send-code body = %s, want password_reset_unavailable", sendRec.Body.String())
+	}
+
+	resetReq := httptest.NewRequest(http.MethodPost, "/api/auth/forgot-password/reset", strings.NewReader(`{
+		"email":"github-only@example.com",
+		"verificationCode":"654321",
+		"password":"new-password-123"
+	}`))
+	resetReq.Header.Set("Content-Type", "application/json")
+	resetRec := httptest.NewRecorder()
+
+	handleForgotPasswordReset(resetRec, resetReq)
+
+	if resetRec.Code != http.StatusForbidden {
+		t.Fatalf("reset status = %d, want 403 body=%s", resetRec.Code, resetRec.Body.String())
+	}
+	if !strings.Contains(resetRec.Body.String(), `"code":"password_reset_unavailable"`) {
+		t.Fatalf("reset body = %s, want password_reset_unavailable", resetRec.Body.String())
+	}
+
+	db := store.ReadDB()
+	if got := db.Users[0].PasswordHash; got != "" {
+		t.Fatalf("github-only password hash = %q, want empty", got)
+	}
+	if db.VerificationCodes[0].Used {
+		t.Fatal("reset code was consumed for an ineligible GitHub-only user")
+	}
+
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"github-only@example.com","password":"new-password-123"}`))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+
+	handleAuthLogin(loginRec, loginReq)
+
+	if loginRec.Code != http.StatusUnauthorized {
+		t.Fatalf("login status = %d, want 401 body=%s", loginRec.Code, loginRec.Body.String())
+	}
+}
+
+func TestForgotPasswordAllowsLocalUser(t *testing.T) {
+	t.Setenv("SAPI_DATA_FILE", filepath.Join(t.TempDir(), "sapi.json"))
+	t.Setenv("SAPI_POSTGRES_URL", " ")
+	t.Setenv("DATABASE_URL", " ")
+	t.Setenv("SAPI_REDIS_URL", " ")
+	t.Setenv("REDIS_URL", " ")
+
+	cfg := config.Load()
+	if err := store.Init(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	store.MutateDB(func(db *models.Database) interface{} {
+		db.Users = []models.User{{
+			ID:           "usr_local",
+			Username:     "local-user",
+			Email:        "local@example.com",
+			Name:         "Local User",
+			PasswordHash: auth.HashPassword("old-password-123"),
+			Enabled:      true,
+			Source:       "email",
+		}}
+		db.VerificationCodes = []models.VerificationCode{{
+			Email:     "local@example.com",
+			Code:      "123456",
+			Purpose:   "reset_password",
+			CreatedAt: store.Now(),
+		}}
+		return nil
+	})
+
+	resetReq := httptest.NewRequest(http.MethodPost, "/api/auth/forgot-password/reset", strings.NewReader(`{
+		"email":"local@example.com",
+		"verificationCode":"123456",
+		"password":"new-password-123"
+	}`))
+	resetReq.Header.Set("Content-Type", "application/json")
+	resetRec := httptest.NewRecorder()
+
+	handleForgotPasswordReset(resetRec, resetReq)
+
+	if resetRec.Code != http.StatusOK {
+		t.Fatalf("reset status = %d, want 200 body=%s", resetRec.Code, resetRec.Body.String())
+	}
+
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"local-user","password":"new-password-123"}`))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+
+	handleAuthLogin(loginRec, loginReq)
+
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login status = %d, want 200 body=%s", loginRec.Code, loginRec.Body.String())
 	}
 }

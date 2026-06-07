@@ -3,6 +3,9 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,6 +28,8 @@ import (
 const (
 	githubStateCookieName = "sapi_github_oauth_state"
 	githubTermsCookieName = "sapi_github_terms_state"
+	githubStateMaxAge     = 10 * time.Minute
+	githubStateKind       = "oauth_state"
 )
 
 var (
@@ -52,6 +57,16 @@ type githubTokenResponse struct {
 	ErrorDescription string `json:"error_description"`
 }
 
+type githubOAuthState struct {
+	Kind          string `json:"kind"`
+	Nonce         string `json:"nonce"`
+	ClientID      string `json:"clientId"`
+	RedirectURL   string `json:"redirectUrl"`
+	ReturnBaseURL string `json:"returnBaseUrl"`
+	TermsAccepted bool   `json:"termsAccepted"`
+	ExpiresAt     int64  `json:"expiresAt"`
+}
+
 func handleGitHubStart(w http.ResponseWriter, r *http.Request) {
 	cfg := config.Load()
 	app, ok := githubOAuthAppForRequest(r, cfg)
@@ -60,22 +75,35 @@ func handleGitHubStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	state := auth.RandomSecret()
+	statePayload := githubOAuthState{
+		Kind:          githubStateKind,
+		Nonce:         auth.RandomSecret(),
+		ClientID:      app.ClientID,
+		RedirectURL:   app.RedirectURL,
+		ReturnBaseURL: publicBaseURLForRequest(r, cfg),
+		TermsAccepted: githubTermsAcceptedFromStart(r),
+		ExpiresAt:     time.Now().Add(githubStateMaxAge).Unix(),
+	}
+	state, err := signGitHubPayload(statePayload, app.ClientSecret)
+	if err != nil {
+		utils.SendError(w, 500, "GitHub login is temporarily unavailable.", "github_not_configured")
+		return
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     githubStateCookieName,
 		Value:    state,
 		Path:     "/api/auth/github",
-		MaxAge:   600,
+		MaxAge:   int(githubStateMaxAge.Seconds()),
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		Secure:   shouldUseSecureCookie(r, cfg),
 	})
-	if githubTermsAcceptedFromStart(r) {
+	if statePayload.TermsAccepted {
 		http.SetCookie(w, &http.Cookie{
 			Name:     githubTermsCookieName,
 			Value:    state,
 			Path:     "/api/auth/github",
-			MaxAge:   600,
+			MaxAge:   int(githubStateMaxAge.Seconds()),
 			HttpOnly: true,
 			SameSite: http.SameSiteLaxMode,
 			Secure:   shouldUseSecureCookie(r, cfg),
@@ -101,22 +129,28 @@ func handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cookie, err := r.Cookie(githubStateCookieName)
-	termsAccepted := false
-	if err == nil {
-		termsAccepted = githubTermsAcceptedForState(r, cookie.Value)
-	}
+	cookie, cookieErr := r.Cookie(githubStateCookieName)
 	clearGitHubStateCookie(w, r, cfg)
 	clearGitHubTermsCookie(w, r, cfg)
-	state := security.SafeSingleLine(r.URL.Query().Get("state"), 256)
-	if err != nil || state == "" || !auth.SafeEqual(cookie.Value, state) {
+	state := security.SafeSingleLine(r.URL.Query().Get("state"), 4096)
+	if cookieErr != nil || state == "" || !auth.SafeEqual(cookie.Value, state) {
 		redirectGitHubAuth(w, r, cfg, "", "invalid_state")
 		return
 	}
+	statePayload, err := verifyGitHubOAuthState(state, app, cfg)
+	if err != nil {
+		redirectGitHubAuth(w, r, cfg, "", "invalid_state")
+		return
+	}
+	termsAccepted := statePayload.TermsAccepted
+	if githubTermsAcceptedForState(r, cookie.Value) {
+		termsAccepted = true
+	}
+	returnBaseURL := statePayload.ReturnBaseURL
 
 	code := security.SafeSingleLine(r.URL.Query().Get("code"), 512)
 	if code == "" {
-		redirectGitHubAuth(w, r, cfg, "", "missing_code")
+		redirectGitHubAuthToBase(w, returnBaseURL, "", "missing_code")
 		return
 	}
 
@@ -125,13 +159,13 @@ func handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 
 	accessToken, err := exchangeGitHubCode(ctx, app, code)
 	if err != nil {
-		redirectGitHubAuth(w, r, cfg, "", "token_exchange_failed")
+		redirectGitHubAuthToBase(w, returnBaseURL, "", "token_exchange_failed")
 		return
 	}
 
 	profile, emails, err := fetchGitHubProfile(ctx, accessToken)
 	if err != nil {
-		redirectGitHubAuth(w, r, cfg, "", "profile_fetch_failed")
+		redirectGitHubAuthToBase(w, returnBaseURL, "", "profile_fetch_failed")
 		return
 	}
 
@@ -140,21 +174,21 @@ func handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 		var err error
 		followAllowed, err = checkGitHubFollowRequirement(ctx, accessToken, profile, cfg)
 		if err != nil {
-			redirectGitHubAuth(w, r, cfg, "", "github_follow_check_failed")
+			redirectGitHubAuthToBase(w, returnBaseURL, "", "github_follow_check_failed")
 			return
 		}
 	}
 
 	userResult := upsertGitHubUser(profile, emails, cfg, followAllowed, termsAccepted)
 	if errCode, ok := userResult.(string); ok {
-		redirectGitHubAuth(w, r, cfg, "", errCode)
+		redirectGitHubAuthToBase(w, returnBaseURL, "", errCode)
 		return
 	}
 
 	db := store.ReadDB()
 	user := userResult.(*models.User)
 	token := auth.SignTokenString(auth.TokenPayload{Role: "user", Sub: user.ID}, db.AppSecret)
-	redirectGitHubAuth(w, r, cfg, token, "")
+	redirectGitHubAuthToBase(w, returnBaseURL, token, "")
 }
 
 func exchangeGitHubCode(ctx context.Context, app config.GitHubOAuthApp, code string) (string, error) {
@@ -504,6 +538,14 @@ func redirectGitHubAuth(w http.ResponseWriter, r *http.Request, cfg *config.Conf
 	if base == "" {
 		base = "/"
 	}
+	redirectGitHubAuthToBase(w, base, token, errCode)
+}
+
+func redirectGitHubAuthToBase(w http.ResponseWriter, base, token, errCode string) {
+	base = strings.TrimRight(strings.TrimSpace(base), "/")
+	if base == "" {
+		base = "/"
+	}
 	params := url.Values{}
 	if token != "" {
 		params.Set("token", token)
@@ -515,7 +557,66 @@ func redirectGitHubAuth(w http.ResponseWriter, r *http.Request, cfg *config.Conf
 	if encoded := params.Encode(); encoded != "" {
 		target += "?" + encoded
 	}
-	http.Redirect(w, r, target, http.StatusFound)
+	writeRedirect(w, target)
+}
+
+func writeRedirect(w http.ResponseWriter, target string) {
+	w.Header().Set("Location", target)
+	w.WriteHeader(http.StatusFound)
+}
+
+func signGitHubPayload(payload interface{}, secret string) (string, error) {
+	if strings.TrimSpace(secret) == "" {
+		return "", fmt.Errorf("missing github secret")
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	body := base64.RawURLEncoding.EncodeToString(raw)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(body))
+	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return body + "." + signature, nil
+}
+
+func verifyGitHubPayload(value, secret string, target interface{}) error {
+	parts := strings.Split(value, ".")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" || strings.TrimSpace(secret) == "" {
+		return fmt.Errorf("invalid signed payload")
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(parts[0]))
+	expected := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	if !auth.SafeEqual(parts[1], expected) {
+		return fmt.Errorf("invalid signed payload signature")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(raw, target); err != nil {
+		return err
+	}
+	return nil
+}
+
+func verifyGitHubOAuthState(value string, app config.GitHubOAuthApp, cfg *config.Config) (*githubOAuthState, error) {
+	var state githubOAuthState
+	if err := verifyGitHubPayload(value, app.ClientSecret, &state); err != nil {
+		return nil, err
+	}
+	if state.Kind != githubStateKind || state.Nonce == "" || state.ExpiresAt < time.Now().Unix() {
+		return nil, fmt.Errorf("expired github state")
+	}
+	if state.ClientID != app.ClientID || !auth.SafeEqual(state.RedirectURL, app.RedirectURL) {
+		return nil, fmt.Errorf("github state audience mismatch")
+	}
+	if !samePublicBaseURL(state.ReturnBaseURL, publicBaseURLFromAbsoluteURL(app.RedirectURL)) {
+		return nil, fmt.Errorf("invalid github return base URL")
+	}
+	state.ReturnBaseURL = strings.TrimRight(strings.TrimSpace(state.ReturnBaseURL), "/")
+	return &state, nil
 }
 
 func clearGitHubStateCookie(w http.ResponseWriter, r *http.Request, cfg *config.Config) {
@@ -576,30 +677,31 @@ func githubOAuthAppForRequest(r *http.Request, cfg *config.Config) (config.GitHu
 		return config.GitHubOAuthApp{}, false
 	}
 	requestHost := normalizedRequestHost(r)
-	if cfg.GitHubOAuthApps != nil && requestHost != "" {
-		if app, ok := cfg.GitHubOAuthApps[requestHost]; ok && app.ClientID != "" && app.ClientSecret != "" {
-			if strings.TrimSpace(app.RedirectURL) == "" {
-				app.RedirectURL = githubRedirectURLForRequest(r, cfg)
-			}
-			return app, true
-		}
-	}
 	if cfg.GitHubClientID == "" || cfg.GitHubClientSecret == "" {
 		return config.GitHubOAuthApp{}, false
 	}
+	redirectURL := githubRedirectURLForRequest(r, cfg)
+	oauthBaseURL := publicBaseURLFromAbsoluteURL(redirectURL)
+	if oauthBaseURL == "" {
+		return config.GitHubOAuthApp{}, false
+	}
+	if requestHost != "" && !publicBaseURLMatchesHost(oauthBaseURL, requestHost) {
+		return config.GitHubOAuthApp{}, false
+	}
+
 	return config.GitHubOAuthApp{
 		ClientID:     cfg.GitHubClientID,
 		ClientSecret: cfg.GitHubClientSecret,
-		RedirectURL:  githubRedirectURLForRequest(r, cfg),
+		RedirectURL:  redirectURL,
 	}, true
 }
 
 func githubRedirectURLForRequest(r *http.Request, cfg *config.Config) string {
+	if cfg != nil && cfg.GitHubRedirectURLExplicit && strings.TrimSpace(cfg.GitHubRedirectURL) != "" {
+		return strings.TrimSpace(cfg.GitHubRedirectURL)
+	}
 	if base := publicBaseURLForRequest(r, cfg); base != "" {
 		return strings.TrimRight(base, "/") + "/api/auth/github/callback"
-	}
-	if cfg != nil && strings.TrimSpace(cfg.GitHubRedirectURL) != "" {
-		return strings.TrimSpace(cfg.GitHubRedirectURL)
 	}
 	return "/api/auth/github/callback"
 }
@@ -617,16 +719,48 @@ func publicBaseURLForRequest(r *http.Request, cfg *config.Config) string {
 	if publicBaseURLMatchesHost(cfg.PublicBaseURL, requestHost) {
 		return strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/")
 	}
+	if strings.TrimSpace(cfg.GitHubRedirectURL) != "" {
+		githubBaseURL := publicBaseURLFromAbsoluteURL(cfg.GitHubRedirectURL)
+		if publicBaseURLMatchesHost(githubBaseURL, requestHost) {
+			return githubBaseURL
+		}
+	}
 	if strings.TrimSpace(cfg.PublicBaseURL) != "" {
 		return strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/")
 	}
-	if strings.TrimSpace(cfg.GitHubRedirectURL) != "" {
-		parsed, err := url.Parse(strings.TrimSpace(cfg.GitHubRedirectURL))
-		if err == nil && parsed.Scheme != "" && parsed.Host != "" {
-			return parsed.Scheme + "://" + parsed.Host
-		}
-	}
 	return ""
+}
+
+func samePublicBaseURL(left, right string) bool {
+	leftCanonical, ok := canonicalPublicBaseURL(left)
+	if !ok {
+		return false
+	}
+	rightCanonical, ok := canonicalPublicBaseURL(right)
+	if !ok {
+		return false
+	}
+	return leftCanonical == rightCanonical
+}
+
+func canonicalPublicBaseURL(value string) (string, bool) {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", false
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "https" && scheme != "http" {
+		return "", false
+	}
+	return scheme + "://" + normalizeHost(parsed.Host), true
+}
+
+func publicBaseURLFromAbsoluteURL(value string) string {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	return strings.ToLower(parsed.Scheme) + "://" + normalizeHost(parsed.Host)
 }
 
 func normalizedRequestHost(r *http.Request) string {
