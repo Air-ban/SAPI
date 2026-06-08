@@ -1,6 +1,33 @@
 package handlers
 
-import "testing"
+import (
+	"net/http"
+	"net/url"
+	"testing"
+)
+
+func TestGitHubClientWithNetworkOptionsUsesProxy(t *testing.T) {
+	client := githubClientWithNetworkOptions(&http.Client{}, "socks5://127.0.0.1:7898", nil)
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport = %T, want *http.Transport", client.Transport)
+	}
+	reqURL, err := url.Parse("https://api.github.com/user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := &http.Request{URL: reqURL}
+	proxy, err := transport.Proxy(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proxy == nil || proxy.String() != "socks5://127.0.0.1:7898" {
+		t.Fatalf("proxy = %v, want configured GitHub proxy", proxy)
+	}
+	if client.Timeout == 0 {
+		t.Fatal("client timeout should be set for GitHub OAuth calls")
+	}
+}
 
 func TestGitHubResolveDialAddress(t *testing.T) {
 	mapping := map[string]string{

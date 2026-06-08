@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -124,9 +125,11 @@ func handleGitHubStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
+	startedAt := time.Now()
 	cfg := config.Load()
 	app, ok := githubOAuthAppForRequest(r, cfg)
 	if !ok {
+		log.Printf("[GITHUB_OAUTH] callback failed stage=config host=%s err=github_not_configured", r.Host)
 		redirectGitHubAuth(w, r, cfg, "", "github_not_configured")
 		return
 	}
@@ -134,12 +137,14 @@ func handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 	cookie, cookieErr := r.Cookie(githubStateCookieName)
 	state := security.SafeSingleLine(r.URL.Query().Get("state"), 4096)
 	if cookieErr != nil || state == "" || !auth.SafeEqual(cookie.Value, state) {
+		log.Printf("[GITHUB_OAUTH] callback failed stage=state host=%s cookie=%v state_present=%v", r.Host, cookieErr == nil, state != "")
 		clearGitHubOAuthCookies(w, r, cfg)
 		redirectGitHubAuth(w, r, cfg, "", "invalid_state")
 		return
 	}
 	statePayload, err := verifyGitHubOAuthState(state, app, cfg)
 	if err != nil {
+		log.Printf("[GITHUB_OAUTH] callback failed stage=verify_state host=%s err=%v", r.Host, err)
 		clearGitHubOAuthCookies(w, r, cfg)
 		redirectGitHubAuth(w, r, cfg, "", "invalid_state")
 		return
@@ -152,29 +157,33 @@ func handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 
 	code := security.SafeSingleLine(r.URL.Query().Get("code"), 512)
 	if code == "" {
+		log.Printf("[GITHUB_OAUTH] callback failed stage=code host=%s return_base=%s", r.Host, returnBaseURL)
 		clearGitHubOAuthCookies(w, r, cfg)
 		redirectGitHubAuthToBase(w, returnBaseURL, "", "missing_code")
 		return
 	}
 	if forwardTarget := githubCallbackForwardTarget(r, cfg, returnBaseURL, code, state); forwardTarget != "" {
+		log.Printf("[GITHUB_OAUTH] callback forwarding host=%s return_base=%s target_host=%s", r.Host, returnBaseURL, hostFromPublicBaseURL(publicBaseURLFromAbsoluteURL(forwardTarget)))
 		writeBrowserRedirectPage(w, forwardTarget)
 		return
 	}
 
 	clearGitHubOAuthCookies(w, r, cfg)
 
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 	githubClient := githubClientForConfig(cfg)
 
 	accessToken, err := exchangeGitHubCode(ctx, app, code, githubClient)
 	if err != nil {
+		log.Printf("[GITHUB_OAUTH] callback failed stage=token_exchange host=%s duration_ms=%d err=%v", r.Host, int(time.Since(startedAt).Milliseconds()), err)
 		redirectGitHubAuthToBase(w, returnBaseURL, "", "token_exchange_failed")
 		return
 	}
 
 	profile, emails, err := fetchGitHubProfile(ctx, accessToken, githubClient)
 	if err != nil {
+		log.Printf("[GITHUB_OAUTH] callback failed stage=profile_fetch host=%s duration_ms=%d err=%v", r.Host, int(time.Since(startedAt).Milliseconds()), err)
 		redirectGitHubAuthToBase(w, returnBaseURL, "", "profile_fetch_failed")
 		return
 	}
@@ -184,6 +193,7 @@ func handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 		var err error
 		followAllowed, err = checkGitHubFollowRequirement(ctx, accessToken, profile, cfg, githubClient)
 		if err != nil {
+			log.Printf("[GITHUB_OAUTH] callback failed stage=follow_check host=%s github_login=%s duration_ms=%d err=%v", r.Host, profile.Login, int(time.Since(startedAt).Milliseconds()), err)
 			redirectGitHubAuthToBase(w, returnBaseURL, "", "github_follow_check_failed")
 			return
 		}
@@ -191,6 +201,7 @@ func handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 
 	userResult := upsertGitHubUser(profile, emails, cfg, followAllowed, termsAccepted)
 	if errCode, ok := userResult.(string); ok {
+		log.Printf("[GITHUB_OAUTH] callback failed stage=upsert host=%s github_login=%s err=%s", r.Host, profile.Login, errCode)
 		redirectGitHubAuthToBase(w, returnBaseURL, "", errCode)
 		return
 	}
@@ -198,6 +209,7 @@ func handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 	db := store.ReadDB()
 	user := userResult.(*models.User)
 	token := auth.SignTokenString(auth.TokenPayload{Role: "user", Sub: user.ID}, db.AppSecret)
+	log.Printf("[GITHUB_OAUTH] callback success host=%s user=%s github_login=%s duration_ms=%d", r.Host, user.ID, profile.Login, int(time.Since(startedAt).Milliseconds()))
 	redirectGitHubAuthToBase(w, returnBaseURL, token, "")
 }
 

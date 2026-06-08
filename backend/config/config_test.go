@@ -1,6 +1,31 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
+
+func TestLoadGitHubProxyURL(t *testing.T) {
+	t.Setenv("SAPI_GITHUB_PROXY_URL", "socks5://127.0.0.1:7898")
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tempDir := t.TempDir()
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if chdirErr := os.Chdir(cwd); chdirErr != nil {
+			t.Fatalf("restore cwd: %v", chdirErr)
+		}
+	})
+
+	cfg := Load()
+	if cfg.GitHubProxyURL != "socks5://127.0.0.1:7898" {
+		t.Fatalf("GitHubProxyURL = %q, want configured proxy", cfg.GitHubProxyURL)
+	}
+}
 
 func TestParseGitHubHostResolve(t *testing.T) {
 	got := parseGitHubHostResolve("github.com=140.82.113.3, https://api.github.com=140.82.114.5 ,bad,example.com=not-an-ip")

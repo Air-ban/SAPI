@@ -41,6 +41,7 @@ type Config struct {
 	GitHubRedirectURLExplicit  bool
 	GitHubOAuthApps            map[string]GitHubOAuthApp
 	GitHubHostResolve          map[string]string
+	GitHubProxyURL             string
 	GitHubRequiredFollowTarget string
 	SmtpHost                   string
 	SmtpPort                   int
@@ -106,6 +107,7 @@ func Load() *Config {
 		GitHubRedirectURLExplicit:  strings.TrimSpace(githubRedirectURL) != "",
 		GitHubOAuthApps:            map[string]GitHubOAuthApp{},
 		GitHubHostResolve:          parseGitHubHostResolve(getEnv("SAPI_GITHUB_HOST_RESOLVE", "")),
+		GitHubProxyURL:             strings.TrimSpace(getEnv("SAPI_GITHUB_PROXY_URL", "")),
 		GitHubRequiredFollowTarget: strings.TrimPrefix(strings.TrimSpace(getEnv("SAPI_GITHUB_REQUIRED_FOLLOW_TARGET", "")), "@"),
 		SmtpHost:                   getEnv("SAPI_SMTP_HOST", ""),
 		SmtpPort:                   intEnv("SAPI_SMTP_PORT", 587),
