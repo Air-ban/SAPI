@@ -70,6 +70,9 @@ func TestGitHubSharedCallbackAllowsConfiguredSiblingSubdomain(t *testing.T) {
 	t.Setenv("SAPI_PUBLIC_BASE_URL", "https://sapi.eterultimate.asia")
 	t.Setenv("SAPI_PUBLIC_BASE_URLS", "https://sapi.eterultimate.asia,https://sapi.hanguan.icu,https://sapicn.eterultimate.asia")
 	t.Setenv("SAPI_GITHUB_REDIRECT_URL", "https://sapi.eterultimate.asia/api/auth/github/callback")
+	t.Setenv("SAPI_GITHUB_CLIENT_ID_SAPI_HANGUAN_ICU", " ")
+	t.Setenv("SAPI_GITHUB_CLIENT_SECRET_SAPI_HANGUAN_ICU", " ")
+	t.Setenv("SAPI_GITHUB_REDIRECT_URL_SAPI_HANGUAN_ICU", " ")
 
 	blockedReq := httptest.NewRequest(http.MethodGet, "/api/auth/github/start", nil)
 	blockedReq.Host = "sapi.hanguan.icu"
@@ -205,6 +208,9 @@ func TestGitHubOAuthRejectsUnconfiguredRequestHost(t *testing.T) {
 	t.Setenv("SAPI_PUBLIC_BASE_URL", "https://sapi.eterultimate.asia")
 	t.Setenv("SAPI_PUBLIC_BASE_URLS", "https://sapi.eterultimate.asia,https://sapicn.eterultimate.asia")
 	t.Setenv("SAPI_GITHUB_REDIRECT_URL", "https://sapi.eterultimate.asia/api/auth/github/callback")
+	t.Setenv("SAPI_GITHUB_CLIENT_ID_SAPI_HANGUAN_ICU", " ")
+	t.Setenv("SAPI_GITHUB_CLIENT_SECRET_SAPI_HANGUAN_ICU", " ")
+	t.Setenv("SAPI_GITHUB_REDIRECT_URL_SAPI_HANGUAN_ICU", " ")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/github/start", nil)
 	req.Host = "sapi.hanguan.icu"
@@ -222,6 +228,9 @@ func TestGitHubStartBindsAcceptedTermsToOAuthState(t *testing.T) {
 	t.Setenv("SAPI_GITHUB_CLIENT_SECRET", "client-secret")
 	t.Setenv("SAPI_PUBLIC_BASE_URL", "https://sapi.hanguan.icu")
 	t.Setenv("SAPI_GITHUB_REDIRECT_URL", "")
+	t.Setenv("SAPI_GITHUB_CLIENT_ID_SAPI_HANGUAN_ICU", " ")
+	t.Setenv("SAPI_GITHUB_CLIENT_SECRET_SAPI_HANGUAN_ICU", " ")
+	t.Setenv("SAPI_GITHUB_REDIRECT_URL_SAPI_HANGUAN_ICU", " ")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/github/start?terms=1", nil)
 	req.Host = "sapi.hanguan.icu"

@@ -150,12 +150,12 @@ func loadGitHubOAuthApps(baseURLs []string) map[string]GitHubOAuthApp {
 			continue
 		}
 		suffix := envSuffixForHost(host)
-		clientID := getEnv("SAPI_GITHUB_CLIENT_ID_"+suffix, "")
-		clientSecret := getEnv("SAPI_GITHUB_CLIENT_SECRET_"+suffix, "")
+		clientID := strings.TrimSpace(getEnv("SAPI_GITHUB_CLIENT_ID_"+suffix, ""))
+		clientSecret := strings.TrimSpace(getEnv("SAPI_GITHUB_CLIENT_SECRET_"+suffix, ""))
 		if clientID == "" || clientSecret == "" {
 			continue
 		}
-		redirectURL := getEnv("SAPI_GITHUB_REDIRECT_URL_"+suffix, strings.TrimRight(strings.TrimSpace(base), "/")+"/api/auth/github/callback")
+		redirectURL := strings.TrimSpace(getEnv("SAPI_GITHUB_REDIRECT_URL_"+suffix, strings.TrimRight(strings.TrimSpace(base), "/")+"/api/auth/github/callback"))
 		apps[host] = GitHubOAuthApp{
 			ClientID:     clientID,
 			ClientSecret: clientSecret,
