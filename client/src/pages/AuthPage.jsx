@@ -20,6 +20,7 @@ import LoginIcon from "@mui/icons-material/Login";
 import PersonAddIcon from "@mui/icons-material/PersonAdd";
 import GitHubIcon from "@mui/icons-material/GitHub";
 import FingerprintIcon from "@mui/icons-material/Fingerprint";
+import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
 import { ForgotPasswordDialog } from "../components/ForgotPasswordDialog";
 import { DividerLine } from "../components/DividerLine";
 import { ThemeModeToggle } from "../components/ThemeModeToggle";
@@ -39,6 +40,7 @@ export function AuthPage({
   publicConfig
 }) {
   const isRegister = mode === "register";
+  const isAdminLogin = mode === "admin";
   const githubEnabled = Boolean(publicConfig?.github?.enabled);
   const githubRequiredFollowTarget = publicConfig?.github?.requiredFollowTarget || "";
   const adminPasskeyEnabled = Boolean(publicConfig?.adminPasskey?.enabled);
@@ -156,7 +158,8 @@ export function AuthPage({
       } else {
         await onLogin({
           username: form.username,
-          password: form.password
+          password: form.password,
+          adminOnly: isAdminLogin
         });
       }
     } catch (error) {
@@ -204,14 +207,16 @@ export function AuthPage({
                   color: "primary.contrastText"
                 }}
               >
-                {isRegister ? <PersonAddIcon /> : <LoginIcon />}
+                {isRegister ? <PersonAddIcon /> : isAdminLogin ? <AdminPanelSettingsIcon /> : <LoginIcon />}
               </Box>
               <Box>
                 <Typography variant="h5">
-                  {isRegister ? "创建 SAPI 账号" : "登录 SAPI"}
+                  {isRegister ? "创建 SAPI 账号" : isAdminLogin ? "管理后台登录" : "登录 SAPI"}
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                  {isRegister
+                  {isAdminLogin
+                    ? "使用管理员账号进入 SAPI 管理后台。"
+                    : isRegister
                     ? "进入 AI SDK Gateway 控制台，自助创建 API Key。"
                     : "登录 AI SDK Gateway 控制台。"}
                 </Typography>
@@ -221,11 +226,11 @@ export function AuthPage({
             <Box component="form" onSubmit={submit}>
               <Stack spacing={1.5}>
                 <TextField
-                  label={isRegister ? "用户名" : "用户名或邮箱"}
+                  label={isRegister ? "用户名" : isAdminLogin ? "管理员用户名" : "用户名或邮箱"}
                   value={form.username}
                   onChange={update("username")}
                   autoComplete="username"
-                  placeholder={isRegister ? "字母、数字、点、下划线、@、短横线" : "用户名或邮箱"}
+                  placeholder={isRegister ? "字母、数字、点、下划线、@、短横线" : isAdminLogin ? "管理员用户名" : "用户名或邮箱"}
                   required
                 />
                 {isRegister ? (
@@ -342,10 +347,10 @@ export function AuthPage({
                   type="submit"
                   variant="contained"
                   size="large"
-                  startIcon={isRegister ? <PersonAddIcon /> : <LoginIcon />}
+                  startIcon={isRegister ? <PersonAddIcon /> : isAdminLogin ? <AdminPanelSettingsIcon /> : <LoginIcon />}
                   disabled={loading}
                 >
-                  {isRegister ? "注册" : "登录"}
+                  {isRegister ? "注册" : isAdminLogin ? "进入管理后台" : "登录"}
                 </Button>
                 {!isRegister && adminPasskeyEnabled ? (
                   <Button
@@ -358,7 +363,7 @@ export function AuthPage({
                     使用 Passkey 登录管理后台
                   </Button>
                 ) : null}
-                {githubEnabled ? (
+                {githubEnabled && !isAdminLogin ? (
                   <Stack spacing={0.75}>
                     <Button
                       variant="outlined"
@@ -375,7 +380,7 @@ export function AuthPage({
                     ) : null}
                   </Stack>
                 ) : null}
-                {!isRegister ? (
+                {!isRegister && !isAdminLogin ? (
                   <Box sx={{ textAlign: "center" }}>
                     <Button size="small" onClick={() => setForgotOpen(true)}>
                       忘记密码？
@@ -389,9 +394,9 @@ export function AuthPage({
             <Stack direction="row" spacing={1} justifyContent="center" flexWrap="wrap">
               <Button
                 size="small"
-                onClick={() => onNavigate(isRegister ? "login" : "register")}
+                onClick={() => onNavigate(isRegister || isAdminLogin ? "login" : "register")}
               >
-                {isRegister ? "已有账号，去登录" : "没有账号，去注册"}
+                {isRegister ? "已有账号，去登录" : isAdminLogin ? "用户登录" : "没有账号，去注册"}
               </Button>
               <Button size="small" color="inherit" onClick={() => onNavigate("home")}>
                 返回首页

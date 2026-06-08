@@ -463,7 +463,17 @@ function App() {
     navigate("admin");
   };
 
-  const login = async ({ username, password, captchaTicket, captchaRandstr }) => {
+  const login = async ({ username, password, captchaTicket, captchaRandstr, adminOnly = false }) => {
+    if (adminOnly) {
+      const data = await request("/api/admin/login", {
+        method: "POST",
+        admin: false,
+        body: { username, password, captchaTicket, captchaRandstr }
+      });
+      await completeAdminLogin(data);
+      return;
+    }
+
     const data = await request("/api/auth/login", {
       method: "POST",
       admin: false,
@@ -772,7 +782,7 @@ function App() {
       <ThemeProvider theme={theme}>
         <CssBaseline />
         <AuthPage
-          mode={route === "register" ? "register" : "login"}
+          mode={route === "register" ? "register" : route === "admin" ? "admin" : "login"}
           onLogin={login}
           onPasskeyLogin={loginWithAdminPasskey}
           onRegister={userRegister}
