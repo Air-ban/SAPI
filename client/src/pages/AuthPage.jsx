@@ -28,6 +28,7 @@ import { ThemeModeToggle } from "../components/ThemeModeToggle";
 export function AuthPage({
   mode,
   onLogin,
+  onAdminLogin,
   onPasskeyLogin,
   onRegister,
   onSendCode,
@@ -156,10 +157,13 @@ export function AuthPage({
           termsAccepted: agreed
         });
       } else {
-        await onLogin({
+        const submitLogin = isAdminLogin ? onAdminLogin : onLogin;
+        if (!submitLogin) {
+          throw new Error("登录入口未配置");
+        }
+        await submitLogin({
           username: form.username,
-          password: form.password,
-          adminOnly: isAdminLogin
+          password: form.password
         });
       }
     } catch (error) {
@@ -352,7 +356,7 @@ export function AuthPage({
                 >
                   {isRegister ? "注册" : isAdminLogin ? "进入管理后台" : "登录"}
                 </Button>
-                {!isRegister && adminPasskeyEnabled ? (
+                {isAdminLogin && adminPasskeyEnabled ? (
                   <Button
                     variant="outlined"
                     size="large"

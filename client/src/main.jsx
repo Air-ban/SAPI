@@ -130,8 +130,10 @@ function App() {
   const [userToken, setUserToken] = useState(localStorage.getItem(USER_TOKEN_KEY) || "");
   const [userSession, setUserSession] = useState(null);
   const [adminState, setAdminState] = useState(null);
-  const [adminRestoring, setAdminRestoring] = useState(() => Boolean(localStorage.getItem(ADMIN_TOKEN_KEY)));
-  const [adminRestoreError, setAdminRestoreError] = useState("");
+  const [adminAuthStatus, setAdminAuthStatus] = useState(() =>
+    localStorage.getItem(ADMIN_TOKEN_KEY) ? "checking" : "signedOut"
+  );
+  const [adminAuthMessage, setAdminAuthMessage] = useState("");
   const [adminUsage, setAdminUsage] = useState(null);
   const [userUsage, setUserUsage] = useState(null);
   const [toast, setToast] = useState({ open: false, message: "", severity: "success" });
@@ -152,6 +154,7 @@ function App() {
     () => (adminState ? { ...adminState, usage: adminUsage } : adminState),
     [adminState, adminUsage]
   );
+  const adminAuthenticated = adminAuthStatus === "ready" && Boolean(adminToken) && Boolean(adminState);
 
   const toggleThemeMode = useCallback(() => {
     setThemeMode((current) => {
@@ -232,8 +235,8 @@ function App() {
     }
   }, []);
 
-  const loadAdminState = useCallback(async () => {
-    const token = localStorage.getItem(ADMIN_TOKEN_KEY);
+  const loadAdminState = useCallback(async (tokenOverride = "") => {
+    const token = tokenOverride || localStorage.getItem(ADMIN_TOKEN_KEY);
     if (!token) {
       throw makeSessionError("请先登录管理员账号");
     }
@@ -250,8 +253,9 @@ function App() {
     return nextState;
   }, []);
 
-  const loadAdminUsage = useCallback(async () => {
-    const data = await request("/api/admin/usage?days=30");
+  const loadAdminUsage = useCallback(async (tokenOverride = "") => {
+    const options = tokenOverride ? { token: tokenOverride } : {};
+    const data = await request("/api/admin/usage?days=30", options);
     setAdminUsage(data);
     return data;
   }, []);
@@ -298,21 +302,30 @@ function App() {
     return data;
   }, []);
 
-  const logout = useCallback(() => {
+  const clearAdminSession = useCallback((message = "") => {
     localStorage.removeItem(ADMIN_TOKEN_KEY);
     setAdminToken("");
     setAdminState(null);
-    setAdminRestoring(false);
-    setAdminRestoreError("");
     setAdminUsage(null);
+    setAdminAuthStatus("signedOut");
+    setAdminAuthMessage(message);
   }, []);
 
-  const userLogout = useCallback(() => {
+  const clearUserSession = useCallback(() => {
     localStorage.removeItem(USER_TOKEN_KEY);
     setUserToken("");
     setUserSession(null);
     setSelectedKey("");
+    setUserUsage(null);
   }, []);
+
+  const logout = useCallback(() => {
+    clearAdminSession();
+  }, [clearAdminSession]);
+
+  const userLogout = useCallback(() => {
+    clearUserSession();
+  }, [clearUserSession]);
 
   useEffect(() => {
     const handleHashChange = () => setRoute(getInitialRoute());
@@ -351,26 +364,43 @@ function App() {
   }, [loadModelAvailability]);
 
   useEffect(() => {
-    if (route === "admin" && adminToken) {
-      setAdminRestoring(true);
-      setAdminRestoreError("");
-      loadAdminState()
-        .then(() => loadAdminUsage().catch(() => setAdminUsage(null)))
-        .catch((error) => {
-          if (isAdminAuthFailure(error)) {
-            logout();
-            showToast(error.message, "error");
-            return;
-          }
-          setAdminState(null);
-          setAdminRestoreError("管理后台暂时无法恢复，请刷新重试");
-          showToast(error.message || "管理后台暂时无法恢复，请刷新重试", "error");
-        })
-        .finally(() => {
-          setAdminRestoring(false);
-        });
+    if (route !== "admin" || !adminToken || adminAuthStatus !== "checking") {
+      return undefined;
     }
-  }, [route, adminToken, loadAdminState, loadAdminUsage, logout, showToast]);
+
+    let cancelled = false;
+    setAdminAuthMessage("正在恢复管理后台");
+
+    loadAdminState(adminToken)
+      .then(() => {
+        if (cancelled) return;
+        setAdminAuthStatus("ready");
+        setAdminAuthMessage("");
+        loadAdminUsage(adminToken).catch(() => {
+          if (!cancelled) setAdminUsage(null);
+        });
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        const message = isAdminAuthFailure(error)
+          ? "登录状态已失效，请重新登录"
+          : "管理后台暂时无法恢复，请重新登录";
+        clearAdminSession(message);
+        showToast(error.message || message, "error");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    route,
+    adminToken,
+    adminAuthStatus,
+    loadAdminState,
+    loadAdminUsage,
+    clearAdminSession,
+    showToast
+  ]);
 
   useEffect(() => {
     if (route === "portal" || route === "home") {
@@ -379,7 +409,7 @@ function App() {
   }, [route, loadMaintenance]);
 
   useEffect(() => {
-    if (userToken) {
+    if (userToken && !userSession) {
       loadUserSession(userToken)
         .then(() => loadUserUsage().catch(() => setUserUsage(null)))
         .catch((error) => {
@@ -387,7 +417,7 @@ function App() {
           showToast(error.message, "error");
         });
     }
-  }, [loadUserSession, loadUserUsage, showToast, userLogout, userToken]);
+  }, [loadUserSession, loadUserUsage, showToast, userLogout, userSession, userToken]);
 
   useEffect(() => {
     if (route !== "github-auth") return;
@@ -411,32 +441,25 @@ function App() {
       }
 
       localStorage.setItem(USER_TOKEN_KEY, token);
-      localStorage.removeItem(ADMIN_TOKEN_KEY);
-      setUserToken(token);
-      setAdminToken("");
-      setAdminState(null);
-      setAdminRestoring(false);
-      setAdminRestoreError("");
-      setAdminUsage(null);
+      clearAdminSession();
 
       try {
         const session = await loadUserSession(token);
         setUserSession(session);
         setSelectedKey(session.user.apiKey || "");
         await loadUserUsage().catch(() => setUserUsage(null));
+        setUserToken(token);
         showToast("已通过 GitHub 登录");
         navigate("portal");
       } catch (err) {
-        localStorage.removeItem(USER_TOKEN_KEY);
-        setUserToken("");
-        setUserSession(null);
+        clearUserSession();
         showToast(err.message, "error");
         navigate("login");
       }
     };
 
     run();
-  }, [loadUserUsage, publicConfig, route, showToast]);
+  }, [clearAdminSession, clearUserSession, loadUserSession, loadUserUsage, publicConfig, route, showToast]);
 
   const navigate = (nextRoute) => {
     window.location.hash = `#${nextRoute}`;
@@ -445,35 +468,44 @@ function App() {
   };
 
   const completeAdminLogin = async (data, message = "已进入管理后台") => {
-    localStorage.setItem(ADMIN_TOKEN_KEY, data.token);
+    const token = data?.token || "";
+    if (!token) {
+      throw new Error("管理后台登录响应无效");
+    }
+
+    localStorage.setItem(ADMIN_TOKEN_KEY, token);
     localStorage.removeItem(USER_TOKEN_KEY);
-    setAdminToken(data.token);
+    setAdminToken(token);
     setUserToken("");
     setUserSession(null);
     setSelectedKey("");
-    setAdminRestoring(true);
-    setAdminRestoreError("");
-    showToast(message);
+    setUserUsage(null);
+    setAdminAuthMessage("正在进入管理后台");
     try {
-      await Promise.all([loadAdminState(), loadPublicConfig()]);
-    } finally {
-      setAdminRestoring(false);
+      await Promise.all([loadAdminState(token), loadPublicConfig()]);
+      setAdminAuthStatus("ready");
+      setAdminAuthMessage("");
+    } catch (error) {
+      clearAdminSession(
+        isAdminAuthFailure(error) ? "登录状态无效，请重新登录" : "管理后台暂时无法进入，请重试"
+      );
+      throw error;
     }
-    loadAdminUsage().catch(() => setAdminUsage(null));
+    loadAdminUsage(token).catch(() => setAdminUsage(null));
+    showToast(message);
     navigate("admin");
   };
 
-  const login = async ({ username, password, captchaTicket, captchaRandstr, adminOnly = false }) => {
-    if (adminOnly) {
-      const data = await request("/api/admin/login", {
-        method: "POST",
-        admin: false,
-        body: { username, password, captchaTicket, captchaRandstr }
-      });
-      await completeAdminLogin(data);
-      return;
-    }
+  const loginAdmin = async ({ username, password, captchaTicket, captchaRandstr }) => {
+    const data = await request("/api/admin/login", {
+      method: "POST",
+      admin: false,
+      body: { username, password, captchaTicket, captchaRandstr }
+    });
+    await completeAdminLogin(data);
+  };
 
+  const loginUser = async ({ username, password, captchaTicket, captchaRandstr }) => {
     const data = await request("/api/auth/login", {
       method: "POST",
       admin: false,
@@ -481,21 +513,27 @@ function App() {
     });
 
     if (data.role === "admin") {
-      await completeAdminLogin(data);
-      return;
+      throw new Error("管理员请使用管理后台入口登录");
+    }
+    if (!data?.token) {
+      throw new Error("登录响应无效");
     }
 
     localStorage.setItem(USER_TOKEN_KEY, data.token);
-    localStorage.removeItem(ADMIN_TOKEN_KEY);
-    setUserToken(data.token);
-    setAdminToken("");
-    setAdminState(null);
-    setAdminRestoring(false);
-    setAdminRestoreError("");
-    setAdminUsage(null);
-    const session = await loadUserSession(data.token);
+    clearAdminSession();
+
+    let session = null;
+    try {
+      session = await loadUserSession(data.token);
+      await loadUserUsage().catch(() => setUserUsage(null));
+    } catch (error) {
+      clearUserSession();
+      throw error;
+    }
+
     setUserSession(session);
-    setSelectedKey(data.user.apiKey || "");
+    setSelectedKey(session.user.apiKey || "");
+    setUserToken(data.token);
     showToast("已登录");
     navigate("portal");
   };
@@ -587,16 +625,11 @@ function App() {
       body: { username, email, password, verificationCode, invitationCode, termsAccepted, captchaTicket, captchaRandstr }
     });
     localStorage.setItem(USER_TOKEN_KEY, data.token);
-    localStorage.removeItem(ADMIN_TOKEN_KEY);
-    setUserToken(data.token);
-    setAdminToken("");
-    setAdminState(null);
-    setAdminRestoring(false);
-    setAdminRestoreError("");
-    setAdminUsage(null);
+    clearAdminSession();
     const session = await loadUserSession(data.token);
     setUserSession(session);
     setSelectedKey(data.user.apiKey || "");
+    setUserToken(data.token);
     showToast("注册成功");
     navigate("portal");
   };
@@ -716,7 +749,7 @@ function App() {
         setMobileOpen(false);
       }}
       user={userSession?.user || null}
-      admin={Boolean(adminToken)}
+      admin={adminAuthenticated}
       onUserLogout={() => {
         userLogout();
         navigate("login");
@@ -758,7 +791,7 @@ function App() {
           health={health}
           onNavigate={navigate}
           user={userSession?.user || null}
-          admin={Boolean(adminToken)}
+          admin={adminAuthenticated}
           announcements={announcements}
           themeMode={themeMode}
           onToggleThemeMode={toggleThemeMode}
@@ -777,14 +810,19 @@ function App() {
     );
   }
 
-  if (route === "login" || route === "register" || (route === "admin" && !adminToken)) {
+  if (
+    route === "login" ||
+    route === "register" ||
+    (route === "admin" && adminAuthStatus === "signedOut")
+  ) {
     return (
       <ThemeProvider theme={theme}>
         <CssBaseline />
         <AuthPage
           mode={route === "register" ? "register" : route === "admin" ? "admin" : "login"}
-          onLogin={login}
-          onPasskeyLogin={loginWithAdminPasskey}
+          onLogin={loginUser}
+          onAdminLogin={loginAdmin}
+          onPasskeyLogin={route === "admin" ? loginWithAdminPasskey : undefined}
           onRegister={userRegister}
           onSendCode={sendVerificationCode}
           onSendForgotCode={sendForgotPasswordCode}
@@ -810,11 +848,35 @@ function App() {
     );
   }
 
-  if (route === "admin" && adminToken && (adminRestoring || !adminState)) {
+  if (route === "admin" && adminAuthStatus === "checking") {
     return (
       <ThemeProvider theme={theme}>
         <CssBaseline />
-        <LoadingPage text={adminRestoreError || "正在恢复管理后台"} />
+        <LoadingPage text={adminAuthMessage || "正在恢复管理后台"} />
+        {snackbar}
+      </ThemeProvider>
+    );
+  }
+
+  if (route === "admin" && !adminAuthenticated) {
+    return (
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <AuthPage
+          mode="admin"
+          onLogin={loginUser}
+          onAdminLogin={loginAdmin}
+          onPasskeyLogin={loginWithAdminPasskey}
+          onRegister={userRegister}
+          onSendCode={sendVerificationCode}
+          onSendForgotCode={sendForgotPasswordCode}
+          onResetPassword={resetPassword}
+          onNavigate={navigate}
+          onToast={showToast}
+          themeMode={themeMode}
+          onToggleThemeMode={toggleThemeMode}
+          publicConfig={publicConfig}
+        />
         {snackbar}
       </ThemeProvider>
     );

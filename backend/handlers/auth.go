@@ -83,15 +83,8 @@ func handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if auth.SafeEqual(identifier, normalizeUsername(cfg.AdminUser)) && auth.SafeEqual(password, cfg.AdminPassword) {
-		clearLoginFailures(identifier)
-		db := store.ReadDB()
-		token := signAdminLoginToken(cfg, db.AppSecret)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"role":     "admin",
-			"token":    token,
-			"username": cfg.AdminUser,
-		})
+	if auth.SafeEqual(identifier, normalizeUsername(cfg.AdminUser)) {
+		utils.SendError(w, 401, "Admin accounts must use the admin login endpoint.", "admin_login_required")
 		return
 	}
 

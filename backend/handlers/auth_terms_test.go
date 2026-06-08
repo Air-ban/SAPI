@@ -256,3 +256,57 @@ func TestForgotPasswordAllowsLocalUser(t *testing.T) {
 		t.Fatalf("login status = %d, want 200 body=%s", loginRec.Code, loginRec.Body.String())
 	}
 }
+
+func TestAuthLoginRejectsAdminCredentials(t *testing.T) {
+	t.Setenv("SAPI_DATA_FILE", filepath.Join(t.TempDir(), "sapi.json"))
+	t.Setenv("SAPI_ADMIN_USER", "admin")
+	t.Setenv("SAPI_ADMIN_PASSWORD", "secret-password")
+	t.Setenv("SAPI_POSTGRES_URL", " ")
+	t.Setenv("DATABASE_URL", " ")
+	t.Setenv("SAPI_REDIS_URL", " ")
+	t.Setenv("REDIS_URL", " ")
+
+	cfg := config.Load()
+	if err := store.Init(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	userLoginReq := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"admin","password":"secret-password"}`))
+	userLoginReq.Header.Set("Content-Type", "application/json")
+	userLoginRec := httptest.NewRecorder()
+
+	handleAuthLogin(userLoginRec, userLoginReq)
+
+	if userLoginRec.Code != http.StatusUnauthorized {
+		t.Fatalf("user login status = %d, want 401 body=%s", userLoginRec.Code, userLoginRec.Body.String())
+	}
+	if !strings.Contains(userLoginRec.Body.String(), `"code":"admin_login_required"`) {
+		t.Fatalf("user login body = %s, want admin_login_required", userLoginRec.Body.String())
+	}
+	if strings.Contains(userLoginRec.Body.String(), `"token"`) {
+		t.Fatalf("user login leaked token: %s", userLoginRec.Body.String())
+	}
+
+	adminLoginReq := httptest.NewRequest(http.MethodPost, "/api/admin/login", strings.NewReader(`{"username":"admin","password":"secret-password"}`))
+	adminLoginReq.Header.Set("Content-Type", "application/json")
+	adminLoginRec := httptest.NewRecorder()
+
+	handleAdminLogin(adminLoginRec, adminLoginReq)
+
+	if adminLoginRec.Code != http.StatusOK {
+		t.Fatalf("admin login status = %d, want 200 body=%s", adminLoginRec.Code, adminLoginRec.Body.String())
+	}
+
+	var payload map[string]string
+	if err := json.Unmarshal(adminLoginRec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	token := payload["token"]
+	if token == "" {
+		t.Fatalf("admin login token is empty: %#v", payload)
+	}
+	verified := auth.VerifyToken(token, store.ReadDB().AppSecret)
+	if verified == nil || verified.Role != "admin" || verified.Sub != "admin" {
+		t.Fatalf("admin login token payload = %#v, want admin/admin", verified)
+	}
+}
