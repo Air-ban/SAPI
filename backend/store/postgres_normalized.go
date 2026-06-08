@@ -176,8 +176,8 @@ func loadPostgresNormalizedState(ctx context.Context, q postgresQuerier) (*model
 	}
 
 	err := q.QueryRow(ctx, `
-SELECT version, app_secret, site_email, default_rpm_limit, maintenance_mode,
-  maintenance_end_time, show_only_available_models, created_at, updated_at
+SELECT version, app_secret, site_email, default_rpm_limit, registration_disabled,
+  maintenance_mode, maintenance_end_time, show_only_available_models, created_at, updated_at
 FROM sapi_app_config
 WHERE id = $1
 `, postgresStateAppID).Scan(
@@ -185,6 +185,7 @@ WHERE id = $1
 		&db.AppSecret,
 		&db.SiteEmail,
 		&db.DefaultRPMLimit,
+		&db.RegistrationDisabled,
 		&db.MaintenanceMode,
 		&db.MaintenanceEndTime,
 		&db.ShowOnlyAvailableModels,
@@ -832,11 +833,11 @@ func savePostgresNormalizedStateTx(ctx context.Context, tx postgresQuerier, db *
 
 	if _, err := tx.Exec(ctx, `
 INSERT INTO sapi_app_config (
-  id, version, app_secret, site_email, default_rpm_limit, maintenance_mode,
-  maintenance_end_time, show_only_available_models, created_at, updated_at
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-`, postgresStateAppID, state.Version, state.AppSecret, state.SiteEmail, state.DefaultRPMLimit, state.MaintenanceMode,
-		state.MaintenanceEndTime, state.ShowOnlyAvailableModels, state.CreatedAt, state.UpdatedAt); err != nil {
+  id, version, app_secret, site_email, default_rpm_limit, registration_disabled,
+  maintenance_mode, maintenance_end_time, show_only_available_models, created_at, updated_at
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+`, postgresStateAppID, state.Version, state.AppSecret, state.SiteEmail, state.DefaultRPMLimit, state.RegistrationDisabled,
+		state.MaintenanceMode, state.MaintenanceEndTime, state.ShowOnlyAvailableModels, state.CreatedAt, state.UpdatedAt); err != nil {
 		return err
 	}
 

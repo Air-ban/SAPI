@@ -125,6 +125,27 @@ SAPI_TRUSTED_PROXY_CIDRS=127.0.0.1/32,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
 
 只有请求的直连 `RemoteAddr` 命中 `SAPI_TRUSTED_PROXY_CIDRS` 时，后端才读取代理头作为客户端 IP。Cloudflare 或其他边缘代理策略失效时，后端仍能按直连 IP 进行兜底限流。
 
+## IPPure 请求日志
+SAPI 可以在代理请求日志中保存真实客户端 IP 对应的 IPPure 情报。查询失败不会阻断用户请求，日志会记录 `clientIpInfo.lookupStatus=error` 和脱敏后的错误原因。
+
+```bash
+SAPI_IPPURE_ENABLED=true
+SAPI_IPPURE_ENDPOINT=https://api.ippure.com/api/info/ip-risk/{ip}
+SAPI_IPPURE_METHOD=POST
+SAPI_IPPURE_API_KEY=
+SAPI_IPPURE_TIMEOUT_MS=1200
+```
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `SAPI_IPPURE_ENABLED` | `true` | 是否启用 IPPure 查询。禁用时仍不会影响请求日志的其他字段。 |
+| `SAPI_IPPURE_ENDPOINT` | `https://api.ippure.com/api/info/ip-risk/{ip}` | IPPure 查询接口。包含 `{ip}` 时替换为客户端 IP；不包含时自动追加 `?ip=`。 |
+| `SAPI_IPPURE_METHOD` | `POST` | 查询方法。非 `GET`/`HEAD` 时会发送 `{"ip":"..."}` JSON body。 |
+| `SAPI_IPPURE_API_KEY` | 空 | 可选 API Key，会同时放入 `Authorization: Bearer`、`X-API-Key` 和 `X-IPPure-API-Key`。 |
+| `SAPI_IPPURE_TIMEOUT_MS` | `1200` | 查询超时毫秒数。超时只写入日志错误状态，不影响转发响应。 |
+
+为保存用户真实 IP，生产环境应同时正确配置 `SAPI_TRUST_PROXY_HEADERS=true` 和 `SAPI_TRUSTED_PROXY_CIDRS`。只有直连来源命中可信代理 CIDR 时，系统才会读取 `CF-Connecting-IP`、`True-Client-IP`、`X-Real-IP` 或 `X-Forwarded-For`；否则会忽略这些可伪造请求头。私网、回环、文档保留地址和其他非公网地址会跳过 IPPure 远端查询。
+
 ## CORS
 当前 CORS 固定开放:
 

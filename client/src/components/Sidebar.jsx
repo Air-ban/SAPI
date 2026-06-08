@@ -85,7 +85,7 @@ export function Sidebar({
       label: "站点设置",
       pages: [
         { id: "invitations", icon: <VpnKeyIcon />, primary: "邀请码", secondary: "发放注册名额" },
-        { id: "smtp", icon: <SettingsIcon />, primary: "总设置", secondary: "邮箱、横幅、维护、限速" }
+        { id: "smtp", icon: <SettingsIcon />, primary: "总设置", secondary: "邮箱、注册、维护、限速" }
       ]
     }
   ];

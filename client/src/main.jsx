@@ -719,6 +719,7 @@ function App() {
 
   const afterAdminChange = async (message, options = {}) => {
     const refreshes = [loadAdminState()];
+    if (options.refreshPublicConfig) refreshes.push(loadPublicConfig());
     if (options.refreshUsage) refreshes.push(loadAdminUsage());
     if (options.refreshProviders) {
       refreshes.push(loadProviderHealth(), loadModelAvailability());

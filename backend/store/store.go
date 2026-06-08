@@ -753,34 +753,35 @@ func readRecentFileRequestLogsLocked(since time.Time, userID string, limit int) 
 
 func unmarshalRequestLogSummaryLine(line []byte) (models.RequestLog, error) {
 	type requestLogSummary struct {
-		ID                  string `json:"id"`
-		UserID              string `json:"userId"`
-		UserName            string `json:"userName"`
-		Username            string `json:"username"`
-		APIKeyID            string `json:"apiKeyId"`
-		APIKeyName          string `json:"apiKeyName"`
-		APIKeyPreview       string `json:"apiKeyPreview"`
-		ProviderID          string `json:"providerId"`
-		ProviderName        string `json:"providerName"`
-		Model               string `json:"model"`
-		UpstreamModel       string `json:"upstreamModel"`
-		Endpoint            string `json:"endpoint"`
-		Method              string `json:"method"`
-		Status              int    `json:"status"`
-		OK                  bool   `json:"ok"`
-		Stream              bool   `json:"stream"`
-		DurationMs          int    `json:"durationMs"`
-		PromptTokens        int    `json:"promptTokens"`
-		CompletionTokens    int    `json:"completionTokens"`
-		TotalTokens         int    `json:"totalTokens"`
-		CachedTokens        int    `json:"cachedTokens"`
-		CacheCreationTokens int    `json:"cacheCreationTokens"`
-		CacheMissTokens     int    `json:"cacheMissTokens"`
-		ReasoningTokens     int    `json:"reasoningTokens"`
-		ErrorCode           string `json:"errorCode"`
-		ErrorMessage        string `json:"errorMessage"`
-		HasRequestContent   bool   `json:"hasRequestContent,omitempty"`
-		Timestamp           string `json:"timestamp"`
+		ID                  string                      `json:"id"`
+		UserID              string                      `json:"userId"`
+		UserName            string                      `json:"userName"`
+		Username            string                      `json:"username"`
+		APIKeyID            string                      `json:"apiKeyId"`
+		APIKeyName          string                      `json:"apiKeyName"`
+		APIKeyPreview       string                      `json:"apiKeyPreview"`
+		ProviderID          string                      `json:"providerId"`
+		ProviderName        string                      `json:"providerName"`
+		Model               string                      `json:"model"`
+		UpstreamModel       string                      `json:"upstreamModel"`
+		Endpoint            string                      `json:"endpoint"`
+		Method              string                      `json:"method"`
+		Status              int                         `json:"status"`
+		OK                  bool                        `json:"ok"`
+		Stream              bool                        `json:"stream"`
+		DurationMs          int                         `json:"durationMs"`
+		PromptTokens        int                         `json:"promptTokens"`
+		CompletionTokens    int                         `json:"completionTokens"`
+		TotalTokens         int                         `json:"totalTokens"`
+		CachedTokens        int                         `json:"cachedTokens"`
+		CacheCreationTokens int                         `json:"cacheCreationTokens"`
+		CacheMissTokens     int                         `json:"cacheMissTokens"`
+		ReasoningTokens     int                         `json:"reasoningTokens"`
+		ErrorCode           string                      `json:"errorCode"`
+		ErrorMessage        string                      `json:"errorMessage"`
+		ClientIPInfo        *models.RequestClientIPInfo `json:"clientIpInfo,omitempty"`
+		HasRequestContent   bool                        `json:"hasRequestContent,omitempty"`
+		Timestamp           string                      `json:"timestamp"`
 	}
 
 	var summary requestLogSummary
@@ -814,6 +815,7 @@ func unmarshalRequestLogSummaryLine(line []byte) (models.RequestLog, error) {
 		ReasoningTokens:     summary.ReasoningTokens,
 		ErrorCode:           summary.ErrorCode,
 		ErrorMessage:        summary.ErrorMessage,
+		ClientIPInfo:        summary.ClientIPInfo,
 		HasRequestContent:   summary.HasRequestContent || bytes.Contains(line, []byte(`"requestContent"`)),
 		Timestamp:           summary.Timestamp,
 	}, nil

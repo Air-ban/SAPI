@@ -277,6 +277,11 @@ func cloneRequestContent(body map[string]interface{}) map[string]interface{} {
 	return cloned
 }
 
+func recordProxyRequestLog(r *http.Request, params logging.RequestLogParams) {
+	params.Request = r
+	logging.RecordRequestLog(params)
+}
+
 func responsesInputFromBody(body map[string]interface{}) interface{} {
 	if body == nil {
 		return nil
@@ -366,7 +371,7 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if !isOK(resp.StatusCode) && proxy.IsUpstreamProviderError(resp.StatusCode) {
-			logging.RecordRequestLog(logging.RequestLogParams{
+			recordProxyRequestLog(r, logging.RequestLogParams{
 				UserID:         info.User.ID,
 				UserName:       info.User.Name,
 				Username:       info.User.Username,
@@ -452,7 +457,7 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 			"finishReason":    finishReason,
 		})
 
-		logging.RecordRequestLog(logging.RequestLogParams{
+		recordProxyRequestLog(r, logging.RequestLogParams{
 			UserID:         info.User.ID,
 			UserName:       info.User.Name,
 			Username:       info.User.Username,
@@ -696,7 +701,7 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 
 	sseWriter.Write("response.completed", map[string]interface{}{"response": finalResponse})
 
-	logging.RecordRequestLog(logging.RequestLogParams{
+	recordProxyRequestLog(r, logging.RequestLogParams{
 		UserID:         info.User.ID,
 		UserName:       info.User.Name,
 		Username:       info.User.Username,
@@ -771,7 +776,7 @@ func handleNativeResponsesProxy(w http.ResponseWriter, r *http.Request, info *ap
 		}
 
 		if !isOK(resp.StatusCode) && proxy.IsUpstreamProviderError(resp.StatusCode) {
-			logging.RecordRequestLog(logging.RequestLogParams{
+			recordProxyRequestLog(r, logging.RequestLogParams{
 				UserID:         info.User.ID,
 				UserName:       info.User.Name,
 				Username:       info.User.Username,
@@ -814,7 +819,7 @@ func handleNativeResponsesProxy(w http.ResponseWriter, r *http.Request, info *ap
 		}
 		resp.Body.Close()
 
-		logging.RecordRequestLog(logging.RequestLogParams{
+		recordProxyRequestLog(r, logging.RequestLogParams{
 			UserID:         info.User.ID,
 			UserName:       info.User.Name,
 			Username:       info.User.Username,
@@ -864,7 +869,7 @@ func handleAnthropicCountTokensHandler(w http.ResponseWriter, r *http.Request) {
 		"input_tokens": inputTokens,
 	})
 	model, _ := body["model"].(string)
-	logging.RecordRequestLog(logging.RequestLogParams{
+	recordProxyRequestLog(r, logging.RequestLogParams{
 		UserID:         info.User.ID,
 		UserName:       info.User.Name,
 		Username:       info.User.Username,
@@ -963,7 +968,7 @@ func handleAnthropicMessagesProxyHandler(w http.ResponseWriter, r *http.Request)
 		}
 
 		if !isOK(resp.StatusCode) && proxy.IsUpstreamProviderError(resp.StatusCode) {
-			logging.RecordRequestLog(logging.RequestLogParams{
+			recordProxyRequestLog(r, logging.RequestLogParams{
 				UserID:         info.User.ID,
 				UserName:       info.User.Name,
 				Username:       info.User.Username,
@@ -1044,7 +1049,7 @@ func handleAnthropicMessagesProxyHandler(w http.ResponseWriter, r *http.Request)
 		w.WriteHeader(200)
 		json.NewEncoder(w).Encode(anthropicResp)
 
-		logging.RecordRequestLog(logging.RequestLogParams{
+		recordProxyRequestLog(r, logging.RequestLogParams{
 			UserID:         info.User.ID,
 			UserName:       info.User.Name,
 			Username:       info.User.Username,
@@ -1080,7 +1085,7 @@ func handleAnthropicMessagesProxyHandler(w http.ResponseWriter, r *http.Request)
 			flusher.Flush()
 		}
 		usage := proxy.WriteUpstreamStreamToResponse(upstreamResp, w)
-		logging.RecordRequestLog(logging.RequestLogParams{
+		recordProxyRequestLog(r, logging.RequestLogParams{
 			UserID:         info.User.ID,
 			UserName:       info.User.Name,
 			Username:       info.User.Username,
@@ -1357,7 +1362,7 @@ func handleAnthropicMessagesProxyHandler(w http.ResponseWriter, r *http.Request)
 	})
 	writeEvent("message_stop", map[string]interface{}{"type": "message_stop"})
 
-	logging.RecordRequestLog(logging.RequestLogParams{
+	recordProxyRequestLog(r, logging.RequestLogParams{
 		UserID:         info.User.ID,
 		UserName:       info.User.Name,
 		Username:       info.User.Username,
@@ -1537,7 +1542,7 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 
 		if !isOK(resp.StatusCode) && proxy.IsUpstreamProviderError(resp.StatusCode) {
 			log.Printf("[V1CHAT] UPSTREAM_ERROR_5xx status=%d", resp.StatusCode)
-			logging.RecordRequestLog(logging.RequestLogParams{
+			recordProxyRequestLog(r, logging.RequestLogParams{
 				UserID:         info.User.ID,
 				UserName:       info.User.Name,
 				Username:       info.User.Username,
@@ -1587,7 +1592,7 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(resp.StatusCode)
 			w.Write(bodyBytes)
 
-			logging.RecordRequestLog(logging.RequestLogParams{
+			recordProxyRequestLog(r, logging.RequestLogParams{
 				UserID:         info.User.ID,
 				UserName:       info.User.Name,
 				Username:       info.User.Username,
@@ -1633,7 +1638,7 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 			}
 			log.Printf("[V1CHAT] STREAM_END usage=%v", usage)
 
-			logging.RecordRequestLog(logging.RequestLogParams{
+			recordProxyRequestLog(r, logging.RequestLogParams{
 				UserID:         info.User.ID,
 				UserName:       info.User.Name,
 				Username:       info.User.Username,
@@ -1684,7 +1689,7 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(resp.StatusCode)
 		w.Write(bodyBytes)
 
-		logging.RecordRequestLog(logging.RequestLogParams{
+		recordProxyRequestLog(r, logging.RequestLogParams{
 			UserID:         info.User.ID,
 			UserName:       info.User.Name,
 			Username:       info.User.Username,

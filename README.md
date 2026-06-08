@@ -94,6 +94,11 @@ npm run client:dev
 | `SAPI_POSTGRES_URL` | 空 | PostgreSQL 状态存储（可选） |
 | `SAPI_TRUST_PROXY_HEADERS` | `false` | 是否信任代理头 |
 | `SAPI_TRUSTED_PROXY_CIDRS` | 空 | 可信代理 CIDR 列表 |
+| `SAPI_IPPURE_ENABLED` | `true` | 是否在请求日志中查询并保存 IPPure IP 情报 |
+| `SAPI_IPPURE_ENDPOINT` | `https://api.ippure.com/api/info/ip-risk/{ip}` | IPPure 查询接口，支持 `{ip}` 占位符 |
+| `SAPI_IPPURE_API_KEY` | 空 | IPPure API Key（如服务端接口需要鉴权） |
+| `SAPI_IPPURE_METHOD` | `POST` | IPPure 查询方法 |
+| `SAPI_IPPURE_TIMEOUT_MS` | `1200` | IPPure 查询超时，失败不阻断用户请求 |
 | `SAPI_REQUEST_BODY_LIMIT_BYTES` | `1048576` | 控制面请求体限制 |
 | `SAPI_PROXY_BODY_LIMIT_BYTES` | `33554432` | 代理接口请求体限制 |
 | `SAPI_GITHUB_CLIENT_ID` | 空 | GitHub OAuth Client ID |

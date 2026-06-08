@@ -61,6 +61,7 @@ func MountAdminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/admin/rpm-limit", middleware.RequireAdmin(handleAdminUpdateRPMLimit))
 	mux.HandleFunc("PUT /api/admin/subscriptions/global-tier", middleware.RequireAdmin(handleAdminApplyGlobalSubscriptionTier))
 	mux.HandleFunc("PUT /api/admin/banner", middleware.RequireAdmin(handleAdminUpdateBanner))
+	mux.HandleFunc("PUT /api/admin/registration", middleware.RequireAdmin(handleAdminUpdateRegistration))
 	mux.HandleFunc("PUT /api/admin/maintenance", middleware.RequireAdmin(handleAdminUpdateMaintenance))
 	mux.HandleFunc("PUT /api/admin/models-visibility", middleware.RequireAdmin(handleAdminUpdateModelsVisibility))
 }
@@ -74,22 +75,23 @@ func writeAdminState(w http.ResponseWriter, r *http.Request, includeSession bool
 	smtp := getSMTPConfig(db)
 
 	payload := map[string]interface{}{
-		"providers":          store.RedactProviders(db.Providers),
-		"users":              sanitizeUsers(db.Users),
-		"adminApiKeys":       sanitizeAdminAPIKeys(db.AdminAPIKeys),
-		"adminPasskeys":      sanitizeAdminPasskeys(db.AdminPasskeys),
-		"publicConfig":       serviceConfigForRequest(r),
-		"invitationCodes":    db.InvitationCodes,
-		"announcements":      db.Announcements,
-		"suggestions":        db.Suggestions,
-		"siteBanner":         db.SiteBanner,
-		"maintenanceMode":    db.MaintenanceMode,
-		"maintenanceEndTime": db.MaintenanceEndTime,
+		"providers":               store.RedactProviders(db.Providers),
+		"users":                   sanitizeUsers(db.Users),
+		"adminApiKeys":            sanitizeAdminAPIKeys(db.AdminAPIKeys),
+		"adminPasskeys":           sanitizeAdminPasskeys(db.AdminPasskeys),
+		"publicConfig":            serviceConfigForRequest(r),
+		"invitationCodes":         db.InvitationCodes,
+		"announcements":           db.Announcements,
+		"suggestions":             db.Suggestions,
+		"siteBanner":              db.SiteBanner,
+		"registrationDisabled":    db.RegistrationDisabled,
+		"maintenanceMode":         db.MaintenanceMode,
+		"maintenanceEndTime":      db.MaintenanceEndTime,
 		"showOnlyAvailableModels": db.ShowOnlyAvailableModels,
-		"siteEmail":          firstSiteEmail(siteEmailsFromDB(db)),
-		"siteEmails":         siteEmailsFromDB(db),
-		"defaultRpmLimit":    db.DefaultRPMLimit,
-		"subscriptionTiers":  subscription.Tiers,
+		"siteEmail":               firstSiteEmail(siteEmailsFromDB(db)),
+		"siteEmails":              siteEmailsFromDB(db),
+		"defaultRpmLimit":         db.DefaultRPMLimit,
+		"subscriptionTiers":       subscription.Tiers,
 		"smtpConfig": map[string]interface{}{
 			"host":    smtp.Host,
 			"port":    smtp.Port,
@@ -1264,6 +1266,28 @@ func handleAdminUpdateBanner(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"content":   content,
 		"updatedAt": updatedAt,
+	})
+}
+
+func handleAdminUpdateRegistration(w http.ResponseWriter, r *http.Request) {
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
+
+	disabled := toBool(body["registrationDisabled"])
+	if enabled, ok := body["registrationEnabled"].(bool); ok {
+		disabled = !enabled
+	}
+
+	store.MutateDB(func(db *models.Database) interface{} {
+		db.RegistrationDisabled = disabled
+		return nil
+	})
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"registrationDisabled": disabled,
+		"registrationEnabled":  !disabled,
 	})
 }
 

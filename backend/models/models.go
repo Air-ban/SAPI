@@ -7,29 +7,30 @@ import (
 )
 
 type Database struct {
-	Version            int                `json:"version"`
-	AppSecret          string             `json:"appSecret"`
-	Providers          []Provider         `json:"providers"`
-	Users              []User             `json:"users"`
-	TokenUsage         []interface{}      `json:"tokenUsage"`
-	RequestLogs        []RequestLog       `json:"requestLogs"`
-	AdminAPIKeys       []APIKeyRecord     `json:"adminApiKeys"`
-	InvitationCodes    []InvitationCode   `json:"invitationCodes"`
-	VerificationCodes  []VerificationCode `json:"verificationCodes"`
-	AdminPasskeys      []AdminPasskey     `json:"adminPasskeys"`
-	Announcements      []Announcement     `json:"announcements"`
-	Documents          []interface{}      `json:"documents"`
-	Suggestions        []Suggestion       `json:"suggestions"`
-	SMTPConfig         *SMTPConfig        `json:"smtpConfig"`
-	SiteEmail          string             `json:"siteEmail"`
-	SiteEmails         []string           `json:"siteEmails"`
-	DefaultRPMLimit    int                `json:"defaultRpmLimit"`
-	SiteBanner         *SiteBanner        `json:"siteBanner"`
-	MaintenanceMode         bool   `json:"maintenanceMode"`
-	MaintenanceEndTime      string `json:"maintenanceEndTime"`
-	ShowOnlyAvailableModels bool   `json:"showOnlyAvailableModels"`
-	CreatedAt          string             `json:"createdAt"`
-	UpdatedAt          string             `json:"updatedAt"`
+	Version                 int                `json:"version"`
+	AppSecret               string             `json:"appSecret"`
+	Providers               []Provider         `json:"providers"`
+	Users                   []User             `json:"users"`
+	TokenUsage              []interface{}      `json:"tokenUsage"`
+	RequestLogs             []RequestLog       `json:"requestLogs"`
+	AdminAPIKeys            []APIKeyRecord     `json:"adminApiKeys"`
+	InvitationCodes         []InvitationCode   `json:"invitationCodes"`
+	VerificationCodes       []VerificationCode `json:"verificationCodes"`
+	AdminPasskeys           []AdminPasskey     `json:"adminPasskeys"`
+	Announcements           []Announcement     `json:"announcements"`
+	Documents               []interface{}      `json:"documents"`
+	Suggestions             []Suggestion       `json:"suggestions"`
+	SMTPConfig              *SMTPConfig        `json:"smtpConfig"`
+	SiteEmail               string             `json:"siteEmail"`
+	SiteEmails              []string           `json:"siteEmails"`
+	DefaultRPMLimit         int                `json:"defaultRpmLimit"`
+	SiteBanner              *SiteBanner        `json:"siteBanner"`
+	RegistrationDisabled    bool               `json:"registrationDisabled"`
+	MaintenanceMode         bool               `json:"maintenanceMode"`
+	MaintenanceEndTime      string             `json:"maintenanceEndTime"`
+	ShowOnlyAvailableModels bool               `json:"showOnlyAvailableModels"`
+	CreatedAt               string             `json:"createdAt"`
+	UpdatedAt               string             `json:"updatedAt"`
 }
 
 type Provider struct {
@@ -145,9 +146,56 @@ type RequestLog struct {
 	ReasoningTokens     int                    `json:"reasoningTokens"`
 	ErrorCode           string                 `json:"errorCode"`
 	ErrorMessage        string                 `json:"errorMessage"`
+	ClientGeo           *RequestClientGeo      `json:"clientGeo,omitempty"`
+	ClientIPInfo        *RequestClientIPInfo   `json:"clientIpInfo,omitempty"`
 	RequestContent      map[string]interface{} `json:"requestContent,omitempty"`
 	HasRequestContent   bool                   `json:"hasRequestContent,omitempty"`
 	Timestamp           string                 `json:"timestamp"`
+}
+
+type RequestClientGeo struct {
+	Country      string `json:"country,omitempty"`
+	Region       string `json:"region,omitempty"`
+	City         string `json:"city,omitempty"`
+	Source       string `json:"source,omitempty"`
+	NetworkHash  string `json:"networkHash,omitempty"`
+	NetworkScope string `json:"networkScope,omitempty"`
+}
+
+type RequestClientIPInfo struct {
+	IP             string              `json:"ip,omitempty"`
+	LookupIP       string              `json:"lookupIp,omitempty"`
+	IPVersion      string              `json:"ipVersion,omitempty"`
+	IPHash         string              `json:"ipHash,omitempty"`
+	ASN            string              `json:"asn,omitempty"`
+	ASDomain       string              `json:"asDomain,omitempty"`
+	ASName         string              `json:"asName,omitempty"`
+	IPRange        string              `json:"ipRange,omitempty"`
+	HumanBotRatio  string              `json:"humanBotRatio,omitempty"`
+	Locations      []RequestIPLocation `json:"locations,omitempty"`
+	IPSource       string              `json:"ipSource,omitempty"`
+	IPAttributes   []string            `json:"ipAttributes,omitempty"`
+	IPPureScore    *float64            `json:"ipPureScore,omitempty"`
+	IPPureLevel    string              `json:"ipPureLevel,omitempty"`
+	Provider       string              `json:"provider,omitempty"`
+	LookupStatus   string              `json:"lookupStatus,omitempty"`
+	LookupError    string              `json:"lookupError,omitempty"`
+	FetchedAt      string              `json:"fetchedAt,omitempty"`
+	NetworkHash    string              `json:"networkHash,omitempty"`
+	NetworkScope   string              `json:"networkScope,omitempty"`
+	ProxyGeoSource string              `json:"proxyGeoSource,omitempty"`
+}
+
+type RequestIPLocation struct {
+	Provider  string `json:"provider,omitempty"`
+	Country   string `json:"country,omitempty"`
+	Region    string `json:"region,omitempty"`
+	City      string `json:"city,omitempty"`
+	District  string `json:"district,omitempty"`
+	ISP       string `json:"isp,omitempty"`
+	Latitude  string `json:"latitude,omitempty"`
+	Longitude string `json:"longitude,omitempty"`
+	Text      string `json:"text,omitempty"`
 }
 
 type InvitationCode struct {

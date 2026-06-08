@@ -26,6 +26,11 @@ type Config struct {
 	ProxyBodyLimitBytes        int64
 	TrustProxyHeaders          bool
 	TrustedProxyCIDRs          []string
+	IPPureEnabled              bool
+	IPPureEndpoint             string
+	IPPureAPIKey               string
+	IPPureMethod               string
+	IPPureTimeoutMs            int
 	TencentCaptchaAppID        string
 	TencentCaptchaAppSecretKey string
 	TencentSecretID            string
@@ -86,6 +91,11 @@ func Load() *Config {
 		ProxyBodyLimitBytes:        int64Env("SAPI_PROXY_BODY_LIMIT_BYTES", 32<<20),
 		TrustProxyHeaders:          boolEnv("SAPI_TRUST_PROXY_HEADERS", false),
 		TrustedProxyCIDRs:          splitCSV(getEnv("SAPI_TRUSTED_PROXY_CIDRS", "")),
+		IPPureEnabled:              boolEnv("SAPI_IPPURE_ENABLED", true),
+		IPPureEndpoint:             getEnv("SAPI_IPPURE_ENDPOINT", "https://api.ippure.com/api/info/ip-risk/{ip}"),
+		IPPureAPIKey:               getEnv("SAPI_IPPURE_API_KEY", ""),
+		IPPureMethod:               getEnv("SAPI_IPPURE_METHOD", "POST"),
+		IPPureTimeoutMs:            intEnv("SAPI_IPPURE_TIMEOUT_MS", 1200),
 		TencentCaptchaAppID:        getEnv("SAPI_TENCENT_CAPTCHA_APP_ID", ""),
 		TencentCaptchaAppSecretKey: getEnv("SAPI_TENCENT_CAPTCHA_APP_SECRET_KEY", ""),
 		TencentSecretID:            getEnv("SAPI_TENCENT_SECRET_ID", ""),

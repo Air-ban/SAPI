@@ -54,6 +54,7 @@ export function UsageSection({ usage, onLoadRequestContent }) {
   const recentRequests = usage.recentRequests || usage.recent || [];
   const showUserColumn = recentRequests.some((request) => request.userName || request.username || request.userId);
   const showKeyColumn = recentRequests.some((request) => request.apiKeyName || request.apiKeyPreview || request.apiKeyId);
+  const showIPInfoColumn = recentRequests.some((request) => request.clientIpInfo?.ip || request.clientIpInfo?.lookupStatus);
 
   return (
     <Section title="Token 用量统计（近 30 天）" icon={<BarChartIcon />}>
@@ -198,12 +199,13 @@ export function UsageSection({ usage, onLoadRequestContent }) {
                 最近请求记录
               </Typography>
               <TableContainer sx={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-                <Table size="small" sx={{ minWidth: showUserColumn || showKeyColumn ? 1200 : 960 }}>
+                <Table size="small" sx={{ minWidth: showUserColumn || showKeyColumn || showIPInfoColumn ? 1320 : 960 }}>
                   <TableHead>
                     <TableRow>
                       <TableCell>时间</TableCell>
                       {showUserColumn ? <TableCell>用户</TableCell> : null}
                       {showKeyColumn ? <TableCell>API Key</TableCell> : null}
+                      {showIPInfoColumn ? <TableCell>IP 情报</TableCell> : null}
                       <TableCell>状态</TableCell>
                       <TableCell>模型</TableCell>
                       <TableCell>端点</TableCell>
@@ -223,6 +225,7 @@ export function UsageSection({ usage, onLoadRequestContent }) {
                           request={request}
                           showUserColumn={showUserColumn}
                           showKeyColumn={showKeyColumn}
+                          showIPInfoColumn={showIPInfoColumn}
                           onLoadRequestContent={onLoadRequestContent}
                         />
                       ))}
@@ -266,7 +269,7 @@ function StatsAccordion({ title, count, children }) {
   );
 }
 
-function RecentRequestRow({ request, showUserColumn, showKeyColumn, onLoadRequestContent }) {
+function RecentRequestRow({ request, showUserColumn, showKeyColumn, showIPInfoColumn, onLoadRequestContent }) {
   const [open, setOpen] = React.useState(false);
   const [requestContent, setRequestContent] = React.useState(request.requestContent || null);
   const [loading, setLoading] = React.useState(false);
@@ -311,6 +314,11 @@ function RecentRequestRow({ request, showUserColumn, showKeyColumn, onLoadReques
             <Typography variant="caption" color="text.secondary" noWrap title={request.apiKeyPreview}>
               {request.apiKeyPreview || ""}
             </Typography>
+          </TableCell>
+        ) : null}
+        {showIPInfoColumn ? (
+          <TableCell>
+            <IPInfoSummary info={request.clientIpInfo} />
           </TableCell>
         ) : null}
         <TableCell>
@@ -361,7 +369,7 @@ function RecentRequestRow({ request, showUserColumn, showKeyColumn, onLoadReques
       </TableRow>
       {hasRequestJson || error ? (
         <TableRow>
-          <TableCell colSpan={11 + (showUserColumn ? 1 : 0) + (showKeyColumn ? 1 : 0)} sx={{ p: 0, borderBottom: open ? undefined : 0 }}>
+          <TableCell colSpan={11 + (showUserColumn ? 1 : 0) + (showKeyColumn ? 1 : 0) + (showIPInfoColumn ? 1 : 0)} sx={{ p: 0, borderBottom: open ? undefined : 0 }}>
             <Collapse in={open || Boolean(error)} timeout="auto" unmountOnExit>
               <Box
                 component={error ? "div" : "pre"}
@@ -387,6 +395,68 @@ function RecentRequestRow({ request, showUserColumn, showKeyColumn, onLoadReques
       ) : null}
     </>
   );
+}
+
+function IPInfoSummary({ info }) {
+  if (!info) {
+    return <Typography variant="body2" color="text.secondary">-</Typography>;
+  }
+  const location = primaryLocation(info);
+  const attributes = Array.isArray(info.ipAttributes) ? info.ipAttributes.slice(0, 2) : [];
+  const score = typeof info.ipPureScore === "number" ? info.ipPureScore : null;
+  const status = info.lookupStatus && !["ok", "cached", "local"].includes(info.lookupStatus) ? info.lookupStatus : "";
+
+  return (
+    <Stack spacing={0.5} sx={{ minWidth: 180, maxWidth: 260 }}>
+      <Stack direction="row" spacing={0.75} alignItems="center" sx={{ minWidth: 0, flexWrap: "wrap" }}>
+        <Typography
+          variant="body2"
+          sx={{ fontFamily: 'Consolas, "SFMono-Regular", Menlo, monospace', fontWeight: 760 }}
+          noWrap
+          title={info.ip || info.lookupIp || ""}
+        >
+          {info.ip || info.lookupIp || "-"}
+        </Typography>
+        {score !== null ? <Chip size="small" label={`IPPure ${formatIPScore(score)}`} variant="outlined" /> : null}
+        {status ? <Chip size="small" label={status} color="warning" variant="outlined" /> : null}
+      </Stack>
+      <Typography variant="caption" color="text.secondary" noWrap title={ipInfoTitle(info, location)}>
+        {[info.asn ? `ASN ${info.asn}` : "", info.asDomain || info.asName || "", location].filter(Boolean).join(" · ") || info.networkScope || "-"}
+      </Typography>
+      {attributes.length > 0 ? (
+        <Stack direction="row" spacing={0.5} sx={{ flexWrap: "wrap" }}>
+          {attributes.map((item) => (
+            <Chip key={item} size="small" label={item} variant="outlined" />
+          ))}
+        </Stack>
+      ) : null}
+    </Stack>
+  );
+}
+
+function primaryLocation(info) {
+  const locations = Array.isArray(info?.locations) ? info.locations : [];
+  const best = locations.find((item) => item?.provider !== "trusted_proxy_header") || locations[0];
+  if (!best) return "";
+  return [best.country, best.region, best.city, best.district].filter(Boolean).join("/");
+}
+
+function ipInfoTitle(info, location) {
+  if (!info) return "";
+  return [
+    info.ip ? `IP: ${info.ip}` : "",
+    info.asn ? `ASN: ${info.asn}` : "",
+    info.asDomain ? `AS 域名: ${info.asDomain}` : "",
+    info.ipRange ? `IP 范围: ${info.ipRange}` : "",
+    location ? `位置: ${location}` : "",
+    info.ipSource ? `来源: ${info.ipSource}` : "",
+    info.lookupError ? `查询错误: ${info.lookupError}` : ""
+  ].filter(Boolean).join("\n");
+}
+
+function formatIPScore(value) {
+  if (!Number.isFinite(value)) return "-";
+  return Number.isInteger(value) ? `${value}` : value.toFixed(2);
 }
 
 function stringifyRequestContent(value) {

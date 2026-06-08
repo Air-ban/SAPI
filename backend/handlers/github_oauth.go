@@ -432,6 +432,9 @@ func upsertGitHubUser(profile *githubUserProfile, emails []githubEmailRecord, cf
 		if !allowGitHubRegistration {
 			return "github_follow_required"
 		}
+		if db.RegistrationDisabled {
+			return "registration_closed"
+		}
 
 		username := uniqueGitHubUsername(db, login, githubID, cfg.AdminUser)
 		if name == "" {

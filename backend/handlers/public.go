@@ -245,9 +245,14 @@ func publicConfigForRequest(r *http.Request) map[string]interface{} {
 		baseURL = cfg.PublicBaseURL
 	}
 	_, githubEnabled := githubOAuthAppForRequest(r, cfg)
+	db := store.ReadDB()
 	return map[string]interface{}{
-		"name":    "SAPI",
-		"baseUrl": baseURL,
+		"name":                 "SAPI",
+		"baseUrl":              baseURL,
+		"registrationDisabled": db.RegistrationDisabled,
+		"registration": map[string]interface{}{
+			"enabled": !db.RegistrationDisabled,
+		},
 		"captcha": map[string]interface{}{
 			"enabled": cfg.TencentCaptchaAppID != "" && cfg.TencentCaptchaAppSecretKey != "",
 			"appId":   cfg.TencentCaptchaAppID,

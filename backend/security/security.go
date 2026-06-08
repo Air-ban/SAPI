@@ -156,9 +156,7 @@ func ClientIP(r *http.Request) string {
 	}
 
 	remoteIP := remoteAddrIP(r.RemoteAddr)
-	cfgMu.RLock()
-	trustProxy := runtimeConfig.TrustProxyHeaders && isTrustedProxy(remoteIP)
-	cfgMu.RUnlock()
+	trustProxy := trustsProxyHeadersForRemote(remoteIP)
 
 	if trustProxy {
 		for _, candidate := range []string{
@@ -180,6 +178,19 @@ func ClientIP(r *http.Request) string {
 		return strings.TrimSpace(r.RemoteAddr)
 	}
 	return "unknown"
+}
+
+func TrustsProxyHeaders(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	return trustsProxyHeadersForRemote(remoteAddrIP(r.RemoteAddr))
+}
+
+func trustsProxyHeadersForRemote(remoteIP string) bool {
+	cfgMu.RLock()
+	defer cfgMu.RUnlock()
+	return runtimeConfig.TrustProxyHeaders && isTrustedProxy(remoteIP)
 }
 
 func SensitiveKey(value string) string {

@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS sapi_app_config (
   app_secret text NOT NULL,
   site_email text NOT NULL DEFAULT '',
   default_rpm_limit integer NOT NULL DEFAULT 30,
+  registration_disabled boolean NOT NULL DEFAULT false,
   maintenance_mode boolean NOT NULL DEFAULT false,
   maintenance_end_time text NOT NULL DEFAULT '',
   show_only_available_models boolean NOT NULL DEFAULT false,
@@ -316,11 +317,14 @@ CREATE TABLE IF NOT EXISTS sapi_request_logs (
   reasoning_tokens integer NOT NULL DEFAULT 0,
   error_code text NOT NULL DEFAULT '',
   error_message text NOT NULL DEFAULT '',
+  client_ip_info jsonb NOT NULL DEFAULT '{}'::jsonb,
   request_content jsonb NOT NULL DEFAULT '{}'::jsonb,
   timestamp timestamptz NOT NULL DEFAULT now()
 );
 
+ALTER TABLE sapi_request_logs ADD COLUMN IF NOT EXISTS client_ip_info jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE sapi_request_logs ADD COLUMN IF NOT EXISTS request_content jsonb NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS registration_disabled boolean NOT NULL DEFAULT false;
 ALTER TABLE sapi_providers ADD COLUMN IF NOT EXISTS position integer NOT NULL DEFAULT 0;
 ALTER TABLE sapi_users ADD COLUMN IF NOT EXISTS position integer NOT NULL DEFAULT 0;
 ALTER TABLE sapi_invitation_codes ADD COLUMN IF NOT EXISTS position integer NOT NULL DEFAULT 0;
@@ -414,6 +418,13 @@ func insertPostgresRequestLog(ctx context.Context, item models.RequestLog) error
 	if err != nil {
 		requestContentRaw = []byte(`{}`)
 	}
+	clientIPInfo := item.ClientIPInfo
+	clientIPInfoRaw := []byte(`{}`)
+	if clientIPInfo != nil {
+		if raw, err := json.Marshal(clientIPInfo); err == nil {
+			clientIPInfoRaw = raw
+		}
+	}
 
 	tx, err := pgPool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -427,17 +438,17 @@ INSERT INTO sapi_request_logs (
   provider_id, provider_name, model, upstream_model, endpoint, method, status,
   ok, stream, duration_ms, prompt_tokens, completion_tokens, total_tokens,
   cached_tokens, cache_creation_tokens, cache_miss_tokens, reasoning_tokens,
-  error_code, error_message, request_content, timestamp
+  error_code, error_message, client_ip_info, request_content, timestamp
 ) VALUES (
   $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
-  $15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28
+  $15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29
 )
 ON CONFLICT (id) DO NOTHING
 `, item.ID, item.UserID, item.UserName, item.Username, item.APIKeyID, item.APIKeyName, item.APIKeyPreview,
 		item.ProviderID, item.ProviderName, item.Model, item.UpstreamModel, item.Endpoint, item.Method, item.Status,
 		item.OK, item.Stream, item.DurationMs, item.PromptTokens, item.CompletionTokens, item.TotalTokens,
 		item.CachedTokens, item.CacheCreationTokens, item.CacheMissTokens, item.ReasoningTokens,
-		item.ErrorCode, item.ErrorMessage, requestContentRaw, ts)
+		item.ErrorCode, item.ErrorMessage, clientIPInfoRaw, requestContentRaw, ts)
 	if err != nil {
 		return err
 	}
@@ -475,7 +486,7 @@ SELECT id, user_id, user_name, username, api_key_id, api_key_name, api_key_previ
   provider_id, provider_name, model, upstream_model, endpoint, method, status,
   ok, stream, duration_ms, prompt_tokens, completion_tokens, total_tokens,
   cached_tokens, cache_creation_tokens, cache_miss_tokens, reasoning_tokens,
-  error_code, error_message, request_content <> '{}'::jsonb AS has_request_content, timestamp
+  error_code, error_message, client_ip_info, request_content <> '{}'::jsonb AS has_request_content, timestamp
 FROM sapi_request_logs
 WHERE timestamp >= $1`
 	args := []interface{}{since}
@@ -496,14 +507,18 @@ WHERE timestamp >= $1`
 	for rows.Next() {
 		var item models.RequestLog
 		var ts time.Time
+		var clientIPInfoRaw []byte
 		if err := rows.Scan(
 			&item.ID, &item.UserID, &item.UserName, &item.Username, &item.APIKeyID, &item.APIKeyName, &item.APIKeyPreview,
 			&item.ProviderID, &item.ProviderName, &item.Model, &item.UpstreamModel, &item.Endpoint, &item.Method, &item.Status,
 			&item.OK, &item.Stream, &item.DurationMs, &item.PromptTokens, &item.CompletionTokens, &item.TotalTokens,
 			&item.CachedTokens, &item.CacheCreationTokens, &item.CacheMissTokens, &item.ReasoningTokens,
-			&item.ErrorCode, &item.ErrorMessage, &item.HasRequestContent, &ts,
+			&item.ErrorCode, &item.ErrorMessage, &clientIPInfoRaw, &item.HasRequestContent, &ts,
 		); err != nil {
 			return nil, err
+		}
+		if len(clientIPInfoRaw) > 0 && string(clientIPInfoRaw) != "{}" {
+			_ = json.Unmarshal(clientIPInfoRaw, &item.ClientIPInfo)
 		}
 		item.Timestamp = ts.UTC().Format(time.RFC3339)
 		result = append(result, item)
@@ -521,7 +536,7 @@ SELECT id, user_id, user_name, username, api_key_id, api_key_name, api_key_previ
   provider_id, provider_name, model, upstream_model, endpoint, method, status,
   ok, stream, duration_ms, prompt_tokens, completion_tokens, total_tokens,
   cached_tokens, cache_creation_tokens, cache_miss_tokens, reasoning_tokens,
-  error_code, error_message, request_content, timestamp
+  error_code, error_message, client_ip_info, request_content, timestamp
 FROM sapi_request_logs
 WHERE id = $1`
 	args := []interface{}{id}
@@ -533,13 +548,14 @@ WHERE id = $1`
 
 	var item models.RequestLog
 	var ts time.Time
+	var clientIPInfoRaw []byte
 	var requestContentRaw []byte
 	err := pgPool.QueryRow(ctx, query, args...).Scan(
 		&item.ID, &item.UserID, &item.UserName, &item.Username, &item.APIKeyID, &item.APIKeyName, &item.APIKeyPreview,
 		&item.ProviderID, &item.ProviderName, &item.Model, &item.UpstreamModel, &item.Endpoint, &item.Method, &item.Status,
 		&item.OK, &item.Stream, &item.DurationMs, &item.PromptTokens, &item.CompletionTokens, &item.TotalTokens,
 		&item.CachedTokens, &item.CacheCreationTokens, &item.CacheMissTokens, &item.ReasoningTokens,
-		&item.ErrorCode, &item.ErrorMessage, &requestContentRaw, &ts,
+		&item.ErrorCode, &item.ErrorMessage, &clientIPInfoRaw, &requestContentRaw, &ts,
 	)
 	if err == pgx.ErrNoRows {
 		return nil, false, nil
@@ -549,6 +565,9 @@ WHERE id = $1`
 	}
 	if len(requestContentRaw) > 0 {
 		_ = json.Unmarshal(requestContentRaw, &item.RequestContent)
+	}
+	if len(clientIPInfoRaw) > 0 && string(clientIPInfoRaw) != "{}" {
+		_ = json.Unmarshal(clientIPInfoRaw, &item.ClientIPInfo)
 	}
 	if requestLogHasContent(item) {
 		item.HasRequestContent = true

@@ -2,9 +2,11 @@ package logging
 
 import (
 	"fmt"
+	"net/http"
 	"time"
 
 	"sapi/auth"
+	"sapi/ippure"
 	"sapi/models"
 	"sapi/store"
 	"sapi/utils"
@@ -110,6 +112,7 @@ func RecordRequestLog(params RequestLogParams) {
 		ReasoningTokens:     normalized.ReasoningTokens,
 		ErrorCode:           params.ErrorCode,
 		ErrorMessage:        params.ErrorMessage,
+		ClientIPInfo:        ippure.LookupRequest(params.Request),
 		RequestContent:      params.RequestContent,
 		Timestamp:           store.Now(),
 	})
@@ -137,6 +140,7 @@ type RequestLogParams struct {
 	ErrorMessage   string
 	FinishReason   string
 	RequestContent map[string]interface{}
+	Request        *http.Request
 }
 
 type simpleUsage struct {

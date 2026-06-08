@@ -35,6 +35,10 @@ func MountAuthRoutes(mux *http.ServeMux) {
 
 const adminLoginTokenTTL = 30 * 24 * time.Hour
 
+func sendRegistrationClosed(w http.ResponseWriter) {
+	utils.SendError(w, http.StatusForbidden, "Registration is currently closed.", "registration_closed")
+}
+
 func signAdminLoginToken(cfg *config.Config, appSecret string) string {
 	return auth.SignTokenStringWithTTL(auth.TokenPayload{Role: "admin", Sub: cfg.AdminUser}, appSecret, adminLoginTokenTTL)
 }
@@ -149,6 +153,11 @@ func handleSendVerificationCode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	db := store.ReadDB()
+	if purpose == "register" && db.RegistrationDisabled {
+		sendRegistrationClosed(w)
+		return
+	}
+
 	smtpCfg := getSMTPConfig(db)
 	if !createSMTPTransport(smtpCfg) {
 		utils.SendError(w, 400, "SMTP is not configured.", "smtp_not_configured")
@@ -209,6 +218,11 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	verificationCode := security.SafeSingleLine(fmt.Sprintf("%v", body["verificationCode"]), 16)
 	invitationCode := security.SafeSingleLine(toString(body["invitationCode"]), 128)
 
+	if store.ReadDB().RegistrationDisabled {
+		sendRegistrationClosed(w)
+		return
+	}
+
 	if !toBool(body["termsAccepted"]) {
 		utils.SendError(w, 400, "You must accept the user agreement and privacy policy before registering.", "terms_required")
 		return
@@ -260,6 +274,9 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := store.MutateDB(func(db *models.Database) interface{} {
+		if db.RegistrationDisabled {
+			return "registration_closed"
+		}
 		for _, u := range db.Users {
 			if normalizeUsername(u.Username) == username {
 				return "username_exists"
@@ -294,6 +311,10 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 
 	errMsg, isErr := result.(string)
 	if isErr {
+		if errMsg == "registration_closed" {
+			sendRegistrationClosed(w)
+			return
+		}
 		utils.SendError(w, 409, "Username or email is already registered.", errMsg)
 		return
 	}

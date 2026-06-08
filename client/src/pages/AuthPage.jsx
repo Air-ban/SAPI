@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import {
+  Alert,
   Box,
   Button,
   Checkbox,
@@ -45,6 +46,7 @@ export function AuthPage({
   const githubEnabled = Boolean(publicConfig?.github?.enabled);
   const githubRequiredFollowTarget = publicConfig?.github?.requiredFollowTarget || "";
   const adminPasskeyEnabled = Boolean(publicConfig?.adminPasskey?.enabled);
+  const registrationDisabled = Boolean(publicConfig?.registrationDisabled || publicConfig?.registration?.enabled === false);
   const [form, setForm] = useState({
     username: "",
     email: "",
@@ -76,6 +78,10 @@ export function AuthPage({
   }, [mode]);
 
   const sendCode = async () => {
+    if (isRegister && registrationDisabled) {
+      onToast("当前暂未开放注册", "warning");
+      return;
+    }
     if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
       onToast("请输入有效的邮箱地址", "warning");
       return;
@@ -105,6 +111,10 @@ export function AuthPage({
   };
 
   const startGitHubAuth = () => {
+    if (isRegister && registrationDisabled) {
+      onToast("当前暂未开放注册", "warning");
+      return;
+    }
     if (isRegister && !agreed) {
       onToast("请先同意用户协议和隐私政策", "warning");
       return;
@@ -119,6 +129,10 @@ export function AuthPage({
 
     if (isRegister && !agreed) {
       onToast("请先同意用户协议和隐私政策", "warning");
+      return;
+    }
+    if (isRegister && registrationDisabled) {
+      onToast("当前暂未开放注册", "warning");
       return;
     }
 
@@ -171,6 +185,8 @@ export function AuthPage({
         ? "管理员账号请使用管理后台登录入口"
         : error?.code === "password_reset_unavailable"
         ? "该账号没有本地密码，请使用原注册方式登录"
+        : error?.code === "registration_closed"
+        ? "当前暂未开放注册"
         : error.message;
       onToast(message, "error");
     } finally {
@@ -234,6 +250,11 @@ export function AuthPage({
 
             <Box component="form" onSubmit={submit}>
               <Stack spacing={1.5}>
+                {isRegister && registrationDisabled ? (
+                  <Alert severity="warning" variant="outlined">
+                    当前暂未开放注册，已有账号可继续登录。
+                  </Alert>
+                ) : null}
                 <TextField
                   label={isRegister ? "用户名" : isAdminLogin ? "管理员用户名" : "用户名或邮箱"}
                   value={form.username}
@@ -285,7 +306,7 @@ export function AuthPage({
                     <Button
                       variant="outlined"
                       onClick={sendCode}
-                      disabled={codeLoading || countdown > 0}
+                      disabled={codeLoading || countdown > 0 || registrationDisabled}
                       sx={{ minWidth: 120, height: 56 }}
                     >
                       {countdown > 0 ? `${countdown} 秒` : "获取验证码"}
@@ -357,7 +378,7 @@ export function AuthPage({
                   variant="contained"
                   size="large"
                   startIcon={isRegister ? <PersonAddIcon /> : isAdminLogin ? <AdminPanelSettingsIcon /> : <LoginIcon />}
-                  disabled={loading}
+                  disabled={loading || (isRegister && registrationDisabled)}
                 >
                   {isRegister ? "注册" : isAdminLogin ? "进入管理后台" : "登录"}
                 </Button>
@@ -379,6 +400,7 @@ export function AuthPage({
                       size="large"
                       startIcon={<GitHubIcon />}
                       onClick={startGitHubAuth}
+                      disabled={isRegister && registrationDisabled}
                     >
                       {isRegister ? "使用 GitHub 注册" : "使用 GitHub 登录"}
                     </Button>
