@@ -110,12 +110,12 @@ func TestFullPathSmokeWithMockUpstream(t *testing.T) {
 	}
 
 	modelsResp := get(t, app, "/v1/models", userKey)
-	if modelsResp.Code != http.StatusOK || !strings.Contains(modelsResp.Body.String(), `"id":"prv_test/test-model"`) {
+	if modelsResp.Code != http.StatusOK || !strings.Contains(modelsResp.Body.String(), `"id":"mock/test-model"`) {
 		t.Fatalf("models returned %d body=%s", modelsResp.Code, modelsResp.Body.String())
 	}
 
 	bareModelsResp := get(t, app, "/models", userKey)
-	if bareModelsResp.Code != http.StatusOK || !strings.Contains(bareModelsResp.Body.String(), `"id":"prv_test/test-model"`) {
+	if bareModelsResp.Code != http.StatusOK || !strings.Contains(bareModelsResp.Body.String(), `"id":"mock/test-model"`) {
 		t.Fatalf("bare models returned %d body=%s", bareModelsResp.Code, bareModelsResp.Body.String())
 	}
 
@@ -124,25 +124,25 @@ func TestFullPathSmokeWithMockUpstream(t *testing.T) {
 		t.Fatalf("invalid bare models returned %d body=%s", invalidBareModelsResp.Code, invalidBareModelsResp.Body.String())
 	}
 
-	modelResp := get(t, app, "/v1/models/prv_test/test-model", userKey)
-	if modelResp.Code != http.StatusOK || !strings.Contains(modelResp.Body.String(), `"id":"prv_test/test-model"`) {
+	modelResp := get(t, app, "/v1/models/mock/test-model", userKey)
+	if modelResp.Code != http.StatusOK || !strings.Contains(modelResp.Body.String(), `"id":"mock/test-model"`) {
 		t.Fatalf("model retrieve returned %d body=%s", modelResp.Code, modelResp.Body.String())
 	}
 
 	compatModelsResp := get(t, app, "/v1/messages/v1/models", userKey)
-	if compatModelsResp.Code != http.StatusOK || !strings.Contains(compatModelsResp.Body.String(), `"id":"prv_test/test-model"`) {
+	if compatModelsResp.Code != http.StatusOK || !strings.Contains(compatModelsResp.Body.String(), `"id":"mock/test-model"`) {
 		t.Fatalf("compat models returned %d body=%s", compatModelsResp.Code, compatModelsResp.Body.String())
 	}
 
-	encodedMappedModel := "/v1/models/" + url.PathEscape("prv_test/openrouter/test-model")
+	encodedMappedModel := "/v1/models/" + url.PathEscape("mock/openrouter/test-model")
 	mappedModelResp := get(t, app, encodedMappedModel, userKey)
-	if mappedModelResp.Code != http.StatusOK || !strings.Contains(mappedModelResp.Body.String(), `"id":"prv_test/openrouter/test-model"`) {
+	if mappedModelResp.Code != http.StatusOK || !strings.Contains(mappedModelResp.Body.String(), `"id":"mock/openrouter/test-model"`) {
 		t.Fatalf("encoded mapped model retrieve returned %d body=%s", mappedModelResp.Code, mappedModelResp.Body.String())
 	}
 
-	compatMappedModel := "/v1/messages/v1/models/" + url.PathEscape("prv_test/openrouter/test-model")
+	compatMappedModel := "/v1/messages/v1/models/" + url.PathEscape("mock/openrouter/test-model")
 	compatMappedModelResp := get(t, app, compatMappedModel, userKey)
-	if compatMappedModelResp.Code != http.StatusOK || !strings.Contains(compatMappedModelResp.Body.String(), `"id":"prv_test/openrouter/test-model"`) {
+	if compatMappedModelResp.Code != http.StatusOK || !strings.Contains(compatMappedModelResp.Body.String(), `"id":"mock/openrouter/test-model"`) {
 		t.Fatalf("compat encoded mapped model retrieve returned %d body=%s", compatMappedModelResp.Code, compatMappedModelResp.Body.String())
 	}
 
@@ -158,7 +158,7 @@ func TestFullPathSmokeWithMockUpstream(t *testing.T) {
 	}
 
 	prefixedChatResp := postJSON(t, app, "/v1/chat/completions", map[string]interface{}{
-		"model": "prv_test/test-model",
+		"model": "mock/test-model",
 		"messages": []map[string]string{{
 			"role":    "user",
 			"content": "hello",
@@ -166,6 +166,17 @@ func TestFullPathSmokeWithMockUpstream(t *testing.T) {
 	}, userKey)
 	if prefixedChatResp.Code != http.StatusOK || !strings.Contains(prefixedChatResp.Body.String(), `"content":"ok"`) {
 		t.Fatalf("prefixed chat returned %d body=%s", prefixedChatResp.Code, prefixedChatResp.Body.String())
+	}
+
+	legacyPrefixedChatResp := postJSON(t, app, "/v1/chat/completions", map[string]interface{}{
+		"model": "prv_test/test-model",
+		"messages": []map[string]string{{
+			"role":    "user",
+			"content": "hello",
+		}},
+	}, userKey)
+	if legacyPrefixedChatResp.Code != http.StatusOK || !strings.Contains(legacyPrefixedChatResp.Body.String(), `"content":"ok"`) {
+		t.Fatalf("legacy prefixed chat returned %d body=%s", legacyPrefixedChatResp.Code, legacyPrefixedChatResp.Body.String())
 	}
 
 	for i := 0; i < 61; i++ {

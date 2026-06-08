@@ -10,6 +10,7 @@ import {
   Tooltip
 } from "@mui/material";
 import AnalyticsIcon from "@mui/icons-material/Analytics";
+import ChatBubbleOutlineIcon from "@mui/icons-material/ChatBubbleOutline";
 import KeyIcon from "@mui/icons-material/Key";
 import BarChartIcon from "@mui/icons-material/BarChart";
 import ApiIcon from "@mui/icons-material/Api";
@@ -57,6 +58,7 @@ export function Sidebar({
   const portalPages = [
     { id: "overview", icon: <AnalyticsIcon />, primary: "首页概览", secondary: "账号、Key、模型总览" },
     { id: "key", icon: <KeyIcon />, primary: "我的 Key", secondary: "复制、创建、轮换" },
+    { id: "chat", icon: <ChatBubbleOutlineIcon />, primary: "站内 Chat", secondary: "Responses 和媒体" },
     { id: "usage", icon: <BarChartIcon />, primary: "我的用量", secondary: "请求记录和 Token" },
     { id: "models", icon: <ApiIcon />, primary: "可用模型", secondary: "模型列表和接口" },
     { id: "example", icon: <RocketLaunchIcon />, primary: "怎么调用", secondary: "直接复制示例" },

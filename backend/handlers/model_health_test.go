@@ -49,7 +49,7 @@ func TestModelsHealthRouteReturnsTTLMetadata(t *testing.T) {
 		t.Fatalf("Cache-Control = %q, want public max-age", got)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{`"ttlSeconds":300`, `"id":"prv_fast/chat-fast"`, `"healthStatus":"healthy"`, `"cachedAt"`, `"expiresAt"`} {
+	for _, want := range []string{`"ttlSeconds":300`, `"id":"fast-upstream/chat-fast"`, `"healthStatus":"healthy"`, `"cachedAt"`, `"expiresAt"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("body missing %s: %s", want, body)
 		}
@@ -96,14 +96,14 @@ func TestBuildModelAvailabilityPrefixesProviders(t *testing.T) {
 	for _, item := range items {
 		byID[item.ID] = item
 	}
-	healthy := byID["prv_ok/chat-main"]
+	healthy := byID["healthy/chat-main"]
 	if healthy.HealthStatus != "healthy" || healthy.Providers != 1 || healthy.AvailableProviders != 1 || healthy.HealthyProviders != 1 {
 		t.Fatalf("healthy item = %#v", healthy)
 	}
 	if healthy.Latency != 100 || healthy.Ping != 80 || healthy.Availability7d != 99 {
 		t.Fatalf("healthy metrics = latency:%d ping:%d availability:%f", healthy.Latency, healthy.Ping, healthy.Availability7d)
 	}
-	down := byID["prv_down/chat-main"]
+	down := byID["down/chat-main"]
 	if down.HealthStatus != "down" || down.Providers != 1 || down.AvailableProviders != 0 {
 		t.Fatalf("down item = %#v", down)
 	}

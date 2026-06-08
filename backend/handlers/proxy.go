@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
+	"mime/multipart"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -22,11 +25,21 @@ func MountProxyRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /chat/completions", handleProxyToProvider)
 	mux.HandleFunc("POST /responses", handleResponsesProxyHandler)
 	mux.HandleFunc("POST /v1/responses", handleResponsesProxyHandler)
+	mux.HandleFunc("GET /responses/", handleProxyToProvider)
+	mux.HandleFunc("POST /responses/", handleProxyToProvider)
+	mux.HandleFunc("DELETE /responses/", handleProxyToProvider)
+	mux.HandleFunc("GET /v1/responses/", handleProxyToProvider)
+	mux.HandleFunc("POST /v1/responses/", handleProxyToProvider)
+	mux.HandleFunc("DELETE /v1/responses/", handleProxyToProvider)
 	mux.HandleFunc("POST /messages/count_tokens", handleAnthropicCountTokensHandler)
 	mux.HandleFunc("POST /v1/messages/count_tokens", handleAnthropicCountTokensHandler)
 	mux.HandleFunc("POST /messages", handleAnthropicMessagesProxyHandler)
 	mux.HandleFunc("POST /v1/messages", handleAnthropicMessagesProxyHandler)
+	mux.HandleFunc("GET /v1/", handleProxyToProvider)
 	mux.HandleFunc("POST /v1/", handleProxyToProvider)
+	mux.HandleFunc("PUT /v1/", handleProxyToProvider)
+	mux.HandleFunc("PATCH /v1/", handleProxyToProvider)
+	mux.HandleFunc("DELETE /v1/", handleProxyToProvider)
 }
 
 func maskKeyPreview(key string) string {
@@ -160,17 +173,93 @@ func extractProxyModel(w http.ResponseWriter, r *http.Request, info *apiKeyInfo)
 	if len(bytes.TrimSpace(bodyBytes)) == 0 {
 		return "", true
 	}
-	var body map[string]interface{}
-	if err := json.Unmarshal(bodyBytes, &body); err != nil {
-		sendInvalidProxyBodyError(w, info, 400, "Request body must be valid JSON.", "invalid_json")
+	model, err := extractModelFromBodyBytes(bodyBytes, r.Header.Get("Content-Type"))
+	if err != nil {
+		sendInvalidProxyBodyError(w, info, 400, err.Error(), "invalid_request")
 		return "", false
 	}
-	model, _ := body["model"].(string)
 	if len(model) > 200 {
 		sendInvalidProxyBodyError(w, info, 400, "Model name is too long.", "invalid_model")
 		return "", false
 	}
 	return model, true
+}
+
+func extractModelFromBodyBytes(bodyBytes []byte, contentType string) (string, error) {
+	trimmed := bytes.TrimSpace(bodyBytes)
+	if len(trimmed) == 0 {
+		return "", nil
+	}
+
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		mediaType = strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+		params = map[string]string{}
+	}
+	mediaType = strings.ToLower(mediaType)
+
+	if mediaType == "" && (trimmed[0] == '{' || trimmed[0] == '[') {
+		mediaType = "application/json"
+	}
+
+	switch mediaType {
+	case "application/json", "application/vnd.openai+json":
+		var body map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &body); err != nil {
+			return "", fmt.Errorf("Request body must be valid JSON.")
+		}
+		model, _ := body["model"].(string)
+		return strings.TrimSpace(model), nil
+	case "application/x-www-form-urlencoded":
+		values, err := url.ParseQuery(string(bodyBytes))
+		if err != nil {
+			return "", fmt.Errorf("Request form body is invalid.")
+		}
+		return strings.TrimSpace(values.Get("model")), nil
+	case "multipart/form-data":
+		boundary := params["boundary"]
+		if boundary == "" {
+			return "", fmt.Errorf("Multipart request is missing a boundary.")
+		}
+		model, err := extractMultipartModel(bodyBytes, boundary)
+		if err != nil {
+			return "", fmt.Errorf("Multipart request body is invalid.")
+		}
+		return strings.TrimSpace(model), nil
+	default:
+		return "", nil
+	}
+}
+
+func extractMultipartModel(bodyBytes []byte, boundary string) (string, error) {
+	reader := multipart.NewReader(bytes.NewReader(bodyBytes), boundary)
+	for {
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			return "", nil
+		}
+		if err != nil {
+			return "", err
+		}
+		if part.FormName() != "model" {
+			continue
+		}
+		raw, err := io.ReadAll(io.LimitReader(part, 512))
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(string(raw)), nil
+	}
+}
+
+func requestBodyLooksJSON(contentType string, bodyBytes []byte) bool {
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err == nil {
+		mediaType = strings.ToLower(mediaType)
+		return mediaType == "application/json" || strings.HasSuffix(mediaType, "+json")
+	}
+	trimmed := bytes.TrimSpace(bodyBytes)
+	return len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[')
 }
 
 func cloneRequestContent(body map[string]interface{}) map[string]interface{} {
@@ -225,6 +314,11 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 	candidates := proxy.ChooseProviderCandidates(info.DB, responseRequest)
 	if len(candidates) == 0 {
 		utils.SendError(w, 503, "No enabled upstream provider is configured.", "no_provider")
+		return
+	}
+
+	if shouldUseNativeResponses(candidates, body) {
+		handleNativeResponsesProxy(w, r, info, body, requestContent, candidates, model, stream)
 		return
 	}
 
@@ -623,6 +717,132 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 		RequestContent: requestContent,
 	})
 	proxy.RecordProviderSuccess(provider.Provider.ID)
+}
+
+func shouldUseNativeResponses(candidates []proxy.ProviderCandidate, body map[string]interface{}) bool {
+	for _, candidate := range candidates {
+		if proxy.ShouldUseNativeResponses(candidate.Provider, body) {
+			return true
+		}
+	}
+	return false
+}
+
+func handleNativeResponsesProxy(w http.ResponseWriter, r *http.Request, info *apiKeyInfo, body map[string]interface{}, requestContent map[string]interface{}, candidates []proxy.ProviderCandidate, model string, stream bool) {
+	var lastError error
+
+	for i := range candidates {
+		candidate := &candidates[i]
+		if proxy.ProviderUpstreamKind(candidate.Provider) != proxy.UpstreamOpenAI {
+			continue
+		}
+		startedAt := time.Now()
+		upstreamReq, err := proxy.BuildOpenAIJSONUpstreamRequestDetailed(
+			candidate.Provider,
+			"/v1/responses",
+			r.URL.RawQuery,
+			body,
+			candidate.UpstreamModel,
+		)
+		if err != nil {
+			lastError = err
+			continue
+		}
+
+		req, err := http.NewRequestWithContext(r.Context(), "POST", upstreamReq.URL, bytes.NewReader(upstreamReq.Body))
+		if err != nil {
+			lastError = err
+			continue
+		}
+		for key, values := range upstreamReq.Headers {
+			for _, v := range values {
+				req.Header.Add(key, v)
+			}
+		}
+		if accept := r.Header.Get("Accept"); accept != "" {
+			req.Header.Set("Accept", accept)
+		}
+
+		resp, err := proxy.DoUpstream(req)
+		if err != nil {
+			proxy.RecordProviderFailure(candidate.Provider.ID)
+			lastError = err
+			continue
+		}
+
+		if !isOK(resp.StatusCode) && proxy.IsUpstreamProviderError(resp.StatusCode) {
+			logging.RecordRequestLog(logging.RequestLogParams{
+				UserID:         info.User.ID,
+				UserName:       info.User.Name,
+				Username:       info.User.Username,
+				APIKeyID:       getKeyID(info.APIKeyRecord),
+				APIKeyName:     getKeyName(info.APIKeyRecord),
+				APIKeyPreview:  maskKeyPreview(info.APIKeyRecord.Key),
+				ProviderID:     candidate.Provider.ID,
+				ProviderName:   candidate.Provider.Name,
+				Model:          model,
+				UpstreamModel:  candidate.UpstreamModel,
+				Endpoint:       "/responses",
+				Method:         "POST",
+				Status:         resp.StatusCode,
+				OK:             false,
+				Stream:         stream,
+				DurationMs:     int(time.Since(startedAt).Milliseconds()),
+				RequestContent: requestContent,
+			})
+			proxy.RecordProviderFailure(candidate.Provider.ID)
+			resp.Body.Close()
+			lastError = fmt.Errorf("upstream provider responded with HTTP %d", resp.StatusCode)
+			continue
+		}
+
+		if !isOK(resp.StatusCode) {
+			proxy.RelayUpstreamResponse(resp, w)
+			resp.Body.Close()
+			return
+		}
+
+		utils.CopyUpstreamHeaders(resp.Header, w, nil)
+		w.WriteHeader(resp.StatusCode)
+		var usage interface{}
+		if utils.ShouldStreamResponse(r, resp) || stream {
+			usage = proxy.WriteUpstreamStreamToResponse(resp, w)
+		} else {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			usage = utils.ExtractUsageFromResponseText(string(bodyBytes))
+			w.Write(bodyBytes)
+		}
+		resp.Body.Close()
+
+		logging.RecordRequestLog(logging.RequestLogParams{
+			UserID:         info.User.ID,
+			UserName:       info.User.Name,
+			Username:       info.User.Username,
+			APIKeyID:       getKeyID(info.APIKeyRecord),
+			APIKeyName:     getKeyName(info.APIKeyRecord),
+			APIKeyPreview:  maskKeyPreview(info.APIKeyRecord.Key),
+			ProviderID:     candidate.Provider.ID,
+			ProviderName:   candidate.Provider.Name,
+			Model:          model,
+			UpstreamModel:  candidate.UpstreamModel,
+			Endpoint:       "/responses",
+			Method:         "POST",
+			Status:         resp.StatusCode,
+			OK:             true,
+			Stream:         stream,
+			DurationMs:     int(time.Since(startedAt).Milliseconds()),
+			Usage:          usage,
+			RequestContent: requestContent,
+		})
+		proxy.RecordProviderSuccess(candidate.Provider.ID)
+		return
+	}
+
+	msg := "No OpenAI-compatible upstream provider is available for native Responses features."
+	if lastError != nil {
+		msg += " Last error: " + lastError.Error()
+	}
+	utils.SendError(w, 502, msg, "native_responses_unavailable")
 }
 
 func handleAnthropicCountTokensHandler(w http.ResponseWriter, r *http.Request) {
@@ -1183,14 +1403,21 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[V1CHAT] BODY_READ len=%d preview=%s", len(bodyBytes), truncateForLog(string(bodyBytes), 300))
 
 	var body map[string]interface{}
-	if len(bytes.TrimSpace(bodyBytes)) > 0 {
+	jsonBody := requestBodyLooksJSON(r.Header.Get("Content-Type"), bodyBytes)
+	if jsonBody && len(bytes.TrimSpace(bodyBytes)) > 0 {
 		if err := json.Unmarshal(bodyBytes, &body); err != nil {
 			sendInvalidProxyBodyError(w, info, 400, "Request body must be valid JSON.", "invalid_json")
 			return
 		}
 	}
 	requestContent := cloneRequestContent(body)
-	model, _ := body["model"].(string)
+	if requestContent == nil && len(bytes.TrimSpace(bodyBytes)) > 0 {
+		requestContent = map[string]interface{}{
+			"contentType": r.Header.Get("Content-Type"),
+			"bodyBytes":   len(bodyBytes),
+		}
+	}
+	model, _ := extractModelFromBodyBytes(bodyBytes, r.Header.Get("Content-Type"))
 	if len(model) > 200 {
 		sendInvalidProxyBodyError(w, info, 400, "Model name is too long.", "invalid_model")
 		return
@@ -1203,7 +1430,14 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 	streamReq, _ := body["stream"].(bool)
 	log.Printf("[V1CHAT] BODY_PARSE model=%s stream=%v messages=%d", model, streamReq, len(extractMessages(body)))
 
-	candidates := proxy.ChooseProviderCandidates(info.DB, body)
+	routingBody := body
+	if routingBody == nil {
+		routingBody = map[string]interface{}{}
+	}
+	if model != "" {
+		routingBody["model"] = model
+	}
+	candidates := proxy.ChooseProviderCandidates(info.DB, routingBody)
 	if len(candidates) == 0 {
 		log.Printf("[V1CHAT] NO_PROVIDER model=%s", model)
 		utils.SendError(w, 503, "No enabled upstream provider is configured.", "no_provider")
@@ -1231,13 +1465,26 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[V1CHAT] TRY_CANDIDATE[%d] provider=%s upstream_model=%s",
 			i, candidate.Provider.Name, candidate.UpstreamModel)
 
-		upstreamReq, err := proxy.BuildChatCompletionsUpstreamRequestDetailed(
-			candidate.Provider,
-			r.URL.Path,
-			r.URL.RawQuery,
-			body,
-			candidate.UpstreamModel,
-		)
+		var upstreamReq proxy.ChatCompletionsUpstreamRequest
+		var err error
+		if jsonBody {
+			upstreamReq, err = proxy.BuildChatCompletionsUpstreamRequestDetailed(
+				candidate.Provider,
+				r.URL.Path,
+				r.URL.RawQuery,
+				body,
+				candidate.UpstreamModel,
+			)
+		} else {
+			upstreamReq, err = proxy.BuildOpenAICompatibleUpstreamRequestDetailed(
+				candidate.Provider,
+				r.URL.Path,
+				r.URL.RawQuery,
+				bodyBytes,
+				r.Header.Get("Content-Type"),
+				candidate.UpstreamModel,
+			)
+		}
 		if err != nil {
 			log.Printf("[V1CHAT] BUILD_UPSTREAM_REQ_ERROR err=%v", err)
 			lastError = err

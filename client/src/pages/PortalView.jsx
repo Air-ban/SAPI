@@ -42,6 +42,7 @@ import { UsageSection } from "../user/UsageSection";
 import { UserSettingsSection } from "../user/UserSettingsSection";
 import { UserSuggestionSection } from "../user/UserSuggestionSection";
 import { TokenUsageChart } from "../user/TokenUsageChart";
+import { ChatSection } from "../user/ChatSection";
 
 const CLI_TOOLS = [
   { id: "codex", name: "Codex" },
@@ -94,12 +95,13 @@ export function PortalView({
     `  -H "Content-Type: application/json" \\`,
     `  -d '{"model":"${model}","messages":[{"role":"user","content":"hello"}]}'`
   ].join("\n");
-  const currentPage = ["overview", "key", "usage", "models", "example", "settings", "suggestion"].includes(page)
+  const currentPage = ["overview", "key", "chat", "usage", "models", "example", "settings", "suggestion"].includes(page)
     ? page
     : "overview";
   const pageMeta = {
     overview: { title: "可调用 API", description: "API Key、模型和端点摘要。" },
     key: { title: "API Key", description: "管理你的 HanGuan's SuperAPI 调用密钥。" },
+    chat: { title: "站内 Chat", description: "基于 OpenAI Responses 协议测试文本、代码、视觉、音频、工具和结构化输出。" },
     usage: { title: "请求与用量", description: "查看 Token 用量和请求记录。" },
     models: { title: "模型与端点", description: "查看当前可用模型和 OpenAI 兼容端点。" },
     example: { title: "调用示例", description: "复制可直接执行的 curl 请求。" },
@@ -357,6 +359,16 @@ export function PortalView({
 
       {currentPage === "usage" && usage ? (
         <UsageSection usage={usage} onLoadRequestContent={onLoadRequestContent} />
+      ) : null}
+
+      {currentPage === "chat" ? (
+        <ChatSection
+          config={effectiveConfig}
+          apiKeys={apiKeys}
+          selectedKey={displayKey}
+          onToast={onToast}
+          onCopy={onCopy}
+        />
       ) : null}
 
       {currentPage === "models" ? (

@@ -40,9 +40,14 @@ func TestProxyRoutesMatchSupportedEndpointVariants(t *testing.T) {
 		{name: "root count tokens", method: http.MethodPost, path: "/messages/count_tokens", status: http.StatusUnauthorized},
 		{name: "v1 count tokens", method: http.MethodPost, path: "/v1/messages/count_tokens", status: http.StatusUnauthorized},
 		{name: "generic v1 post", method: http.MethodPost, path: "/v1/embeddings", status: http.StatusUnauthorized},
-		{name: "unsupported v1 get", method: http.MethodGet, path: "/v1/embeddings", status: http.StatusMethodNotAllowed},
-		{name: "unsupported responses get", method: http.MethodGet, path: "/responses", status: http.StatusMethodNotAllowed},
-		{name: "unsupported messages get", method: http.MethodGet, path: "/v1/messages", status: http.StatusMethodNotAllowed},
+		{name: "generic v1 get", method: http.MethodGet, path: "/v1/files", status: http.StatusUnauthorized},
+		{name: "generic v1 delete", method: http.MethodDelete, path: "/v1/files/file_123", status: http.StatusUnauthorized},
+		{name: "generic audio post", method: http.MethodPost, path: "/v1/audio/transcriptions", status: http.StatusUnauthorized},
+		{name: "generic images post", method: http.MethodPost, path: "/v1/images/generations", status: http.StatusUnauthorized},
+		{name: "responses resource get", method: http.MethodGet, path: "/responses/resp_123", status: http.StatusUnauthorized},
+		{name: "v1 responses resource get", method: http.MethodGet, path: "/v1/responses/resp_123", status: http.StatusUnauthorized},
+		{name: "file content get", method: http.MethodGet, path: "/v1/files/file_123/content", status: http.StatusUnauthorized},
+		{name: "unsupported messages get", method: http.MethodGet, path: "/messages", status: http.StatusMethodNotAllowed},
 	}
 
 	for _, tt := range tests {

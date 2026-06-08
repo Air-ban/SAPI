@@ -1,7 +1,11 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
+	"mime"
+	"mime/multipart"
 	"strings"
 	"testing"
 
@@ -103,6 +107,63 @@ func TestNonChatPathKeepsOpenAICompatibleForwarding(t *testing.T) {
 	}
 	if payload["model"] != "mapped-model" {
 		t.Fatalf("expected mapped model, got %#v", payload["model"])
+	}
+}
+
+func TestOpenAICompatibleMultipartRewritesModel(t *testing.T) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("model", "public-audio"); err != nil {
+		t.Fatal(err)
+	}
+	part, err := writer.CreateFormFile("file", "sample.mp3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte("audio-bytes")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	req, err := BuildOpenAICompatibleUpstreamRequestDetailed(models.Provider{
+		Name:    "OpenAI",
+		BaseURL: "https://api.openai.com/v1",
+		APIKey:  "sk-upstream",
+	}, "/v1/audio/transcriptions", "", body.Bytes(), writer.FormDataContentType(), "whisper-real")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.URL != "https://api.openai.com/v1/audio/transcriptions" {
+		t.Fatalf("unexpected URL: %s", req.URL)
+	}
+	if req.Headers.Get("Authorization") != "Bearer sk-upstream" {
+		t.Fatalf("missing upstream bearer auth: %#v", req.Headers)
+	}
+
+	_, params, err := mime.ParseMediaType(req.Headers.Get("Content-Type"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := multipart.NewReader(bytes.NewReader(req.Body), params["boundary"])
+	fields := map[string]string{}
+	for {
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := io.ReadAll(part)
+		fields[part.FormName()] = string(raw)
+	}
+	if fields["model"] != "whisper-real" {
+		t.Fatalf("expected rewritten model, got fields=%#v", fields)
+	}
+	if fields["file"] != "audio-bytes" {
+		t.Fatalf("expected file content to be preserved, got fields=%#v", fields)
 	}
 }
 

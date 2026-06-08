@@ -37,7 +37,7 @@ func TestChooseProviderCandidatesRoutesPrefixedModelToChannel(t *testing.T) {
 		Providers: []models.Provider{
 			{
 				ID:            "prv_a",
-				Name:          "A",
+				Name:          "Alpha",
 				Models:        []models.Model{{ID: "chat-main", Name: "Chat Main"}},
 				ModelMappings: map[string]string{},
 				Enabled:       true,
@@ -45,7 +45,7 @@ func TestChooseProviderCandidatesRoutesPrefixedModelToChannel(t *testing.T) {
 			},
 			{
 				ID:            "prv_b",
-				Name:          "B",
+				Name:          "Beta",
 				Models:        []models.Model{{ID: "chat-main", Name: "Chat Main"}},
 				ModelMappings: map[string]string{},
 				Enabled:       true,
@@ -54,12 +54,43 @@ func TestChooseProviderCandidatesRoutesPrefixedModelToChannel(t *testing.T) {
 		},
 	}
 
+	candidates := ChooseProviderCandidates(db, map[string]interface{}{"model": "alpha/chat-main"})
+	if len(candidates) != 1 {
+		t.Fatalf("candidates = %#v, want one", candidates)
+	}
+	if candidates[0].Provider.ID != "prv_a" || candidates[0].UpstreamModel != "chat-main" {
+		t.Fatalf("candidate = %#v, want alpha/chat-main", candidates[0])
+	}
+}
+
+func TestChooseProviderCandidatesKeepsLegacyProviderIDPrefix(t *testing.T) {
+	db := &models.Database{
+		Providers: []models.Provider{{
+			ID:            "prv_a",
+			Name:          "Alpha",
+			Models:        []models.Model{{ID: "chat-main", Name: "Chat Main"}},
+			ModelMappings: map[string]string{},
+			Enabled:       true,
+		}},
+	}
+
 	candidates := ChooseProviderCandidates(db, map[string]interface{}{"model": "prv_a/chat-main"})
 	if len(candidates) != 1 {
 		t.Fatalf("candidates = %#v, want one", candidates)
 	}
 	if candidates[0].Provider.ID != "prv_a" || candidates[0].UpstreamModel != "chat-main" {
-		t.Fatalf("candidate = %#v, want prv_a/chat-main", candidates[0])
+		t.Fatalf("candidate = %#v, want legacy prv_a/chat-main", candidates[0])
+	}
+}
+
+func TestPrefixedModelIDUsesPublicChannelName(t *testing.T) {
+	id := PrefixedModelID(models.Provider{
+		ID:      "prv_openrouter",
+		Name:    "OpenRouter",
+		BaseURL: "https://openrouter.ai/api/v1",
+	}, "gpt-4o-mini")
+	if id != "openrouter/gpt-4o-mini" {
+		t.Fatalf("PrefixedModelID = %q, want openrouter/gpt-4o-mini", id)
 	}
 }
 

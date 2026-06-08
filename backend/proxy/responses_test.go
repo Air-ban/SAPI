@@ -229,6 +229,127 @@ func TestConvertInputToMessagesPreservesCustomToolHistory(t *testing.T) {
 	}
 }
 
+func TestConvertInputToMessagesPreservesResponsesImageBlocks(t *testing.T) {
+	messages := convertInputToMessages([]interface{}{
+		map[string]interface{}{
+			"role": "user",
+			"content": []interface{}{
+				map[string]interface{}{
+					"type": "input_text",
+					"text": "describe this image",
+				},
+				map[string]interface{}{
+					"type":      "input_image",
+					"image_url": "data:image/png;base64,abc123",
+				},
+			},
+		},
+	}, "")
+
+	if len(messages) != 1 {
+		t.Fatalf("expected 1 message, got %d: %#v", len(messages), messages)
+	}
+	if messages[0]["role"] != "user" {
+		t.Fatalf("expected user role, got %v", messages[0]["role"])
+	}
+
+	content := messages[0]["content"].([]interface{})
+	if len(content) != 2 {
+		t.Fatalf("expected 2 multimodal content parts, got %d: %#v", len(content), content)
+	}
+
+	textPart := content[0].(map[string]interface{})
+	if textPart["type"] != "text" || textPart["text"] != "describe this image" {
+		t.Fatalf("expected text part to be preserved, got %#v", textPart)
+	}
+
+	imagePart := content[1].(map[string]interface{})
+	if imagePart["type"] != "image_url" {
+		t.Fatalf("expected image_url part, got %#v", imagePart)
+	}
+	imageURL := imagePart["image_url"].(map[string]interface{})
+	if imageURL["url"] != "data:image/png;base64,abc123" {
+		t.Fatalf("expected image data URL to be preserved, got %#v", imageURL)
+	}
+}
+
+func TestConvertInputToMessagesUsesTextForTextOnlyResponsesParts(t *testing.T) {
+	messages := convertInputToMessages([]interface{}{
+		map[string]interface{}{
+			"role": "user",
+			"content": []interface{}{
+				map[string]interface{}{"type": "input_text", "text": "first"},
+				map[string]interface{}{"type": "input_file", "filename": "notes.md", "text": "second"},
+			},
+		},
+	}, "")
+
+	if len(messages) != 1 {
+		t.Fatalf("expected 1 message, got %d: %#v", len(messages), messages)
+	}
+	content, ok := messages[0]["content"].(string)
+	if !ok {
+		t.Fatalf("expected text-only content to stay string, got %#v", messages[0]["content"])
+	}
+	if content != "first\n[Uploaded file: notes.md]\nsecond" {
+		t.Fatalf("unexpected text-only content: %q", content)
+	}
+}
+
+func TestConvertInputToMessagesPreservesResponsesAudioBlocks(t *testing.T) {
+	messages := convertInputToMessages([]interface{}{
+		map[string]interface{}{
+			"role": "user",
+			"content": []interface{}{
+				map[string]interface{}{"type": "input_text", "text": "transcribe"},
+				map[string]interface{}{
+					"type": "input_audio",
+					"input_audio": map[string]interface{}{
+						"data":   "abc123",
+						"format": "mp3",
+					},
+				},
+			},
+		},
+	}, "")
+
+	content := messages[0]["content"].([]interface{})
+	audioPart := content[1].(map[string]interface{})
+	if audioPart["type"] != "input_audio" {
+		t.Fatalf("expected input_audio part, got %#v", audioPart)
+	}
+	inputAudio := audioPart["input_audio"].(map[string]interface{})
+	if inputAudio["data"] != "abc123" || inputAudio["format"] != "mp3" {
+		t.Fatalf("unexpected audio payload: %#v", inputAudio)
+	}
+}
+
+func TestConvertResponsesTextFormatToChatResponseFormat(t *testing.T) {
+	payload := ConvertToChatCompletionsPayload(map[string]interface{}{
+		"model": "test-model",
+		"input": "hello",
+		"text": map[string]interface{}{
+			"format": map[string]interface{}{
+				"type":   "json_schema",
+				"name":   "result",
+				"strict": true,
+				"schema": map[string]interface{}{
+					"type": "object",
+				},
+			},
+		},
+	})
+
+	format := payload["response_format"].(map[string]interface{})
+	if format["type"] != "json_schema" {
+		t.Fatalf("expected json_schema response_format, got %#v", format)
+	}
+	jsonSchema := format["json_schema"].(map[string]interface{})
+	if jsonSchema["name"] != "result" || jsonSchema["strict"] != true {
+		t.Fatalf("unexpected json schema payload: %#v", jsonSchema)
+	}
+}
+
 func TestExtractChatCompletionToolCallItemsRestoresCustomToolsFromFunctions(t *testing.T) {
 	items := ExtractChatCompletionToolCallItems(map[string]interface{}{
 		"choices": []interface{}{

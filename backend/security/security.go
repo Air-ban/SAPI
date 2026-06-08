@@ -365,7 +365,8 @@ func requestBodyMayExist(method string) bool {
 func requestBodyLimitForPath(path string) int64 {
 	cfgMu.RLock()
 	defer cfgMu.RUnlock()
-	if path == "/chat/completions" || path == "/responses" || path == "/messages" ||
+	if path == "/chat/completions" || path == "/responses" || strings.HasPrefix(path, "/responses/") ||
+		path == "/messages" || strings.HasPrefix(path, "/messages/") ||
 		strings.HasPrefix(path, "/v1/") {
 		return runtimeConfig.ProxyBodyLimitBytes
 	}

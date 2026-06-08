@@ -118,6 +118,9 @@ func ChooseProviderCandidates(db *models.Database, body map[string]interface{}) 
 	}
 
 	if model != "" {
+		if matched := exactProviderModelMappings(enabled, model); len(matched) > 0 {
+			return matched
+		}
 		var channelMatched bool
 		enabled, model, channelMatched = selectRequestedModelChannel(db, enabled, model)
 		if channelMatched && len(enabled) == 0 {
@@ -151,6 +154,9 @@ func ChooseAnthropicProviderCandidates(db *models.Database, model string) []Prov
 	}
 
 	if model != "" {
+		if matched := exactProviderModelMappings(enabled, model); len(matched) > 0 {
+			return matched
+		}
 		var channelMatched bool
 		enabled, model, channelMatched = selectRequestedModelChannel(db, enabled, model)
 		if channelMatched && len(enabled) == 0 {
@@ -190,6 +196,20 @@ func ChooseAnthropicProviderCandidates(db *models.Database, model string) []Prov
 	return []ProviderCandidate{{Provider: first, UpstreamModel: model}}
 }
 
+func exactProviderModelMappings(providers []models.Provider, model string) []ProviderCandidate {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return nil
+	}
+	matched := make([]ProviderCandidate, 0)
+	for _, p := range providers {
+		if mapping := GetModelProviderMapping(p, model); mapping != nil {
+			matched = append(matched, *mapping)
+		}
+	}
+	return matched
+}
+
 func selectRequestedModelChannel(db *models.Database, enabled []models.Provider, model string) ([]models.Provider, string, bool) {
 	channelID, innerID, ok := SplitPrefixedModelID(model)
 	if !ok {
@@ -198,7 +218,7 @@ func selectRequestedModelChannel(db *models.Database, enabled []models.Provider,
 
 	matchesKnownProvider := false
 	for _, p := range db.Providers {
-		if strings.TrimSpace(p.ID) == channelID {
+		if ModelChannelMatchesProvider(p, channelID) {
 			matchesKnownProvider = true
 			break
 		}
@@ -209,7 +229,7 @@ func selectRequestedModelChannel(db *models.Database, enabled []models.Provider,
 
 	filtered := make([]models.Provider, 0, 1)
 	for _, p := range enabled {
-		if strings.TrimSpace(p.ID) == channelID {
+		if ModelChannelMatchesProvider(p, channelID) {
 			filtered = append(filtered, p)
 			break
 		}

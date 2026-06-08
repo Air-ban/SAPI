@@ -66,8 +66,8 @@ func convertInputToMessages(input interface{}, instructions string) []map[string
 }
 
 func appendMessage(messages *[]map[string]interface{}, role string, content interface{}) {
-	text := strings.TrimSpace(utils.ExtractTextFromContent(content))
-	if text == "" {
+	chatContent, ok := responsesContentToChatContent(content)
+	if !ok {
 		return
 	}
 	if role == "developer" {
@@ -78,8 +78,218 @@ func appendMessage(messages *[]map[string]interface{}, role string, content inte
 	}
 	*messages = append(*messages, map[string]interface{}{
 		"role":    role,
-		"content": text,
+		"content": chatContent,
 	})
+}
+
+func responsesContentToChatContent(content interface{}) (interface{}, bool) {
+	switch v := content.(type) {
+	case nil:
+		return nil, false
+	case string:
+		text := strings.TrimSpace(v)
+		if text == "" {
+			return nil, false
+		}
+		return text, true
+	case []interface{}:
+		return responsesContentPartsToChatContent(v)
+	case map[string]interface{}:
+		if part, text, kind, ok := responsesContentPartToChatPart(v); ok {
+			if kind == "image" || kind == "audio" {
+				return []interface{}{part}, true
+			}
+			return text, true
+		}
+		text := strings.TrimSpace(utils.ExtractTextFromContent(v))
+		if text == "" {
+			return nil, false
+		}
+		return text, true
+	default:
+		text := strings.TrimSpace(utils.ExtractTextFromContent(v))
+		if text == "" {
+			return nil, false
+		}
+		return text, true
+	}
+}
+
+func responsesContentPartsToChatContent(items []interface{}) (interface{}, bool) {
+	parts := make([]interface{}, 0, len(items))
+	textParts := make([]string, 0, len(items))
+	hasMedia := false
+
+	for _, item := range items {
+		part, text, kind, ok := responsesContentPartToChatPart(item)
+		if !ok {
+			continue
+		}
+		switch kind {
+		case "image", "audio":
+			hasMedia = true
+			parts = append(parts, part)
+		case "text":
+			textParts = append(textParts, text)
+			parts = append(parts, map[string]interface{}{
+				"type": "text",
+				"text": text,
+			})
+		}
+	}
+
+	if len(parts) == 0 {
+		return nil, false
+	}
+	if !hasMedia {
+		text := strings.TrimSpace(strings.Join(textParts, "\n"))
+		if text == "" {
+			return nil, false
+		}
+		return text, true
+	}
+	return parts, true
+}
+
+func responsesContentPartToChatPart(item interface{}) (map[string]interface{}, string, string, bool) {
+	switch v := item.(type) {
+	case nil:
+		return nil, "", "", false
+	case string:
+		text := strings.TrimSpace(v)
+		if text == "" {
+			return nil, "", "", false
+		}
+		return nil, text, "text", true
+	case map[string]interface{}:
+		itemType := strings.ToLower(firstStringFromBody(v, "type"))
+		switch itemType {
+		case "input_text", "output_text", "text":
+			text := strings.TrimSpace(utils.ExtractTextFromContent(v["text"]))
+			if text == "" {
+				text = strings.TrimSpace(utils.ExtractTextFromContent(v["content"]))
+			}
+			if text == "" {
+				return nil, "", "", false
+			}
+			return nil, text, "text", true
+		case "input_image", "image", "image_url":
+			imageURL := extractResponsesImageURL(v)
+			if imageURL == "" {
+				return nil, "", "", false
+			}
+			return map[string]interface{}{
+				"type": "image_url",
+				"image_url": map[string]interface{}{
+					"url": imageURL,
+				},
+			}, "", "image", true
+		case "input_audio", "audio":
+			audio := extractResponsesAudio(v)
+			if audio == nil {
+				return nil, "", "", false
+			}
+			return map[string]interface{}{
+				"type":        "input_audio",
+				"input_audio": audio,
+			}, "", "audio", true
+		case "input_file", "file":
+			text := responsesFileText(v)
+			if text == "" {
+				return nil, "", "", false
+			}
+			return nil, text, "text", true
+		}
+
+		if v["content"] != nil {
+			if content, ok := responsesContentToChatContent(v["content"]); ok {
+				if text, ok := content.(string); ok {
+					return nil, text, "text", true
+				}
+			}
+		}
+		if v["text"] != nil || v["value"] != nil || v["parts"] != nil {
+			text := strings.TrimSpace(utils.ExtractTextFromContent(v))
+			if text != "" {
+				return nil, text, "text", true
+			}
+		}
+		return nil, "", "", false
+	default:
+		text := strings.TrimSpace(utils.ExtractTextFromContent(v))
+		if text == "" {
+			return nil, "", "", false
+		}
+		return nil, text, "text", true
+	}
+}
+
+func extractResponsesImageURL(item map[string]interface{}) string {
+	if url := firstStringFromBody(item, "url", "image", "file_url"); url != "" {
+		return url
+	}
+	for _, key := range []string{"image_url", "file_url"} {
+		switch v := item[key].(type) {
+		case string:
+			if strings.TrimSpace(v) != "" {
+				return strings.TrimSpace(v)
+			}
+		case map[string]interface{}:
+			if url := firstStringFromBody(v, "url"); url != "" {
+				return url
+			}
+		}
+	}
+	return ""
+}
+
+func extractResponsesAudio(item map[string]interface{}) map[string]interface{} {
+	if audio, _ := item["input_audio"].(map[string]interface{}); audio != nil {
+		data := firstStringFromBody(audio, "data")
+		format := firstStringFromBody(audio, "format")
+		if data == "" {
+			data = firstStringFromBody(audio, "url")
+		}
+		if data == "" {
+			return nil
+		}
+		result := map[string]interface{}{"data": data}
+		if format != "" {
+			result["format"] = format
+		}
+		return result
+	}
+
+	data := firstStringFromBody(item, "data", "audio", "url")
+	if data == "" {
+		return nil
+	}
+	result := map[string]interface{}{"data": data}
+	if format := firstStringFromBody(item, "format"); format != "" {
+		result["format"] = format
+	}
+	return result
+}
+
+func responsesFileText(item map[string]interface{}) string {
+	filename := firstStringFromBody(item, "filename", "name")
+	text := strings.TrimSpace(utils.ExtractTextFromContent(item["text"]))
+	if text == "" {
+		text = strings.TrimSpace(utils.ExtractTextFromContent(item["content"]))
+	}
+	if text == "" {
+		text = strings.TrimSpace(utils.ExtractTextFromContent(item["value"]))
+	}
+	if text == "" {
+		if filename == "" {
+			return ""
+		}
+		return fmt.Sprintf("[Uploaded file: %s]", filename)
+	}
+	if filename == "" {
+		return text
+	}
+	return fmt.Sprintf("[Uploaded file: %s]\n%s", filename, text)
 }
 
 func appendResponsesToolMessage(messages *[]map[string]interface{}, item map[string]interface{}) bool {
@@ -201,6 +411,12 @@ func ConvertToChatCompletionsPayload(body map[string]interface{}) map[string]int
 		payload["max_tokens"] = mt
 	}
 
+	if responseFormat, ok := ConvertResponsesTextFormatToChatResponseFormat(body["text"]); ok {
+		payload["response_format"] = responseFormat
+	} else if responseFormat, ok := body["response_format"].(map[string]interface{}); ok {
+		payload["response_format"] = responseFormat
+	}
+
 	for _, key := range []string{"temperature", "top_p", "frequency_penalty", "presence_penalty"} {
 		if v, ok := body[key]; ok {
 			payload[key] = v
@@ -208,6 +424,44 @@ func ConvertToChatCompletionsPayload(body map[string]interface{}) map[string]int
 	}
 
 	return payload
+}
+
+func ConvertResponsesTextFormatToChatResponseFormat(textConfig interface{}) (map[string]interface{}, bool) {
+	cfg, ok := textConfig.(map[string]interface{})
+	if !ok || cfg == nil {
+		return nil, false
+	}
+	format, _ := cfg["format"].(map[string]interface{})
+	if format == nil {
+		return nil, false
+	}
+
+	formatType := firstStringFromBody(format, "type")
+	switch formatType {
+	case "json_object":
+		return map[string]interface{}{"type": "json_object"}, true
+	case "json_schema":
+		name := firstStringFromBody(format, "name")
+		if name == "" {
+			name = "response"
+		}
+		jsonSchema := map[string]interface{}{
+			"name":   name,
+			"schema": format["schema"],
+		}
+		if description := firstStringFromBody(format, "description"); description != "" {
+			jsonSchema["description"] = description
+		}
+		if strict, ok := format["strict"].(bool); ok {
+			jsonSchema["strict"] = strict
+		}
+		return map[string]interface{}{
+			"type":        "json_schema",
+			"json_schema": jsonSchema,
+		}, true
+	default:
+		return nil, false
+	}
 }
 
 func ExtractChatCompletionText(payload map[string]interface{}) (text string, finishReason string, usage interface{}) {
