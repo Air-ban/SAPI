@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"sapi/auth"
+	"sapi/config"
 	"sapi/middleware"
 	"sapi/models"
 	"sapi/security"
@@ -75,13 +76,25 @@ func writeUserSession(w http.ResponseWriter, r *http.Request, includeSession boo
 	}
 	if includeSession {
 		session := currentSessionPayload(r)
-		if session == nil || session["role"] != "user" || session["sub"] != user.ID {
+		if !sessionMatchesUser(session, user) {
 			utils.SendError(w, 401, "User authentication is invalid.", "unauthorized")
 			return
 		}
 		payload["session"] = session
 	}
 	json.NewEncoder(w).Encode(payload)
+}
+
+func sessionMatchesUser(session map[string]interface{}, user *models.User) bool {
+	if session == nil || user == nil {
+		return false
+	}
+	role, _ := session["role"].(string)
+	sub, _ := session["sub"].(string)
+	if isAdminVirtualUser(user) {
+		return role == "admin" && auth.SafeEqual(sub, config.Load().AdminUser)
+	}
+	return role == "user" && auth.SafeEqual(sub, user.ID)
 }
 
 func currentSessionPayload(r *http.Request) map[string]interface{} {
@@ -117,6 +130,18 @@ func handleUserCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 		rpmLimit = int(v)
 	}
 
+	if isAdminVirtualUser(user) {
+		result := store.MutateDB(func(db *models.Database) interface{} {
+			createAdminUserAPIKeyRecord(db, name, allowedModels)
+			return adminVirtualUserFromDB(db)
+		})
+		w.WriteHeader(201)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"user": sanitizeUser(result.(*models.User)),
+		})
+		return
+	}
+
 	result := store.MutateDB(func(db *models.Database) interface{} {
 		for i := range db.Users {
 			if db.Users[i].ID == user.ID {
@@ -143,6 +168,21 @@ func handleUserRotateAPIKey(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r)
 	body, ok := readJSONBody(w, r)
 	if !ok {
+		return
+	}
+
+	if isAdminVirtualUser(user) {
+		result := store.MutateDB(func(db *models.Database) interface{} {
+			targetID, _ := body["id"].(string)
+			if rotateAdminAPIKeyRecord(db, targetID) {
+				return adminVirtualUserFromDB(db)
+			}
+			createAdminUserAPIKeyRecord(db, toString(body["name"]), nil)
+			return adminVirtualUserFromDB(db)
+		})
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"user": sanitizeUser(result.(*models.User)),
+		})
 		return
 	}
 
@@ -203,6 +243,23 @@ func handleUserRotateSpecificKey(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r)
 	keyID := r.PathValue("id")
 
+	if isAdminVirtualUser(user) {
+		result := store.MutateDB(func(db *models.Database) interface{} {
+			if rotateAdminAPIKeyRecord(db, keyID) {
+				return adminVirtualUserFromDB(db)
+			}
+			return false
+		})
+		if found, ok := result.(bool); ok && !found {
+			utils.SendError(w, 404, "API key not found.", "not_found")
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"user": sanitizeUser(result.(*models.User)),
+		})
+		return
+	}
+
 	result := store.MutateDB(func(db *models.Database) interface{} {
 		for i := range db.Users {
 			if db.Users[i].ID == user.ID {
@@ -245,6 +302,27 @@ func handleUserUpdateAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if isAdminVirtualUser(user) {
+		result := store.MutateDB(func(db *models.Database) interface{} {
+			for i := range db.AdminAPIKeys {
+				if db.AdminAPIKeys[i].ID == keyID {
+					updateUserAPIKeyRecord(&db.AdminAPIKeys[i], user, body)
+					db.AdminAPIKeys[i].RPMLimit = 0
+					return adminVirtualUserFromDB(db)
+				}
+			}
+			return false
+		})
+		if found, ok := result.(bool); ok && !found {
+			utils.SendError(w, 404, "API key not found.", "not_found")
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"user": sanitizeUser(result.(*models.User)),
+		})
+		return
+	}
+
 	result := store.MutateDB(func(db *models.Database) interface{} {
 		for i := range db.Users {
 			if db.Users[i].ID == user.ID {
@@ -252,24 +330,7 @@ func handleUserUpdateAPIKey(w http.ResponseWriter, r *http.Request) {
 				for j := range u.APIKeys {
 					if u.APIKeys[j].ID == keyID {
 						k := &u.APIKeys[j]
-						if name, ok := body["name"].(string); ok {
-							k.Name = security.SafeSingleLine(name, 120)
-						}
-						if enabled, ok := body["enabled"].(bool); ok {
-							k.Enabled = enabled
-						}
-						if am, ok := body["allowedModels"].([]interface{}); ok {
-							models := make([]string, 0)
-							for _, m := range am {
-								if item := security.SafeSingleLine(toString(m), 200); item != "" {
-									models = append(models, item)
-								}
-							}
-							k.AllowedModels = models
-						}
-						if rpm, ok := body["rpmLimit"].(float64); ok {
-							k.RPMLimit = subscription.ClampAPIKeyRPMLimit(u, int(rpm))
-						}
+						updateUserAPIKeyRecord(k, u, body)
 						now := store.Now()
 						k.UpdatedAt = now
 						u.APIKey = primaryAPIKeyFromRecords(getAPIKeys(u))
@@ -300,6 +361,26 @@ func handleUserUpdateAPIKey(w http.ResponseWriter, r *http.Request) {
 func handleUserDeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r)
 	keyID := r.PathValue("id")
+
+	if isAdminVirtualUser(user) {
+		result := store.MutateDB(func(db *models.Database) interface{} {
+			before := len(db.AdminAPIKeys)
+			filtered := make([]models.APIKeyRecord, 0, len(db.AdminAPIKeys))
+			for _, k := range db.AdminAPIKeys {
+				if k.ID != keyID {
+					filtered = append(filtered, k)
+				}
+			}
+			db.AdminAPIKeys = filtered
+			return before != len(filtered)
+		})
+		if !result.(bool) {
+			utils.SendError(w, 404, "API key not found.", "not_found")
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
+		return
+	}
 
 	result := store.MutateDB(func(db *models.Database) interface{} {
 		for i := range db.Users {
@@ -343,6 +424,13 @@ func handleUserSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if isAdminVirtualUser(user) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"user": sanitizeUser(adminVirtualUserFromDB(store.ReadDB())),
+		})
+		return
+	}
+
 	result := store.MutateDB(func(db *models.Database) interface{} {
 		for i := range db.Users {
 			if db.Users[i].ID == user.ID {
@@ -373,6 +461,10 @@ func handleUserDeleteAccount(w http.ResponseWriter, r *http.Request) {
 		utils.SendError(w, 401, "User authentication is required.", "unauthorized")
 		return
 	}
+	if isAdminVirtualUser(user) {
+		utils.SendError(w, 403, "Admin account cannot be deleted from the user portal.", "admin_account_cannot_be_deleted")
+		return
+	}
 
 	if !store.DeleteUserAccount(user.ID) {
 		utils.SendError(w, 404, "User not found.", "not_found")
@@ -389,7 +481,11 @@ func handleUserUsage(w http.ResponseWriter, r *http.Request) {
 	if d, err := strconv.Atoi(r.URL.Query().Get("days")); err == nil {
 		days = min(max(d, 1), 365)
 	}
-	json.NewEncoder(w).Encode(usage.GetUsageStats(db, user.ID, days))
+	userID := user.ID
+	if isAdminVirtualUser(user) {
+		userID = ""
+	}
+	json.NewEncoder(w).Encode(usage.GetUsageStats(db, userID, days))
 }
 
 func handleUserRequestLog(w http.ResponseWriter, r *http.Request) {
@@ -398,7 +494,11 @@ func handleUserRequestLog(w http.ResponseWriter, r *http.Request) {
 		utils.SendError(w, 401, "User authentication is required.", "unauthorized")
 		return
 	}
-	item, ok := store.FindRequestLog(r.PathValue("id"), user.ID)
+	userID := user.ID
+	if isAdminVirtualUser(user) {
+		userID = ""
+	}
+	item, ok := store.FindRequestLog(r.PathValue("id"), userID)
 	if !ok {
 		utils.SendError(w, 404, "Request log not found.", "not_found")
 		return
@@ -411,7 +511,7 @@ func handleUserSuggestions(w http.ResponseWriter, r *http.Request) {
 	db := store.ReadDB()
 	items := make([]models.Suggestion, 0)
 	for _, suggestion := range db.Suggestions {
-		if suggestion.UserID == user.ID {
+		if isAdminVirtualUser(user) || suggestion.UserID == user.ID {
 			items = append(items, suggestion)
 		}
 	}
@@ -450,6 +550,97 @@ func createUserAPIKeyRecord(user *models.User, db *models.Database, name string,
 	}
 	user.UpdatedAt = now
 	return &record
+}
+
+func createAdminUserAPIKeyRecord(db *models.Database, name string, allowedModels []string) *models.APIKeyRecord {
+	if db.AdminAPIKeys == nil {
+		db.AdminAPIKeys = []models.APIKeyRecord{}
+	}
+	now := store.Now()
+	keyName := security.SafeSingleLine(name, 120)
+	if keyName == "" {
+		keyName = "Admin Key " + toString(len(db.AdminAPIKeys)+1)
+	}
+
+	record := models.APIKeyRecord{
+		ID:            auth.RandomID("key"),
+		Name:          keyName,
+		Key:           auth.RandomAPIKey(),
+		Enabled:       true,
+		AllowedModels: allowedModels,
+		RPMLimit:      0,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	db.AdminAPIKeys = append(db.AdminAPIKeys, record)
+	return &record
+}
+
+func rotateAdminAPIKeyRecord(db *models.Database, keyID string) bool {
+	if db.AdminAPIKeys == nil {
+		db.AdminAPIKeys = []models.APIKeyRecord{}
+	}
+	targetIndex := -1
+	if keyID != "" {
+		for i := range db.AdminAPIKeys {
+			if db.AdminAPIKeys[i].ID == keyID {
+				targetIndex = i
+				break
+			}
+		}
+	}
+	if targetIndex < 0 {
+		for i := range db.AdminAPIKeys {
+			if db.AdminAPIKeys[i].Enabled {
+				targetIndex = i
+				break
+			}
+		}
+	}
+	if targetIndex < 0 {
+		return false
+	}
+	db.AdminAPIKeys[targetIndex].Key = auth.RandomAPIKey()
+	db.AdminAPIKeys[targetIndex].RPMLimit = 0
+	db.AdminAPIKeys[targetIndex].UpdatedAt = store.Now()
+	return true
+}
+
+func updateUserAPIKeyRecord(k *models.APIKeyRecord, user *models.User, body map[string]interface{}) {
+	if k == nil {
+		return
+	}
+	if name, ok := body["name"].(string); ok {
+		k.Name = security.SafeSingleLine(name, 120)
+	}
+	if enabled, ok := body["enabled"].(bool); ok {
+		k.Enabled = enabled
+	}
+	if am, ok := body["allowedModels"].([]interface{}); ok {
+		models := make([]string, 0)
+		for _, m := range am {
+			if item := security.SafeSingleLine(toString(m), 200); item != "" {
+				models = append(models, item)
+			}
+		}
+		k.AllowedModels = models
+	}
+	if rpm, ok := body["rpmLimit"].(float64); ok {
+		k.RPMLimit = subscription.ClampAPIKeyRPMLimit(user, int(rpm))
+	}
+	k.UpdatedAt = store.Now()
+}
+
+func adminVirtualUserFromDB(db *models.Database) *models.User {
+	keys := []models.APIKeyRecord{}
+	if db != nil {
+		keys = db.AdminAPIKeys
+	}
+	return middleware.AdminVirtualUserWithAPIKeys(config.Load(), keys)
+}
+
+func isAdminVirtualUser(user *models.User) bool {
+	return user != nil && user.ID == models.AdminVirtualUserID
 }
 
 func defaultRPMLimitForUser(user *models.User, db *models.Database) int {

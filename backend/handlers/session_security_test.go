@@ -75,9 +75,11 @@ func TestSessionEndpointsRequireMatchingRoles(t *testing.T) {
 	}
 
 	adminToUser := authedRequest(mux, http.MethodPost, "/api/user/session", adminToken)
-	if adminToUser.Code != http.StatusUnauthorized {
-		t.Fatalf("admin token user session returned %d, want 401 body=%s", adminToUser.Code, adminToUser.Body.String())
+	if adminToUser.Code != http.StatusOK {
+		t.Fatalf("admin token user session returned %d, want 200 body=%s", adminToUser.Code, adminToUser.Body.String())
 	}
+	assertSessionPayload(t, adminToUser.Body.Bytes(), "admin", "admin")
+	assertUserPayload(t, adminToUser.Body.Bytes(), models.AdminVirtualUserID, "MAX", 0)
 
 	wrongSub := authedRequest(mux, http.MethodPost, "/api/admin/session", adminWrongSubToken)
 	if wrongSub.Code != http.StatusUnauthorized {
@@ -108,6 +110,97 @@ func TestDeprecatedSessionGETEndpointsDoNotReturnSessionData(t *testing.T) {
 			}
 			assertDeprecatedSessionNoStoreHeaders(t, rec.Header())
 		})
+	}
+}
+
+func TestAdminUserPortalAPIKeysAreAdminKeysAndUnlimited(t *testing.T) {
+	mux, adminToken, _, _ := setupSessionSecurityTest(t)
+
+	createRec := authedJSONRequest(mux, http.MethodPost, "/api/user/api-key", adminToken, `{
+		"name": "Admin Portal Key",
+		"allowedModels": ["gpt-4o"],
+		"rpmLimit": 99
+	}`)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("create admin user key returned %d body=%s", createRec.Code, createRec.Body.String())
+	}
+	created := decodeUserKeyPayload(t, createRec.Body.Bytes())
+	if created.User.ID != models.AdminVirtualUserID || created.User.SubscriptionRpmLimit != 0 || created.User.DefaultRpmLimit != 0 {
+		t.Fatalf("created admin user = %#v, want virtual admin with unlimited rpm", created.User)
+	}
+	if len(created.User.APIKeys) != 1 {
+		t.Fatalf("created admin api keys = %#v, want 1 key", created.User.APIKeys)
+	}
+	key := created.User.APIKeys[0]
+	if key.Name != "Admin Portal Key" || key.RPMLimit != 0 || key.EffectiveRpmLimit != 0 {
+		t.Fatalf("created key = %#v, want admin unlimited key", key)
+	}
+	if len(key.AllowedModels) != 1 || key.AllowedModels[0] != "gpt-4o" {
+		t.Fatalf("created key allowed models = %#v, want gpt-4o", key.AllowedModels)
+	}
+
+	db := store.ReadDB()
+	if len(db.Users) != 1 {
+		t.Fatalf("users = %#v, want ordinary users untouched", db.Users)
+	}
+	if len(db.AdminAPIKeys) != 1 || db.AdminAPIKeys[0].ID != key.ID {
+		t.Fatalf("admin api keys = %#v, want created key", db.AdminAPIKeys)
+	}
+	found := middleware.FindUserByKey(key.Key)
+	if found.User == nil || found.User.ID != models.AdminVirtualUserID {
+		t.Fatalf("created admin key authenticated as %#v", found.User)
+	}
+	allowed, limit, current := middleware.CheckRPMLimit(found.User, found.APIKeyRecord, found.DB)
+	if !allowed || limit != 0 || current != 0 {
+		t.Fatalf("admin rpm = allowed=%v limit=%d current=%d, want unlimited", allowed, limit, current)
+	}
+
+	updateRec := authedJSONRequest(mux, http.MethodPut, "/api/user/api-keys/"+key.ID, adminToken, `{
+		"name": "Renamed Admin Key",
+		"enabled": false,
+		"allowedModels": ["gpt-4o-mini"],
+		"rpmLimit": 123
+	}`)
+	if updateRec.Code != http.StatusOK {
+		t.Fatalf("update admin user key returned %d body=%s", updateRec.Code, updateRec.Body.String())
+	}
+	updated := decodeUserKeyPayload(t, updateRec.Body.Bytes())
+	if len(updated.User.APIKeys) != 1 {
+		t.Fatalf("updated admin api keys = %#v, want 1 key", updated.User.APIKeys)
+	}
+	if got := updated.User.APIKeys[0]; got.Name != "Renamed Admin Key" || got.Enabled || got.RPMLimit != 0 || got.EffectiveRpmLimit != 0 {
+		t.Fatalf("updated admin key = %#v, want renamed disabled unlimited key", got)
+	}
+
+	rotateRec := authedRequest(mux, http.MethodPost, "/api/user/api-keys/"+key.ID+"/rotate", adminToken)
+	if rotateRec.Code != http.StatusOK {
+		t.Fatalf("rotate admin user key returned %d body=%s", rotateRec.Code, rotateRec.Body.String())
+	}
+	rotated := decodeUserKeyPayload(t, rotateRec.Body.Bytes())
+	if len(rotated.User.APIKeys) != 1 || rotated.User.APIKeys[0].Key == key.Key {
+		t.Fatalf("rotated admin key = %#v, want new key value", rotated.User.APIKeys)
+	}
+
+	deleteRec := authedRequest(mux, http.MethodDelete, "/api/user/api-keys/"+key.ID, adminToken)
+	if deleteRec.Code != http.StatusOK {
+		t.Fatalf("delete admin user key returned %d body=%s", deleteRec.Code, deleteRec.Body.String())
+	}
+	db = store.ReadDB()
+	if len(db.AdminAPIKeys) != 0 {
+		t.Fatalf("admin api keys after delete = %#v, want empty", db.AdminAPIKeys)
+	}
+}
+
+func TestAdminUserPortalCannotDeleteAdminAccount(t *testing.T) {
+	mux, adminToken, _, _ := setupSessionSecurityTest(t)
+
+	deleteRec := authedRequest(mux, http.MethodDelete, "/api/user/account", adminToken)
+	if deleteRec.Code != http.StatusForbidden {
+		t.Fatalf("delete admin account returned %d body=%s", deleteRec.Code, deleteRec.Body.String())
+	}
+	db := store.ReadDB()
+	if len(db.Users) != 1 {
+		t.Fatalf("users = %#v, want ordinary users untouched", db.Users)
 	}
 }
 
@@ -255,6 +348,17 @@ func authedRequest(handler http.Handler, method, path, bearer string) *httptest.
 	return rec
 }
 
+func authedJSONRequest(handler http.Handler, method, path, bearer, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
 func assertDeprecatedSessionNoStoreHeaders(t *testing.T, header http.Header) {
 	t.Helper()
 	if cacheControl := header.Get("Cache-Control"); !strings.Contains(cacheControl, "no-store") || strings.Contains(cacheControl, "public") {
@@ -296,4 +400,48 @@ func assertSessionPayload(t *testing.T, body []byte, role, sub string) {
 	if payload.Session.Role != role || payload.Session.Sub != sub || payload.Session.Exp == 0 {
 		t.Fatalf("session = %#v, want role=%q sub=%q exp>0", payload.Session, role, sub)
 	}
+}
+
+func assertUserPayload(t *testing.T, body []byte, id, tier string, rpmLimit int) {
+	t.Helper()
+	var payload struct {
+		User struct {
+			ID                   string `json:"id"`
+			SubscriptionTier     string `json:"subscriptionTier"`
+			SubscriptionRpmLimit int    `json:"subscriptionRpmLimit"`
+			DefaultRpmLimit      int    `json:"defaultRpmLimit"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.User.ID != id || payload.User.SubscriptionTier != tier || payload.User.SubscriptionRpmLimit != rpmLimit || payload.User.DefaultRpmLimit != rpmLimit {
+		t.Fatalf("user = %#v, want id=%q tier=%q rpm=%d", payload.User, id, tier, rpmLimit)
+	}
+}
+
+type userKeyPayload struct {
+	User struct {
+		ID                   string `json:"id"`
+		SubscriptionRpmLimit int    `json:"subscriptionRpmLimit"`
+		DefaultRpmLimit      int    `json:"defaultRpmLimit"`
+		APIKeys              []struct {
+			ID                string   `json:"id"`
+			Name              string   `json:"name"`
+			Key               string   `json:"key"`
+			Enabled           bool     `json:"enabled"`
+			AllowedModels     []string `json:"allowedModels"`
+			RPMLimit          int      `json:"rpmLimit"`
+			EffectiveRpmLimit int      `json:"effectiveRpmLimit"`
+		} `json:"apiKeys"`
+	} `json:"user"`
+}
+
+func decodeUserKeyPayload(t *testing.T, body []byte) userKeyPayload {
+	t.Helper()
+	var payload userKeyPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	return payload
 }

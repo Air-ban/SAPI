@@ -117,6 +117,32 @@ function assertSessionMatchesToken(token, session, expectedRole, expectedSub = "
   }
 }
 
+function assertUserSessionMatchesToken(token, session, user) {
+  const local = decodeJwtPayload(token);
+  if (!local || !["user", "admin"].includes(local.role)) {
+    throw makeSessionError("登录状态无效，请重新登录");
+  }
+  if (!session) {
+    throw makeSessionError("登录状态暂时无法恢复，请刷新重试", "session_unavailable");
+  }
+  if (local.role !== session.role || local.sub !== session.sub || local.exp !== session.exp) {
+    throw makeSessionError("登录状态不一致，请重新登录");
+  }
+  if (local.role === "user") {
+    if (session.role !== "user" || session.sub !== user?.id) {
+      throw makeSessionError("登录状态不匹配，请重新登录");
+    }
+    return;
+  }
+  if (session.role !== "admin" || user?.id !== "__admin__") {
+    throw makeSessionError("管理员用户前台状态无效，请重新登录");
+  }
+}
+
+function isAdminVirtualUser(user) {
+  return user?.id === "__admin__";
+}
+
 function App() {
   const [route, setRoute] = useState(getInitialRoute);
   const [portalPage, setPortalPage] = useState("overview");
@@ -127,7 +153,9 @@ function App() {
   const [adminToken, setAdminToken] = useState(
     localStorage.getItem(ADMIN_TOKEN_KEY) || ""
   );
-  const [userToken, setUserToken] = useState(localStorage.getItem(USER_TOKEN_KEY) || "");
+  const [userToken, setUserToken] = useState(
+    localStorage.getItem(USER_TOKEN_KEY) || localStorage.getItem(ADMIN_TOKEN_KEY) || ""
+  );
   const [userSession, setUserSession] = useState(null);
   const [adminState, setAdminState] = useState(null);
   const [adminAuthStatus, setAdminAuthStatus] = useState(() =>
@@ -260,8 +288,8 @@ function App() {
     return data;
   }, []);
 
-  const loadUserUsage = useCallback(async () => {
-    const token = localStorage.getItem(USER_TOKEN_KEY);
+  const loadUserUsage = useCallback(async (tokenOverride = "") => {
+    const token = tokenOverride || localStorage.getItem(USER_TOKEN_KEY);
     if (!token) {
       setUserUsage(null);
       return;
@@ -296,7 +324,9 @@ function App() {
       admin: false,
       token
     });
-    assertSessionMatchesToken(token, data?.session, "user", data?.user?.id || "");
+    assertUserSessionMatchesToken(token, data?.session, data?.user || null);
+    localStorage.setItem(USER_TOKEN_KEY, token);
+    setUserToken(token);
     setUserSession(data);
     setSelectedKey(data.user.apiKey || "");
     return data;
@@ -320,8 +350,14 @@ function App() {
   }, []);
 
   const logout = useCallback(() => {
+    const activeAdminToken = localStorage.getItem(ADMIN_TOKEN_KEY) || adminToken;
+    const activeUserToken = localStorage.getItem(USER_TOKEN_KEY) || userToken;
+    const userIsAdminSession = userSession?.session?.role === "admin" || (activeAdminToken && activeAdminToken === activeUserToken);
     clearAdminSession();
-  }, [clearAdminSession]);
+    if (userIsAdminSession) {
+      clearUserSession();
+    }
+  }, [adminToken, clearAdminSession, clearUserSession, userSession, userToken]);
 
   const userLogout = useCallback(() => {
     clearUserSession();
@@ -374,6 +410,15 @@ function App() {
     loadAdminState(adminToken)
       .then(() => {
         if (cancelled) return;
+        localStorage.setItem(USER_TOKEN_KEY, adminToken);
+        setUserToken(adminToken);
+        loadUserSession(adminToken)
+          .then(() => loadUserUsage(adminToken).catch(() => {
+            if (!cancelled) setUserUsage(null);
+          }))
+          .catch(() => {
+            if (!cancelled) clearUserSession();
+          });
         setAdminAuthStatus("ready");
         setAdminAuthMessage("");
         loadAdminUsage(adminToken).catch(() => {
@@ -398,7 +443,10 @@ function App() {
     adminAuthStatus,
     loadAdminState,
     loadAdminUsage,
+    loadUserSession,
+    loadUserUsage,
     clearAdminSession,
+    clearUserSession,
     showToast
   ]);
 
@@ -411,7 +459,7 @@ function App() {
   useEffect(() => {
     if (userToken && !userSession) {
       loadUserSession(userToken)
-        .then(() => loadUserUsage().catch(() => setUserUsage(null)))
+        .then(() => loadUserUsage(userToken).catch(() => setUserUsage(null)))
         .catch((error) => {
           userLogout();
           showToast(error.message, "error");
@@ -474,24 +522,26 @@ function App() {
     }
 
     localStorage.setItem(ADMIN_TOKEN_KEY, token);
-    localStorage.removeItem(USER_TOKEN_KEY);
+    localStorage.setItem(USER_TOKEN_KEY, token);
     setAdminToken(token);
-    setUserToken("");
+    setUserToken(token);
     setUserSession(null);
     setSelectedKey("");
     setUserUsage(null);
     setAdminAuthMessage("正在进入管理后台");
     try {
-      await Promise.all([loadAdminState(token), loadPublicConfig()]);
+      await Promise.all([loadAdminState(token), loadUserSession(token), loadPublicConfig()]);
       setAdminAuthStatus("ready");
       setAdminAuthMessage("");
     } catch (error) {
       clearAdminSession(
         isAdminAuthFailure(error) ? "登录状态无效，请重新登录" : "管理后台暂时无法进入，请重试"
       );
+      clearUserSession();
       throw error;
     }
     loadAdminUsage(token).catch(() => setAdminUsage(null));
+    loadUserUsage(token).catch(() => setUserUsage(null));
     showToast(message);
     navigate("admin");
   };
@@ -763,8 +813,11 @@ function App() {
       user={userSession?.user || null}
       admin={adminAuthenticated}
       onUserLogout={() => {
-        userLogout();
-        navigate("login");
+        const returnToAdmin = adminAuthenticated && isAdminVirtualUser(userSession?.user);
+        if (!returnToAdmin) {
+          userLogout();
+        }
+        navigate(returnToAdmin ? "admin" : "login");
         showToast("已退出");
       }}
       onRefresh={() => {
@@ -993,8 +1046,11 @@ function App() {
                 announcements={announcements}
                 onNavigate={navigate}
                 onUserLogout={() => {
-                  userLogout();
-                  navigate("login");
+                  const returnToAdmin = adminAuthenticated && isAdminVirtualUser(userSession?.user);
+                  if (!returnToAdmin) {
+                    userLogout();
+                  }
+                  navigate(returnToAdmin ? "admin" : "login");
                   showToast("已退出");
                 }}
                 onCreateApiKey={() => setCreateKeyOpen(true)
@@ -1030,11 +1086,13 @@ function App() {
                 }
                 onDeleteAccount={() =>
                   setConfirm({
-                    title: "注销账号",
-                    message: "确认注销当前账号？账号、所有 API Key 和个人请求记录会被删除，操作无法恢复。",
-                    confirmText: "注销账号",
+                    title: isAdminVirtualUser(userSession?.user) ? "管理员账号不可注销" : "注销账号",
+                    message: isAdminVirtualUser(userSession?.user)
+                      ? "管理员账号不能从用户前台注销。需要退出时请使用管理后台退出。"
+                      : "确认注销当前账号？账号、所有 API Key 和个人请求记录会被删除，操作无法恢复。",
+                    confirmText: isAdminVirtualUser(userSession?.user) ? "知道了" : "注销账号",
                     danger: true,
-                    action: deleteUserAccount
+                    action: isAdminVirtualUser(userSession?.user) ? async () => {} : deleteUserAccount
                   })
                 }
                 onToast={showToast}
@@ -1049,6 +1107,7 @@ function App() {
                 modelAvailability={modelAvailability}
                 onLogout={() => {
                   logout();
+                  navigate("login");
                   showToast("已退出");
                 }}
                 onCopy={copyText}

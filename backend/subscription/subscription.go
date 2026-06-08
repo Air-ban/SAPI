@@ -72,10 +72,16 @@ func RPMLimitForTier(tier string) int {
 }
 
 func RPMLimitForUser(user *models.User) int {
+	if user != nil && user.ID == models.AdminVirtualUserID {
+		return 0
+	}
 	return RPMLimitForTier(TierForUser(user))
 }
 
 func EffectiveAPIKeyRPMLimit(user *models.User, apiKeyRecord *models.APIKeyRecord) int {
+	if user != nil && user.ID == models.AdminVirtualUserID {
+		return 0
+	}
 	planLimit := RPMLimitForUser(user)
 	if apiKeyRecord == nil || apiKeyRecord.RPMLimit <= 0 {
 		return planLimit

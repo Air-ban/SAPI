@@ -6,6 +6,8 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 
+const AdminVirtualUserID = "__admin__"
+
 type Database struct {
 	Version                 int                `json:"version"`
 	AppSecret               string             `json:"appSecret"`

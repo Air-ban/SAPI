@@ -671,7 +671,11 @@ func handlePostSuggestion(w http.ResponseWriter, r *http.Request) {
 	payload := auth.VerifyToken(token, db.AppSecret)
 	userID := ""
 	userName := ""
-	if payload != nil && payload.Role == "user" {
+	if payload != nil && payload.Role == "admin" && auth.SafeEqual(payload.Sub, config.Load().AdminUser) {
+		adminUser := middleware.AdminVirtualUser(config.Load())
+		userID = adminUser.ID
+		userName = adminUser.Name
+	} else if payload != nil && payload.Role == "user" {
 		for _, u := range db.Users {
 			if u.ID == payload.Sub {
 				userID = u.ID

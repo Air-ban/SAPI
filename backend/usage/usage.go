@@ -101,8 +101,8 @@ func GetUsageStats(db *models.Database, userID string, days int) *UsageStats {
 	for i := range db.Users {
 		usersByID[db.Users[i].ID] = &db.Users[i]
 	}
-	usersByID["__admin__"] = &models.User{
-		ID: "__admin__", Name: "Administrator", Username: "admin",
+	usersByID[models.AdminVirtualUserID] = &models.User{
+		ID: models.AdminVirtualUserID, Name: "Administrator", Username: "admin",
 	}
 
 	records := store.RequestLogsSince(db, since, userID, 50000)

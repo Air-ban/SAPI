@@ -72,7 +72,20 @@ func RequireUserAccount(next http.HandlerFunc) http.HandlerFunc {
 		db := store.ReadDB()
 		payload := auth.VerifyToken(token, db.AppSecret)
 
-		if payload == nil || payload.Role != "user" || payload.Sub == "" {
+		if payload == nil || payload.Sub == "" {
+			utils.SendError(w, 401, "User authentication is required.", "unauthorized")
+			return
+		}
+
+		cfg := config.Load()
+		if payload.Role == "admin" && auth.SafeEqual(payload.Sub, cfg.AdminUser) {
+			ctx := context.WithValue(r.Context(), userContextKey, AdminVirtualUserWithAPIKeys(cfg, db.AdminAPIKeys))
+			ctx = context.WithValue(ctx, tokenPayloadContextKey, payload)
+			next(w, r.WithContext(ctx))
+			return
+		}
+
+		if payload.Role != "user" {
 			utils.SendError(w, 401, "User authentication is required.", "unauthorized")
 			return
 		}
@@ -92,6 +105,28 @@ func RequireUserAccount(next http.HandlerFunc) http.HandlerFunc {
 
 		utils.SendError(w, 401, "User account was not found.", "unauthorized")
 	}
+}
+
+func AdminVirtualUser(cfg *config.Config) *models.User {
+	username := "admin"
+	if cfg != nil && strings.TrimSpace(cfg.AdminUser) != "" {
+		username = strings.TrimSpace(cfg.AdminUser)
+	}
+	return &models.User{
+		ID:                       models.AdminVirtualUserID,
+		Name:                     "Administrator",
+		Username:                 username,
+		Enabled:                  true,
+		ReceiveAnnouncementEmail: true,
+		Source:                   "admin",
+		SubscriptionTier:         subscription.TierMax,
+	}
+}
+
+func AdminVirtualUserWithAPIKeys(cfg *config.Config, keys []models.APIKeyRecord) *models.User {
+	user := AdminVirtualUser(cfg)
+	user.APIKeys = append([]models.APIKeyRecord{}, keys...)
+	return user
 }
 
 func GetUser(r *http.Request) *models.User {
@@ -156,14 +191,8 @@ func FindUserByKey(apiKey string) *FindUserByKeyResult {
 		if k.Enabled && auth.SafeEqual(k.Key, apiKey) {
 			banned, retryAfter, reason := APIKeyBanStatus(k)
 			return &FindUserByKeyResult{
-				DB: db,
-				User: &models.User{
-					ID:       "__admin__",
-					Name:     "Administrator",
-					Username: "admin",
-					Enabled:  true,
-					Source:   "admin",
-				},
+				DB:           db,
+				User:         AdminVirtualUser(config.Load()),
 				APIKeyRecord: k,
 				Banned:       banned,
 				RetryAfter:   retryAfter,
@@ -272,7 +301,7 @@ type rpmWindow struct {
 }
 
 func CheckRPMLimit(user *models.User, apiKeyRecord *models.APIKeyRecord, db *models.Database) (bool, int, int) {
-	if user != nil && user.ID == "__admin__" {
+	if user != nil && user.ID == models.AdminVirtualUserID {
 		return true, 0, 0
 	}
 

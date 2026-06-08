@@ -14,6 +14,7 @@ import { Section } from "../components/Section";
 
 export function UserSettingsSection({ user, onUpdateSettings, onDeleteAccount }) {
   const [saving, setSaving] = useState(false);
+  const isAdmin = user?.id === "__admin__";
 
   const handleToggle = async (checked) => {
     setSaving(true);
@@ -62,10 +63,12 @@ export function UserSettingsSection({ user, onUpdateSettings, onDeleteAccount })
           >
             <Stack spacing={0.5}>
               <Typography variant="subtitle1" sx={{ fontWeight: 760 }}>
-                注销账号
+                {isAdmin ? "管理员账号" : "注销账号"}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                注销后账号和所有 API Key 会立即失效，无法使用当前账号继续登录或调用接口。
+                {isAdmin
+                  ? "管理员账号在用户前台拥有全部用户功能和不限 RPM，但不能从这里注销。"
+                  : "注销后账号和所有 API Key 会立即失效，无法使用当前账号继续登录或调用接口。"}
               </Typography>
             </Stack>
             <Button
@@ -73,7 +76,7 @@ export function UserSettingsSection({ user, onUpdateSettings, onDeleteAccount })
               color="error"
               startIcon={<DeleteForeverIcon />}
               onClick={onDeleteAccount}
-              disabled={!user}
+              disabled={!user || isAdmin}
               sx={{
                 color: "error.main",
                 borderColor: "error.main",
@@ -83,7 +86,7 @@ export function UserSettingsSection({ user, onUpdateSettings, onDeleteAccount })
                 }
               }}
             >
-              注销账号
+              {isAdmin ? "不可注销" : "注销账号"}
             </Button>
           </Box>
         </Stack>
