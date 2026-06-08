@@ -6,6 +6,7 @@ SAPI 是一个轻量级 LLM API 中转站。管理员在后台配置上游 LLM A
 
 - **多格式转发**：OpenAI Chat / Completions / Embeddings / Responses、Anthropic Messages、Gemini
 - **流式响应**：支持 SSE 流式转发
+- **站内创作**：用户前台提供 Responses Chat 与生图工坊，支持图片生成、参考图编辑和结果下载
 - **用户系统**：注册/登录、GitHub OAuth、邀请码、腾讯云验证码
 - **API Key 管理**：用户自助创建、模型白名单、RPM 限制、自动封禁
 - **订阅分级**：lite/base/pro/ultra/MAX 五档 RPM 订阅
@@ -53,6 +54,7 @@ SAPI_ADMIN_PASSWORD=sapi-admin
 | `POST /v1/completions` | OpenAI Completions |
 | `POST /v1/embeddings` | OpenAI Embeddings |
 | `POST /v1/responses` `POST /responses` | Responses API |
+| `POST /v1/images/generations` `POST /v1/images/edits` | OpenAI Images |
 | `POST /v1/messages` `POST /messages` | Anthropic Messages |
 | `其他 /v1/*` | 通用 JSON 转发 |
 
@@ -74,6 +76,10 @@ npm run client:dev
 ```
 
 开发服务运行在 http://localhost:5173，自动代理 `/api`、`/v1`、`/responses` 到后端 `localhost:3000`。
+
+## 致谢
+
+用户前台的生图工坊参考了 MIT 许可项目 [CookSleep/gpt_image_playground](https://github.com/CookSleep/gpt_image_playground) 的 Images API / Responses API 生图工作流设计。
 
 ## 环境变量
 
