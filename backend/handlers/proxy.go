@@ -1330,6 +1330,41 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[V1CHAT] DECIDE_STREAM stream_req=%v stream_resp=%v content_type=%s",
 			streamReq, isStream, resp.Header.Get("Content-Type"))
 
+		if isStream && !streamReq {
+			log.Printf("[V1CHAT] STREAM_TO_NONSTREAM_START")
+			payload, usage := readChatStreamAsOpenAINonStreaming(resp, upstreamReq.Kind, model)
+			resp.Body.Close()
+			bodyBytes, _ := json.Marshal(payload)
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(resp.StatusCode)
+			w.Write(bodyBytes)
+
+			logging.RecordRequestLog(logging.RequestLogParams{
+				UserID:         info.User.ID,
+				UserName:       info.User.Name,
+				Username:       info.User.Username,
+				APIKeyID:       getKeyID(info.APIKeyRecord),
+				APIKeyName:     getKeyName(info.APIKeyRecord),
+				APIKeyPreview:  maskKeyPreview(info.APIKeyRecord.Key),
+				ProviderID:     candidate.Provider.ID,
+				ProviderName:   candidate.Provider.Name,
+				Model:          model,
+				UpstreamModel:  candidate.UpstreamModel,
+				Endpoint:       r.URL.Path,
+				Method:         r.Method,
+				Status:         resp.StatusCode,
+				OK:             true,
+				Stream:         false,
+				DurationMs:     int(time.Since(startedAt).Milliseconds()),
+				Usage:          usage,
+				RequestContent: requestContent,
+			})
+			proxy.RecordProviderSuccess(candidate.Provider.ID)
+			log.Printf("[V1CHAT] === DONE (stream aggregated) === duration=%dms", int(time.Since(startedAt).Milliseconds()))
+			return
+		}
+
 		if isStream {
 			log.Printf("[V1CHAT] STREAM_START")
 			utils.CopyUpstreamHeaders(resp.Header, w, map[string]string{
@@ -1483,6 +1518,131 @@ func readLine(reader *bufio.Reader, buf *strings.Builder) (string, error) {
 			buf.WriteByte(b)
 		}
 	}
+}
+
+func readChatStreamAsOpenAINonStreaming(upstreamResp *http.Response, kind proxy.UpstreamKind, model string) (map[string]interface{}, interface{}) {
+	reader := bufio.NewReader(upstreamResp.Body)
+	var buf strings.Builder
+	var outputText strings.Builder
+	var usagePayload interface{}
+	finishReason := ""
+	chatID := ""
+	created := int64(0)
+	responseModel := model
+	role := "assistant"
+
+	for {
+		line, err := readLine(reader, &buf)
+		if err != nil {
+			break
+		}
+		line = upstreamStreamLineAsOpenAI(line, kind, model)
+		for _, item := range sseDataItems(line) {
+			if item == "[DONE]" {
+				continue
+			}
+			var payload map[string]interface{}
+			if json.Unmarshal([]byte(item), &payload) != nil {
+				continue
+			}
+
+			if id, _ := payload["id"].(string); chatID == "" && id != "" {
+				chatID = id
+			}
+			if created == 0 {
+				switch v := payload["created"].(type) {
+				case float64:
+					created = int64(v)
+				case int64:
+					created = v
+				case int:
+					created = int64(v)
+				}
+			}
+			if m, _ := payload["model"].(string); m != "" {
+				responseModel = m
+			}
+
+			if choices, _ := payload["choices"].([]interface{}); len(choices) > 0 {
+				if choice, _ := choices[0].(map[string]interface{}); choice != nil {
+					if delta, _ := choice["delta"].(map[string]interface{}); delta != nil {
+						if r, _ := delta["role"].(string); r != "" {
+							role = r
+						}
+					}
+				}
+			}
+
+			dText, dFinish, dUsage := proxy.ExtractChatCompletionText(payload)
+			if dText != "" {
+				outputText.WriteString(dText)
+			}
+			if dFinish != "" {
+				finishReason = dFinish
+			}
+			if dUsage != nil {
+				usagePayload = dUsage
+			}
+		}
+	}
+
+	if chatID == "" {
+		chatID = utils.GenerateID("chatcmpl")
+	}
+	if created == 0 {
+		created = utils.GenerateTimestamp()
+	}
+	if responseModel == "" {
+		responseModel = model
+	}
+	if finishReason == "" {
+		finishReason = "stop"
+	}
+
+	result := map[string]interface{}{
+		"id":      chatID,
+		"object":  "chat.completion",
+		"created": created,
+		"model":   responseModel,
+		"choices": []interface{}{
+			map[string]interface{}{
+				"index": 0,
+				"message": map[string]interface{}{
+					"role":    role,
+					"content": outputText.String(),
+				},
+				"finish_reason": finishReason,
+			},
+		},
+	}
+	if usagePayload != nil {
+		result["usage"] = usagePayload
+	}
+	return result, usagePayload
+}
+
+func sseDataItems(line string) []string {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" || strings.HasPrefix(trimmed, ":") {
+		return nil
+	}
+	if !strings.Contains(trimmed, "data:") {
+		if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+			return []string{trimmed}
+		}
+		return nil
+	}
+
+	segments := strings.Split(trimmed, "data:")
+	items := make([]string, 0, len(segments)-1)
+	for _, segment := range segments[1:] {
+		item := strings.TrimSpace(segment)
+		if item == "" {
+			continue
+		}
+		items = append(items, item)
+	}
+	return items
 }
 
 func buildAnthropicMessagesUpstreamRequest(provider models.Provider, anthropicBody map[string]interface{}, openAIBody map[string]interface{}, upstreamModel string) (proxy.ChatCompletionsUpstreamRequest, error) {

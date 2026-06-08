@@ -167,7 +167,12 @@ export function AuthPage({
         });
       }
     } catch (error) {
-      onToast(error.message, "error");
+      const message = error?.code === "admin_login_required"
+        ? "管理员账号请使用管理后台登录入口"
+        : error?.code === "password_reset_unavailable"
+        ? "该账号没有本地密码，请使用原注册方式登录"
+        : error.message;
+      onToast(message, "error");
     } finally {
       setLoading(false);
     }
@@ -386,6 +391,9 @@ export function AuthPage({
                 ) : null}
                 {!isRegister && !isAdminLogin ? (
                   <Box sx={{ textAlign: "center" }}>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.5 }}>
+                      普通账号可用用户名或邮箱登录，管理员请从管理后台入口进入。
+                    </Typography>
                     <Button size="small" onClick={() => setForgotOpen(true)}>
                       忘记密码？
                     </Button>

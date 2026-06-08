@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -14,8 +15,10 @@ import (
 	"sapi/config"
 	"sapi/middleware"
 	"sapi/models"
+	"sapi/proxy"
 	"sapi/security"
 	"sapi/store"
+	"sapi/utils"
 )
 
 func TestProxyRoutesMatchSupportedEndpointVariants(t *testing.T) {
@@ -243,6 +246,63 @@ func TestChatCompletionsRejectsGPTModels(t *testing.T) {
 				t.Fatalf("expected gpt_chat_completions_disabled error, got %s", rec.Body.String())
 			}
 		})
+	}
+}
+
+func TestChatCompletionsAggregatesUpstreamSSEForNonStreamRequest(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `data: {"id":"chatcmpl_sse","object":"chat.completion.chunk","created":123,"model":"claude-real","choices":[{"index":0,"delta":{"role":"assistant","content":"hello "},"finish_reason":null}]}`+"\n\n")
+		fmt.Fprint(w, `data: {"id":"chatcmpl_sse","object":"chat.completion.chunk","created":123,"model":"claude-real","choices":[{"index":0,"delta":{"content":"world"},"finish_reason":"stop"}]}`+"\n\n")
+		fmt.Fprint(w, `data: {"id":"chatcmpl_sse","object":"chat.completion.chunk","created":123,"model":"claude-real","choices":[],"usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6,"prompt_tokens_details":{"cached_tokens":1}}}`+"\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer upstream.Close()
+
+	app, apiKey := setupForcedFormatProxyTest(t, models.Provider{
+		ID:             "prv_openai_sse",
+		Name:           "OpenAI SSE Gateway",
+		BaseURL:        upstream.URL,
+		APIKey:         "upstream-key",
+		UpstreamFormat: models.UpstreamFormatOpenAI,
+		Models:         []models.Model{{ID: "claude-public", Name: "claude-public"}},
+		Enabled:        true,
+		HealthStatus:   "unknown",
+		Availability7d: 100,
+		CreatedAt:      store.Now(),
+		UpdatedAt:      store.Now(),
+	})
+
+	rec := postJSON(t, app, "/v1/chat/completions", map[string]interface{}{
+		"model":  "claude-public",
+		"stream": false,
+		"messages": []map[string]string{{
+			"role":    "user",
+			"content": "hello",
+		}},
+	}, apiKey)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("chat completions returned %d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "data:") {
+		t.Fatalf("expected aggregated JSON response, got SSE text: %s", rec.Body.String())
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("response is not JSON: %v body=%s", err, rec.Body.String())
+	}
+	if payload["object"] != "chat.completion" {
+		t.Fatalf("object = %v, want chat.completion", payload["object"])
+	}
+	text, _, usagePayload := proxy.ExtractChatCompletionText(payload)
+	if text != "hello world" {
+		t.Fatalf("aggregated text = %q, want hello world", text)
+	}
+	normalized := utils.NormalizeUsage(usagePayload)
+	if normalized == nil || normalized.PromptTokens != 4 || normalized.CompletionTokens != 2 || normalized.CachedTokens != 1 {
+		t.Fatalf("unexpected aggregated usage: %#v", normalized)
 	}
 }
 

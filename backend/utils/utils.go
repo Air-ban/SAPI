@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -253,21 +254,60 @@ func ShouldStreamResponse(_ *http.Request, upstreamResp *http.Response) bool {
 }
 
 func FiniteTokenCount(values ...interface{}) int {
+	foundZero := false
 	for _, value := range values {
 		switch v := value.(type) {
 		case float64:
-			if v >= 0 {
+			if v > 0 {
 				return int(v)
 			}
+			foundZero = foundZero || v == 0
 		case int:
-			if v >= 0 {
+			if v > 0 {
 				return v
 			}
+			foundZero = foundZero || v == 0
 		case int64:
-			if v >= 0 {
+			if v > 0 {
 				return int(v)
 			}
+			foundZero = foundZero || v == 0
+		case json.Number:
+			if n, err := strconv.ParseInt(string(v), 10, 64); err == nil {
+				if n > 0 {
+					return int(n)
+				}
+				foundZero = foundZero || n == 0
+				continue
+			}
+			if f, err := strconv.ParseFloat(string(v), 64); err == nil {
+				if f > 0 {
+					return int(f)
+				}
+				foundZero = foundZero || f == 0
+			}
+		case string:
+			trimmed := strings.TrimSpace(v)
+			if trimmed == "" {
+				continue
+			}
+			if n, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
+				if n > 0 {
+					return int(n)
+				}
+				foundZero = foundZero || n == 0
+				continue
+			}
+			if f, err := strconv.ParseFloat(trimmed, 64); err == nil {
+				if f > 0 {
+					return int(f)
+				}
+				foundZero = foundZero || f == 0
+			}
 		}
+	}
+	if foundZero {
+		return 0
 	}
 	return 0
 }
@@ -292,32 +332,48 @@ func NormalizeUsage(usage interface{}) *NormalizedUsage {
 	completionDetails := getMap(u, "completion_tokens_details", "completionTokensDetails", "output_tokens_details", "outputTokensDetails")
 
 	promptTokens := FiniteTokenCount(
-		getValue(u, "prompt_tokens", "promptTokens", "input_tokens", "inputTokens"),
+		getValues(u, "prompt_tokens", "promptTokens", "input_tokens", "inputTokens", "promptTokenCount", "inputTokenCount")...,
 	)
 	completionTokens := FiniteTokenCount(
-		getValue(u, "completion_tokens", "completionTokens", "output_tokens", "outputTokens"),
+		getValues(u, "completion_tokens", "completionTokens", "output_tokens", "outputTokens", "candidatesTokenCount", "outputTokenCount")...,
 	)
 	totalTokens := FiniteTokenCount(
-		getValue(u, "total_tokens", "totalTokens"),
+		getValues(u, "total_tokens", "totalTokens", "totalTokenCount")...,
 	)
 	if totalTokens == 0 && promptTokens+completionTokens > 0 {
 		totalTokens = promptTokens + completionTokens
 	}
 
 	cachedTokens := FiniteTokenCount(
-		getValue(u, "cached_tokens", "cachedTokens", "prompt_cache_hit_tokens", "promptCacheHitTokens", "cache_read_input_tokens", "cacheReadInputTokens"),
-		getValue(promptDetails, "cached_tokens", "cachedTokens"),
+		append(
+			getValues(u, "cached_tokens", "cachedTokens", "prompt_cache_hit_tokens", "promptCacheHitTokens", "cache_read_input_tokens", "cacheReadInputTokens", "cachedContentTokenCount"),
+			getValues(promptDetails, "cached_tokens", "cachedTokens", "cache_read_input_tokens", "cacheReadInputTokens")...,
+		)...,
 	)
-	cacheCreationTokens := FiniteTokenCount(
-		getValue(u, "cache_creation_input_tokens", "cacheCreationInputTokens", "cache_write_input_tokens", "cacheWriteInputTokens"),
-		getValue(promptDetails, "cache_creation_tokens", "cacheCreationTokens"),
+	cacheCreationTokens := firstPositiveTokenCount(
+		append(
+			append(
+				getValues(u, "cache_creation_input_tokens", "cacheCreationInputTokens", "cache_write_input_tokens", "cacheWriteInputTokens"),
+				getValues(promptDetails, "cache_creation_tokens", "cacheCreationTokens", "cache_creation_input_tokens", "cacheCreationInputTokens")...,
+			),
+			sumTokenCounts(
+				getValues(u, "claude_cache_creation_5_m_tokens", "claudeCacheCreation5MTokens")...,
+			)+sumTokenCounts(
+				getValues(u, "claude_cache_creation_1_h_tokens", "claudeCacheCreation1HTokens")...,
+			),
+		)...,
 	)
 	cacheMissTokens := FiniteTokenCount(
-		getValue(u, "prompt_cache_miss_tokens", "promptCacheMissTokens", "cache_miss_input_tokens", "cacheMissInputTokens"),
+		getValues(u, "prompt_cache_miss_tokens", "promptCacheMissTokens", "cache_miss_input_tokens", "cacheMissInputTokens")...,
 	)
 	reasoningTokens := FiniteTokenCount(
-		getValue(u, "reasoning_tokens", "reasoningTokens"),
-		getValue(completionDetails, "reasoning_tokens", "reasoningTokens"),
+		append(
+			append(
+				getValues(u, "reasoning_tokens", "reasoningTokens"),
+				getValues(completionDetails, "reasoning_tokens", "reasoningTokens")...,
+			),
+			getValues(u, "thoughtsTokenCount")...,
+		)...,
 	)
 
 	if totalTokens == 0 && promptTokens == 0 && completionTokens == 0 &&
@@ -336,6 +392,18 @@ func NormalizeUsage(usage interface{}) *NormalizedUsage {
 	}
 }
 
+func firstPositiveTokenCount(values ...interface{}) int {
+	return FiniteTokenCount(values...)
+}
+
+func sumTokenCounts(values ...interface{}) int {
+	total := 0
+	for _, value := range values {
+		total += FiniteTokenCount(value)
+	}
+	return total
+}
+
 func FindUsagePayload(payload interface{}) interface{} {
 	p, ok := payload.(map[string]interface{})
 	if !ok || p == nil {
@@ -344,6 +412,7 @@ func FindUsagePayload(payload interface{}) interface{} {
 
 	candidates := []interface{}{
 		p["usage"],
+		p["usageMetadata"],
 		p["token_usage"],
 		p["tokenUsage"],
 	}
@@ -415,13 +484,14 @@ func getMap(m map[string]interface{}, keys ...string) map[string]interface{} {
 	return map[string]interface{}{}
 }
 
-func getValue(m map[string]interface{}, keys ...string) interface{} {
+func getValues(m map[string]interface{}, keys ...string) []interface{} {
+	values := make([]interface{}, 0, len(keys))
 	for _, key := range keys {
 		if val, ok := m[key]; ok && val != nil {
-			return val
+			values = append(values, val)
 		}
 	}
-	return nil
+	return values
 }
 
 func GenerateIDSimple(prefix string) string {

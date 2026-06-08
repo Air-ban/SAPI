@@ -18,6 +18,9 @@ function makeRequestError(message, status = 0, code = "") {
 
 function makeNetworkError(error) {
   const message = error?.message || "";
+  if (error?.name === "AbortError") {
+    return makeRequestError("请求超时，请检查服务器、CDN 回源或反向代理状态。", 0, "request_timeout");
+  }
   if (/failed to fetch|load failed|networkerror/i.test(message)) {
     return makeRequestError("无法连接到服务器，请检查 HTTPS 证书、CDN 回源、代理或防火墙配置。", 0, "network_error");
   }
@@ -25,10 +28,24 @@ function makeNetworkError(error) {
 }
 
 async function fetchNoCache(path, options) {
+  const { timeoutMs = 25000, signal, ...fetchOptions } = options;
+  let controller = null;
+  let timeoutID = null;
+  if (!signal && timeoutMs > 0 && typeof AbortController !== "undefined") {
+    controller = new AbortController();
+    timeoutID = window.setTimeout(() => controller.abort(), timeoutMs);
+  }
   try {
-    return await fetch(withNoCacheParam(path), options);
+    return await fetch(withNoCacheParam(path), {
+      ...fetchOptions,
+      signal: signal || controller?.signal
+    });
   } catch (error) {
     throw makeNetworkError(error);
+  } finally {
+    if (timeoutID) {
+      window.clearTimeout(timeoutID);
+    }
   }
 }
 

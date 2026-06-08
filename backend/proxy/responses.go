@@ -211,13 +211,14 @@ func ConvertToChatCompletionsPayload(body map[string]interface{}) map[string]int
 }
 
 func ExtractChatCompletionText(payload map[string]interface{}) (text string, finishReason string, usage interface{}) {
+	usage = utils.FindUsagePayload(payload)
 	choices, _ := payload["choices"].([]interface{})
 	var choice map[string]interface{}
 	if len(choices) > 0 {
 		choice, _ = choices[0].(map[string]interface{})
 	}
 	if choice == nil {
-		return "", "", nil
+		return "", "", usage
 	}
 
 	message, _ := choice["message"].(map[string]interface{})
@@ -251,7 +252,6 @@ func ExtractChatCompletionText(payload map[string]interface{}) (text string, fin
 	}
 
 	finishReason = firstStringFromBody(choice, "finish_reason", "finishReason")
-	usage = utils.FindUsagePayload(payload)
 
 	return
 }

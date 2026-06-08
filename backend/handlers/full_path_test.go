@@ -114,6 +114,16 @@ func TestFullPathSmokeWithMockUpstream(t *testing.T) {
 		t.Fatalf("models returned %d body=%s", modelsResp.Code, modelsResp.Body.String())
 	}
 
+	bareModelsResp := get(t, app, "/models", userKey)
+	if bareModelsResp.Code != http.StatusOK || !strings.Contains(bareModelsResp.Body.String(), `"id":"prv_test/test-model"`) {
+		t.Fatalf("bare models returned %d body=%s", bareModelsResp.Code, bareModelsResp.Body.String())
+	}
+
+	invalidBareModelsResp := get(t, app, "/models", "sk-sapi-wrong")
+	if invalidBareModelsResp.Code != http.StatusUnauthorized || !strings.Contains(invalidBareModelsResp.Body.String(), "SAPI API key was not found on this site") {
+		t.Fatalf("invalid bare models returned %d body=%s", invalidBareModelsResp.Code, invalidBareModelsResp.Body.String())
+	}
+
 	modelResp := get(t, app, "/v1/models/prv_test/test-model", userKey)
 	if modelResp.Code != http.StatusOK || !strings.Contains(modelResp.Body.String(), `"id":"prv_test/test-model"`) {
 		t.Fatalf("model retrieve returned %d body=%s", modelResp.Code, modelResp.Body.String())

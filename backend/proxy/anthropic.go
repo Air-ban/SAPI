@@ -538,11 +538,24 @@ func anthropicUsageToOpenAI(usage interface{}) interface{} {
 	if normalized == nil {
 		return nil
 	}
-	return map[string]interface{}{
+	result := map[string]interface{}{
 		"prompt_tokens":     normalized.PromptTokens,
 		"completion_tokens": normalized.CompletionTokens,
 		"total_tokens":      normalized.TotalTokens,
 	}
+	if normalized.CachedTokens > 0 || normalized.CacheCreationTokens > 0 {
+		result["prompt_tokens_details"] = map[string]interface{}{
+			"cached_tokens": normalized.CachedTokens,
+		}
+		result["cache_read_input_tokens"] = normalized.CachedTokens
+		result["cache_creation_input_tokens"] = normalized.CacheCreationTokens
+	}
+	if normalized.ReasoningTokens > 0 {
+		result["completion_tokens_details"] = map[string]interface{}{
+			"reasoning_tokens": normalized.ReasoningTokens,
+		}
+	}
+	return result
 }
 
 func anthropicStopReasonToOpenAI(reason string) string {

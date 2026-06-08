@@ -401,12 +401,29 @@ func handleModelRetrieve(w http.ResponseWriter, r *http.Request) {
 }
 
 func validateModelsRequest(w http.ResponseWriter, r *http.Request) (*middleware.FindUserByKeyResult, bool) {
-	apiKey := utils.GetUserAPIKey(r)
-	result := middleware.FindUserByKey(apiKey)
-	if result.User == nil {
-		utils.SendError(w, 401, "Invalid or disabled SAPI API key.", "invalid_api_key")
+	if allowed, retryAfter := middleware.CheckAPIKeyFailureLimit(r); !allowed {
+		if retryAfter < time.Second {
+			retryAfter = time.Second
+		}
+		w.Header().Set("Retry-After", fmt.Sprintf("%d", int(retryAfter.Seconds())))
+		utils.SendError(w, 429, "Too many failed API key attempts. Try again later.", "api_key_rate_limited")
 		return nil, false
 	}
+
+	apiKey := utils.GetUserAPIKey(r)
+	if strings.TrimSpace(apiKey) == "" {
+		middleware.RecordAPIKeyFailure(r)
+		utils.SendError(w, 401, "SAPI API key is required. Send it as Authorization: Bearer <key> or X-API-Key.", "missing_api_key")
+		return nil, false
+	}
+
+	result := middleware.FindUserByKey(apiKey)
+	if result.User == nil {
+		middleware.RecordAPIKeyFailure(r)
+		utils.SendError(w, 401, "SAPI API key was not found on this site or is disabled. Check that the key belongs to this SAPI domain and is sent as Authorization: Bearer <key> or X-API-Key.", "invalid_api_key")
+		return nil, false
+	}
+	middleware.ClearAPIKeyFailures(r)
 	if result.Banned {
 		sendAPIKeyBannedError(w, result.RetryAfter, result.BanReason)
 		return nil, false

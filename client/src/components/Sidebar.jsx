@@ -217,13 +217,13 @@ export function Sidebar({
               startIcon={<LogoutIcon />}
               onClick={onUserLogout}
               sx={{
-                borderColor: "app.sidebarBorder",
+                borderColor: "rgba(255,255,255,0.42)",
                 borderRadius: 1,
-                color: "app.sidebarText",
-                bgcolor: "transparent",
+                color: "#f8fafc",
+                bgcolor: "rgba(255,255,255,0.08)",
                 "&:hover": {
-                  bgcolor: "app.sidebarHover",
-                  borderColor: "app.sidebarText"
+                  bgcolor: "rgba(255,255,255,0.14)",
+                  borderColor: "#f8fafc"
                 },
                 "& .MuiButton-startIcon": {
                   color: "inherit"

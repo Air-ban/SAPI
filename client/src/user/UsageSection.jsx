@@ -1,5 +1,8 @@
 ﻿import React from "react";
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Box,
   Button,
   Chip,
@@ -18,6 +21,7 @@ import AnalyticsIcon from "@mui/icons-material/Analytics";
 import BarChartIcon from "@mui/icons-material/BarChart";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import DnsIcon from "@mui/icons-material/Dns";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import RocketLaunchIcon from "@mui/icons-material/RocketLaunch";
 import { EmptyState } from "../components/EmptyState";
 import { Metric } from "../components/Metric";
@@ -76,12 +80,9 @@ export function UsageSection({ usage, onLoadRequestContent }) {
             <Metric icon={<CheckCircleIcon />} label="缓存命中 Tokens" value={formatNumber(usage.totalCachedTokens)} />
           </Box>
 
-          <Stack spacing={2}>
+          <Stack spacing={1.25}>
             {(usage.byApiKey || []).length > 0 ? (
-              <Paper variant="outlined" sx={statCardSx}>
-                <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 780 }}>
-                  按 API Key 统计
-                </Typography>
+              <StatsAccordion title="按 API Key 统计" count={usage.byApiKey.length}>
                 <Box sx={tableScrollSx}>
                   <TableContainer>
                     <Table size="small">
@@ -117,14 +118,11 @@ export function UsageSection({ usage, onLoadRequestContent }) {
                     </Table>
                   </TableContainer>
                 </Box>
-              </Paper>
+              </StatsAccordion>
             ) : null}
 
             {usage.byModel.length > 0 ? (
-              <Paper variant="outlined" sx={statCardSx}>
-                <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 780 }}>
-                  按模型统计
-                </Typography>
+              <StatsAccordion title="按模型统计" count={usage.byModel.length}>
                 <Box sx={tableScrollSx}>
                   <TableContainer>
                     <Table size="small">
@@ -157,14 +155,11 @@ export function UsageSection({ usage, onLoadRequestContent }) {
                     </Table>
                   </TableContainer>
                 </Box>
-              </Paper>
+              </StatsAccordion>
             ) : null}
 
             {usage.byDay.length > 0 ? (
-              <Paper variant="outlined" sx={statCardSx}>
-                <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 780 }}>
-                  按天统计
-                </Typography>
+              <StatsAccordion title="按天统计" count={Math.min(usage.byDay.length, 14)}>
                 <Box sx={tableScrollSx}>
                   <TableContainer>
                     <Table size="small">
@@ -193,7 +188,7 @@ export function UsageSection({ usage, onLoadRequestContent }) {
                     </Table>
                   </TableContainer>
                 </Box>
-              </Paper>
+              </StatsAccordion>
             ) : null}
           </Stack>
 
@@ -239,6 +234,35 @@ export function UsageSection({ usage, onLoadRequestContent }) {
         </Stack>
       )}
     </Section>
+  );
+}
+
+function StatsAccordion({ title, count, children }) {
+  return (
+    <Accordion
+      disableGutters
+      elevation={0}
+      sx={{
+        border: "1px solid",
+        borderColor: "divider",
+        bgcolor: "background.paper",
+        borderRadius: 1,
+        overflow: "hidden",
+        "&:before": { display: "none" }
+      }}
+    >
+      <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ minHeight: 48 }}>
+        <Stack direction="row" spacing={1} alignItems="center">
+          <Typography variant="subtitle2" sx={{ fontWeight: 780 }}>
+            {title}
+          </Typography>
+          <Chip size="small" label={`${count} 项`} variant="outlined" />
+        </Stack>
+      </AccordionSummary>
+      <AccordionDetails sx={{ pt: 0, px: 2, pb: 2 }}>
+        {children}
+      </AccordionDetails>
+    </Accordion>
   );
 }
 

@@ -34,6 +34,7 @@ var (
 const (
 	fileRequestLogPruneInterval = time.Hour
 	statePersistInterval        = 30 * time.Second
+	recentFileRequestLogMaxScan = 128 * 1024 * 1024
 )
 
 func Init(ctx context.Context, cfg *config.Config) error {
@@ -632,6 +633,9 @@ func appendFileRequestLogLocked(item models.RequestLog) error {
 func queryFileRequestLogs(since time.Time, userID string, limit int) ([]models.RequestLog, error) {
 	requestLogMu.Lock()
 	defer requestLogMu.Unlock()
+	if limit > 0 {
+		return readRecentFileRequestLogsLocked(since, userID, limit)
+	}
 	items, err := readFileRequestLogsLocked(func(item models.RequestLog) bool {
 		if userID != "" && item.UserID != userID {
 			return false
@@ -645,6 +649,174 @@ func queryFileRequestLogs(since time.Time, userID string, limit int) ([]models.R
 		items = items[len(items)-limit:]
 	}
 	return items, nil
+}
+
+func readRecentFileRequestLogsLocked(since time.Time, userID string, limit int) ([]models.RequestLog, error) {
+	filePath := RequestLogFilePath()
+	f, err := os.Open(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []models.RequestLog{}, nil
+		}
+		return nil, err
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	offset := info.Size()
+	if offset == 0 {
+		return []models.RequestLog{}, nil
+	}
+
+	const chunkSize int64 = 1024 * 1024
+	result := make([]models.RequestLog, 0, min(limit, 256))
+	remainder := []byte{}
+	shouldStop := false
+	scanned := int64(0)
+
+	for offset > 0 && len(result) < limit && !shouldStop && scanned < recentFileRequestLogMaxScan {
+		readSize := chunkSize
+		if offset < readSize {
+			readSize = offset
+		}
+		if remaining := recentFileRequestLogMaxScan - scanned; remaining < readSize {
+			readSize = remaining
+		}
+		offset -= readSize
+		scanned += readSize
+
+		chunk := make([]byte, readSize)
+		if _, err := f.ReadAt(chunk, offset); err != nil && err != io.EOF {
+			return nil, err
+		}
+		if len(remainder) > 0 {
+			chunk = append(chunk, remainder...)
+			remainder = nil
+		}
+
+		start := 0
+		if offset > 0 {
+			if idx := bytes.IndexByte(chunk, '\n'); idx >= 0 {
+				remainder = append(remainder[:0], chunk[:idx+1]...)
+				start = idx + 1
+			} else {
+				remainder = append(remainder[:0], chunk...)
+				continue
+			}
+		}
+
+		lines := bytes.Split(chunk[start:], []byte{'\n'})
+		for i := len(lines) - 1; i >= 0; i-- {
+			if len(result) >= limit {
+				break
+			}
+			trimmed := bytes.TrimSpace(lines[i])
+			if len(trimmed) == 0 {
+				continue
+			}
+
+			item, jsonErr := unmarshalRequestLogSummaryLine(trimmed)
+			if jsonErr != nil {
+				continue
+			}
+			if !requestLogAtOrAfter(item, since) {
+				shouldStop = true
+				break
+			}
+			if userID != "" && item.UserID != userID {
+				continue
+			}
+			result = append(result, requestLogForList(item))
+		}
+	}
+
+	if offset == 0 && len(remainder) > 0 && len(result) < limit && !shouldStop {
+		trimmed := bytes.TrimSpace(remainder)
+		if len(trimmed) > 0 {
+			item, jsonErr := unmarshalRequestLogSummaryLine(trimmed)
+			if jsonErr == nil && requestLogAtOrAfter(item, since) {
+				if userID == "" || item.UserID == userID {
+					result = append(result, requestLogForList(item))
+				}
+			}
+		}
+	}
+
+	for i, j := 0, len(result)-1; i < j; i, j = i+1, j-1 {
+		result[i], result[j] = result[j], result[i]
+	}
+	return result, nil
+}
+
+func unmarshalRequestLogSummaryLine(line []byte) (models.RequestLog, error) {
+	type requestLogSummary struct {
+		ID                  string `json:"id"`
+		UserID              string `json:"userId"`
+		UserName            string `json:"userName"`
+		Username            string `json:"username"`
+		APIKeyID            string `json:"apiKeyId"`
+		APIKeyName          string `json:"apiKeyName"`
+		APIKeyPreview       string `json:"apiKeyPreview"`
+		ProviderID          string `json:"providerId"`
+		ProviderName        string `json:"providerName"`
+		Model               string `json:"model"`
+		UpstreamModel       string `json:"upstreamModel"`
+		Endpoint            string `json:"endpoint"`
+		Method              string `json:"method"`
+		Status              int    `json:"status"`
+		OK                  bool   `json:"ok"`
+		Stream              bool   `json:"stream"`
+		DurationMs          int    `json:"durationMs"`
+		PromptTokens        int    `json:"promptTokens"`
+		CompletionTokens    int    `json:"completionTokens"`
+		TotalTokens         int    `json:"totalTokens"`
+		CachedTokens        int    `json:"cachedTokens"`
+		CacheCreationTokens int    `json:"cacheCreationTokens"`
+		CacheMissTokens     int    `json:"cacheMissTokens"`
+		ReasoningTokens     int    `json:"reasoningTokens"`
+		ErrorCode           string `json:"errorCode"`
+		ErrorMessage        string `json:"errorMessage"`
+		HasRequestContent   bool   `json:"hasRequestContent,omitempty"`
+		Timestamp           string `json:"timestamp"`
+	}
+
+	var summary requestLogSummary
+	if err := json.Unmarshal(line, &summary); err != nil {
+		return models.RequestLog{}, err
+	}
+	return models.RequestLog{
+		ID:                  summary.ID,
+		UserID:              summary.UserID,
+		UserName:            summary.UserName,
+		Username:            summary.Username,
+		APIKeyID:            summary.APIKeyID,
+		APIKeyName:          summary.APIKeyName,
+		APIKeyPreview:       summary.APIKeyPreview,
+		ProviderID:          summary.ProviderID,
+		ProviderName:        summary.ProviderName,
+		Model:               summary.Model,
+		UpstreamModel:       summary.UpstreamModel,
+		Endpoint:            summary.Endpoint,
+		Method:              summary.Method,
+		Status:              summary.Status,
+		OK:                  summary.OK,
+		Stream:              summary.Stream,
+		DurationMs:          summary.DurationMs,
+		PromptTokens:        summary.PromptTokens,
+		CompletionTokens:    summary.CompletionTokens,
+		TotalTokens:         summary.TotalTokens,
+		CachedTokens:        summary.CachedTokens,
+		CacheCreationTokens: summary.CacheCreationTokens,
+		CacheMissTokens:     summary.CacheMissTokens,
+		ReasoningTokens:     summary.ReasoningTokens,
+		ErrorCode:           summary.ErrorCode,
+		ErrorMessage:        summary.ErrorMessage,
+		HasRequestContent:   summary.HasRequestContent || bytes.Contains(line, []byte(`"requestContent"`)),
+		Timestamp:           summary.Timestamp,
+	}, nil
 }
 
 func findFileRequestLog(id, userID string) (*models.RequestLog, bool, error) {

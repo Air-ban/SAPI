@@ -236,8 +236,9 @@ export function PortalView({
                       usage={(usage?.byApiKey || []).find((item) => item.apiKeyId === key.id)}
                       onCopy={onCopy}
                       onRotate={() => onRotateApiKey(key)}
-                      onToggle={() => onUpdateApiKey?.(key.id, { enabled: !key.enabled })}
-                      onDelete={() => onDeleteApiKey?.(key)}
+                      onToggle={key.id && key.id !== "primary" ? () => onUpdateApiKey?.(key.id, { enabled: !key.enabled }) : undefined}
+                      onRename={key.id && key.id !== "primary" ? (name) => onUpdateApiKey?.(key.id, { name }) : undefined}
+                      onDelete={key.id && key.id !== "primary" ? () => onDeleteApiKey?.(key) : undefined}
                     />
                   ))}
                 </Stack>

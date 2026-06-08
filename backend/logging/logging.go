@@ -7,6 +7,7 @@ import (
 	"sapi/auth"
 	"sapi/models"
 	"sapi/store"
+	"sapi/utils"
 )
 
 var (
@@ -149,37 +150,17 @@ type simpleUsage struct {
 }
 
 func normalizeUsageSimple(usage interface{}) simpleUsage {
-	if usage == nil {
+	normalized := utils.NormalizeUsage(usage)
+	if normalized == nil {
 		return simpleUsage{}
 	}
-	u, ok := usage.(map[string]interface{})
-	if !ok {
-		return simpleUsage{}
-	}
-
-	promptTokens := intVal(u, "prompt_tokens", "promptTokens", "input_tokens", "inputTokens")
-	completionTokens := intVal(u, "completion_tokens", "completionTokens", "output_tokens", "outputTokens")
-	totalTokens := intVal(u, "total_tokens", "totalTokens")
-	if totalTokens == 0 {
-		totalTokens = promptTokens + completionTokens
-	}
-
 	return simpleUsage{
-		PromptTokens:        promptTokens,
-		CompletionTokens:    completionTokens,
-		TotalTokens:         totalTokens,
-		CachedTokens:        intVal(u, "cached_tokens", "cachedTokens"),
-		CacheCreationTokens: intVal(u, "cache_creation_input_tokens", "cacheCreationInputTokens"),
-		CacheMissTokens:     intVal(u, "prompt_cache_miss_tokens", "promptCacheMissTokens"),
-		ReasoningTokens:     intVal(u, "reasoning_tokens", "reasoningTokens"),
+		PromptTokens:        normalized.PromptTokens,
+		CompletionTokens:    normalized.CompletionTokens,
+		TotalTokens:         normalized.TotalTokens,
+		CachedTokens:        normalized.CachedTokens,
+		CacheCreationTokens: normalized.CacheCreationTokens,
+		CacheMissTokens:     normalized.CacheMissTokens,
+		ReasoningTokens:     normalized.ReasoningTokens,
 	}
-}
-
-func intVal(m map[string]interface{}, keys ...string) int {
-	for _, key := range keys {
-		if v, ok := m[key].(float64); ok {
-			return int(v)
-		}
-	}
-	return 0
 }

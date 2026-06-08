@@ -148,17 +148,26 @@ func geminiUsageToOpenAI(usage interface{}) interface{} {
 	if !ok || u == nil {
 		return nil
 	}
-	prompt := utils.FiniteTokenCount(u["promptTokenCount"])
-	completion := utils.FiniteTokenCount(u["candidatesTokenCount"])
+	prompt := utils.FiniteTokenCount(u["promptTokenCount"], u["inputTokenCount"])
+	completion := utils.FiniteTokenCount(u["candidatesTokenCount"], u["outputTokenCount"])
 	total := utils.FiniteTokenCount(u["totalTokenCount"])
 	if total == 0 {
 		total = prompt + completion
 	}
-	return map[string]interface{}{
+	result := map[string]interface{}{
 		"prompt_tokens":     prompt,
 		"completion_tokens": completion,
 		"total_tokens":      total,
 	}
+	cachedTokens := utils.FiniteTokenCount(u["cachedContentTokenCount"])
+	if cachedTokens > 0 {
+		result["prompt_tokens_details"] = map[string]interface{}{"cached_tokens": cachedTokens}
+	}
+	reasoningTokens := utils.FiniteTokenCount(u["thoughtsTokenCount"])
+	if reasoningTokens > 0 {
+		result["completion_tokens_details"] = map[string]interface{}{"reasoning_tokens": reasoningTokens}
+	}
+	return result
 }
 
 func geminiFinishReasonToOpenAI(reason string) string {

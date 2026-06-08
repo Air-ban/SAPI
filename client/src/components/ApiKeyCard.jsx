@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   Box,
   Chip,
@@ -7,11 +7,15 @@ import {
   Paper,
   Stack,
   Switch,
+  TextField,
   Tooltip,
   Typography
 } from "@mui/material";
+import CheckIcon from "@mui/icons-material/Check";
+import CloseIcon from "@mui/icons-material/Close";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
+import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import RotateRightIcon from "@mui/icons-material/RotateRight";
 
 function formatDate(value) {
@@ -45,7 +49,37 @@ const inlineCodeSx = {
   overflowWrap: "anywhere"
 };
 
-export const ApiKeyCard = React.memo(function ApiKeyCard({ apiKey, usage, onCopy, onRotate, onToggle, onDelete }) {
+export const ApiKeyCard = React.memo(function ApiKeyCard({ apiKey, usage, onCopy, onRotate, onToggle, onDelete, onRename }) {
+  const [renaming, setRenaming] = useState(false);
+  const [draftName, setDraftName] = useState(apiKey.name || "API Key");
+  const [savingName, setSavingName] = useState(false);
+
+  const startRename = () => {
+    setDraftName(apiKey.name || "API Key");
+    setRenaming(true);
+  };
+
+  const cancelRename = () => {
+    setDraftName(apiKey.name || "API Key");
+    setRenaming(false);
+  };
+
+  const submitRename = async () => {
+    const nextName = draftName.trim();
+    if (!nextName || !onRename || savingName) return;
+    if (nextName === (apiKey.name || "API Key")) {
+      setRenaming(false);
+      return;
+    }
+    setSavingName(true);
+    try {
+      await onRename(nextName);
+      setRenaming(false);
+    } finally {
+      setSavingName(false);
+    }
+  };
+
   return (
     <Paper
       variant="outlined"
@@ -60,9 +94,51 @@ export const ApiKeyCard = React.memo(function ApiKeyCard({ apiKey, usage, onCopy
     >
       <Stack spacing={1} sx={{ minWidth: 0 }}>
         <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-          <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
-            {apiKey.name || "API Key"}
-          </Typography>
+          {renaming ? (
+            <Stack direction="row" spacing={0.5} alignItems="center" sx={{ minWidth: { xs: "100%", sm: 260 } }}>
+              <TextField
+                size="small"
+                value={draftName}
+                disabled={savingName}
+                onChange={(event) => setDraftName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    submitRename();
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    cancelRename();
+                  }
+                }}
+                inputProps={{ maxLength: 64 }}
+                sx={{ flex: 1 }}
+              />
+              <Tooltip title="保存名称">
+                <IconButton size="small" onClick={submitRename} disabled={savingName || !draftName.trim()}>
+                  <CheckIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+              <Tooltip title="取消">
+                <IconButton size="small" onClick={cancelRename} disabled={savingName}>
+                  <CloseIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            </Stack>
+          ) : (
+            <Stack direction="row" spacing={0.5} alignItems="center" sx={{ minWidth: 0 }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 800 }} noWrap title={apiKey.name || "API Key"}>
+                {apiKey.name || "API Key"}
+              </Typography>
+              {onRename ? (
+                <Tooltip title="重命名">
+                  <IconButton size="small" onClick={startRename}>
+                    <EditOutlinedIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              ) : null}
+            </Stack>
+          )}
           <Chip
             size="small"
             label={apiKey.enabled ? "启用" : "停用"}
@@ -124,7 +200,7 @@ export const ApiKeyCard = React.memo(function ApiKeyCard({ apiKey, usage, onCopy
           </Tooltip>
         ) : null}
         <FormControlLabel
-          control={<Switch checked={apiKey.enabled} onChange={onToggle} />}
+          control={<Switch checked={apiKey.enabled} onChange={onToggle} disabled={!onToggle} />}
           label=""
           sx={{ m: 0 }}
         />

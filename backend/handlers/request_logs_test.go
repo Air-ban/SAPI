@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -275,5 +276,44 @@ func TestFileStoreKeepsRequestContentOutOfMainState(t *testing.T) {
 	logs := store.RequestLogsSince(db, time.Now().UTC().Add(-time.Hour), "usr_file", 10)
 	if len(logs) != 1 || logs[0].ID != "log_file_split" {
 		t.Fatalf("expected request log summary to be loaded on demand, got %#v", logs)
+	}
+}
+
+func TestRequestLogsSinceReadsRecentFileLogsWithLimit(t *testing.T) {
+	dataFile := filepath.Join(t.TempDir(), "sapi.json")
+	t.Setenv("SAPI_DATA_FILE", dataFile)
+	t.Setenv("SAPI_POSTGRES_URL", " ")
+	t.Setenv("DATABASE_URL", " ")
+	if err := store.Init(context.Background(), config.Load()); err != nil {
+		t.Fatal(err)
+	}
+
+	base := time.Now().UTC().Add(-30 * time.Minute)
+	for i := 0; i < 20; i++ {
+		store.AppendRequestLog(models.RequestLog{
+			ID:        fmt.Sprintf("log_recent_%02d", i),
+			UserID:    "usr_tail",
+			Status:    http.StatusOK,
+			OK:        true,
+			Timestamp: base.Add(time.Duration(i) * time.Minute).Format(time.RFC3339),
+		})
+	}
+
+	if err := store.Init(context.Background(), config.Load()); err != nil {
+		t.Fatal(err)
+	}
+	db := store.ReadDB()
+	if len(db.RequestLogs) != 0 {
+		t.Fatalf("startup should not preload jsonl request logs, got %d", len(db.RequestLogs))
+	}
+
+	logs := store.RequestLogsSince(db, base.Add(-time.Minute), "usr_tail", 5)
+	if len(logs) != 5 {
+		t.Fatalf("expected 5 recent logs, got %d: %#v", len(logs), logs)
+	}
+	for i, want := range []string{"log_recent_15", "log_recent_16", "log_recent_17", "log_recent_18", "log_recent_19"} {
+		if logs[i].ID != want {
+			t.Fatalf("logs[%d] = %s, want %s; logs=%#v", i, logs[i].ID, want, logs)
+		}
 	}
 }
