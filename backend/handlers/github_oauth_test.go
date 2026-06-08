@@ -227,7 +227,7 @@ func TestGitHubStartBindsAcceptedTermsToOAuthState(t *testing.T) {
 	t.Setenv("SAPI_GITHUB_CLIENT_ID", "client-id")
 	t.Setenv("SAPI_GITHUB_CLIENT_SECRET", "client-secret")
 	t.Setenv("SAPI_PUBLIC_BASE_URL", "https://sapi.hanguan.icu")
-	t.Setenv("SAPI_GITHUB_REDIRECT_URL", "")
+	t.Setenv("SAPI_GITHUB_REDIRECT_URL", " ")
 	t.Setenv("SAPI_GITHUB_CLIENT_ID_SAPI_HANGUAN_ICU", " ")
 	t.Setenv("SAPI_GITHUB_CLIENT_SECRET_SAPI_HANGUAN_ICU", " ")
 	t.Setenv("SAPI_GITHUB_REDIRECT_URL_SAPI_HANGUAN_ICU", " ")

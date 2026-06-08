@@ -75,7 +75,7 @@ func Load() *Config {
 
 	port, _ := strconv.Atoi(getEnv("SAPI_PORT", getEnv("PORT", "3000")))
 
-	githubRedirectURL := getEnv("SAPI_GITHUB_REDIRECT_URL", "")
+	githubRedirectURL := strings.TrimSpace(getEnv("SAPI_GITHUB_REDIRECT_URL", ""))
 	cfg := &Config{
 		Port:                       port,
 		AdminUser:                  getEnv("SAPI_ADMIN_USER", "admin"),
