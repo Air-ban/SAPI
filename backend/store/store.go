@@ -301,13 +301,7 @@ func loadCacheLocked(ctx context.Context, createIfMissing bool) error {
 			db.RequestLogs = requestLogsForMemory(db.RequestLogs)
 		}
 	} else if !postgresEnabled() {
-		items, err := queryFileRequestLogs(requestLogCutoff(), "", 50000)
-		if err != nil {
-			log.Printf("[STORE] load request log summaries failed: %v", err)
-			db.RequestLogs = []models.RequestLog{}
-		} else {
-			db.RequestLogs = items
-		}
+		db.RequestLogs = []models.RequestLog{}
 	}
 	if normalizeDB(db) {
 		if postgresEnabled() {

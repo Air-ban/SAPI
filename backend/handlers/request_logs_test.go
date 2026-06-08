@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"sapi/auth"
 	"sapi/config"
@@ -262,5 +263,17 @@ func TestFileStoreKeepsRequestContentOutOfMainState(t *testing.T) {
 	}
 	if item.RequestContent["prompt"] != "payload-kept-in-jsonl" {
 		t.Fatalf("expected full request content from jsonl, got %#v", item.RequestContent)
+	}
+
+	if err := store.Init(context.Background(), config.Load()); err != nil {
+		t.Fatal(err)
+	}
+	db := store.ReadDB()
+	if len(db.RequestLogs) != 0 {
+		t.Fatalf("startup should not preload jsonl request logs, got %d", len(db.RequestLogs))
+	}
+	logs := store.RequestLogsSince(db, time.Now().UTC().Add(-time.Hour), "usr_file", 10)
+	if len(logs) != 1 || logs[0].ID != "log_file_split" {
+		t.Fatalf("expected request log summary to be loaded on demand, got %#v", logs)
 	}
 }
