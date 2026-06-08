@@ -49,14 +49,14 @@ func TestModelsHealthRouteReturnsTTLMetadata(t *testing.T) {
 		t.Fatalf("Cache-Control = %q, want public max-age", got)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{`"ttlSeconds":300`, `"id":"chat-fast"`, `"healthStatus":"healthy"`, `"cachedAt"`, `"expiresAt"`} {
+	for _, want := range []string{`"ttlSeconds":300`, `"id":"prv_fast/chat-fast"`, `"healthStatus":"healthy"`, `"cachedAt"`, `"expiresAt"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("body missing %s: %s", want, body)
 		}
 	}
 }
 
-func TestBuildModelAvailabilityAggregatesProviders(t *testing.T) {
+func TestBuildModelAvailabilityPrefixesProviders(t *testing.T) {
 	now := time.Date(2026, 6, 5, 1, 2, 3, 0, time.UTC)
 	db := &models.Database{
 		Providers: []models.Provider{
@@ -88,19 +88,24 @@ func TestBuildModelAvailabilityAggregatesProviders(t *testing.T) {
 
 	payload := buildModelAvailabilityPayload(db, now)
 	items, ok := payload["models"].([]modelAvailabilityItem)
-	if !ok || len(items) != 1 {
+	if !ok || len(items) != 2 {
 		t.Fatalf("models payload = %#v", payload["models"])
 	}
 
-	item := items[0]
-	if item.HealthStatus != "degraded" {
-		t.Fatalf("healthStatus = %q, want degraded", item.HealthStatus)
+	byID := map[string]modelAvailabilityItem{}
+	for _, item := range items {
+		byID[item.ID] = item
 	}
-	if item.Providers != 2 || item.AvailableProviders != 1 || item.HealthyProviders != 1 {
-		t.Fatalf("provider counts = providers:%d available:%d healthy:%d", item.Providers, item.AvailableProviders, item.HealthyProviders)
+	healthy := byID["prv_ok/chat-main"]
+	if healthy.HealthStatus != "healthy" || healthy.Providers != 1 || healthy.AvailableProviders != 1 || healthy.HealthyProviders != 1 {
+		t.Fatalf("healthy item = %#v", healthy)
 	}
-	if item.Latency != 100 || item.Ping != 80 || item.Availability7d != 99 {
-		t.Fatalf("metrics = latency:%d ping:%d availability:%f", item.Latency, item.Ping, item.Availability7d)
+	if healthy.Latency != 100 || healthy.Ping != 80 || healthy.Availability7d != 99 {
+		t.Fatalf("healthy metrics = latency:%d ping:%d availability:%f", healthy.Latency, healthy.Ping, healthy.Availability7d)
+	}
+	down := byID["prv_down/chat-main"]
+	if down.HealthStatus != "down" || down.Providers != 1 || down.AvailableProviders != 0 {
+		t.Fatalf("down item = %#v", down)
 	}
 	if payload["ttlSeconds"] != 300 {
 		t.Fatalf("ttlSeconds = %#v, want 300", payload["ttlSeconds"])

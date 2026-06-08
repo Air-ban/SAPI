@@ -92,7 +92,7 @@ func validateProxyRequest(w http.ResponseWriter, r *http.Request) (*apiKeyInfo, 
 	if model != "" && info.APIKeyRecord != nil && len(info.APIKeyRecord.AllowedModels) > 0 {
 		allowed := false
 		for _, am := range info.APIKeyRecord.AllowedModels {
-			if strings.TrimSpace(am) == strings.TrimSpace(model) {
+			if proxy.IsModelAllowedByRule(am, model) {
 				allowed = true
 				break
 			}

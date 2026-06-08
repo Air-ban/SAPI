@@ -1,16 +1,18 @@
 ﻿import React, { useState } from "react";
 import {
   Box,
+  Button,
   FormControlLabel,
   Paper,
   Stack,
   Switch,
   Typography
 } from "@mui/material";
+import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
 import SettingsIcon from "@mui/icons-material/Settings";
 import { Section } from "../components/Section";
 
-export function UserSettingsSection({ user, onUpdateSettings }) {
+export function UserSettingsSection({ user, onUpdateSettings, onDeleteAccount }) {
   const [saving, setSaving] = useState(false);
 
   const handleToggle = async (checked) => {
@@ -46,6 +48,43 @@ export function UserSettingsSection({ user, onUpdateSettings }) {
               label=""
               sx={{ m: 0, justifyContent: "flex-end" }}
             />
+          </Box>
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: { xs: "1fr", md: "1fr auto" },
+              gap: 2,
+              alignItems: "center",
+              pt: 2,
+              borderTop: "1px solid",
+              borderColor: "divider"
+            }}
+          >
+            <Stack spacing={0.5}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 760 }}>
+                注销账号
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                注销后账号和所有 API Key 会立即失效，无法使用当前账号继续登录或调用接口。
+              </Typography>
+            </Stack>
+            <Button
+              variant="outlined"
+              color="error"
+              startIcon={<DeleteForeverIcon />}
+              onClick={onDeleteAccount}
+              disabled={!user}
+              sx={{
+                color: "error.main",
+                borderColor: "error.main",
+                "&:hover": {
+                  borderColor: "error.main",
+                  bgcolor: "app.errorSoft"
+                }
+              }}
+            >
+              注销账号
+            </Button>
           </Box>
         </Stack>
       </Paper>

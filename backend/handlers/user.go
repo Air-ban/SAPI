@@ -26,6 +26,7 @@ func MountUserRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/user/api-keys/{id}", middleware.RequireUserAccount(handleUserUpdateAPIKey))
 	mux.HandleFunc("DELETE /api/user/api-keys/{id}", middleware.RequireUserAccount(handleUserDeleteAPIKey))
 	mux.HandleFunc("PUT /api/user/settings", middleware.RequireUserAccount(handleUserSettings))
+	mux.HandleFunc("DELETE /api/user/account", middleware.RequireUserAccount(handleUserDeleteAccount))
 	mux.HandleFunc("GET /api/user/usage", middleware.RequireUserAccount(handleUserUsage))
 	mux.HandleFunc("GET /api/user/request-logs/{id}", middleware.RequireUserAccount(handleUserRequestLog))
 	mux.HandleFunc("GET /api/user/suggestions", middleware.RequireUserAccount(handleUserSuggestions))
@@ -364,6 +365,21 @@ func handleUserSettings(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"user": sanitizeUser(result.(*models.User)),
 	})
+}
+
+func handleUserDeleteAccount(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUser(r)
+	if user == nil {
+		utils.SendError(w, 401, "User authentication is required.", "unauthorized")
+		return
+	}
+
+	if !store.DeleteUserAccount(user.ID) {
+		utils.SendError(w, 404, "User not found.", "not_found")
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
 }
 
 func handleUserUsage(w http.ResponseWriter, r *http.Request) {

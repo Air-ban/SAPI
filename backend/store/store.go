@@ -165,6 +165,18 @@ func MutateDB(mutator func(*models.Database) interface{}) interface{} {
 	mu.Lock()
 	defer mu.Unlock()
 
+	if postgresEnabled() {
+		db, result, err := mutatePostgresState(context.Background(), mutator)
+		if err != nil {
+			log.Printf("[STORE] mutate postgres state failed: %v", err)
+			return result
+		}
+		if db != nil {
+			cachedDB = cloneDatabase(db)
+		}
+		return result
+	}
+
 	if cachedDB == nil {
 		if err := loadCacheLocked(context.Background(), true); err != nil {
 			log.Printf("[STORE] mutate load failed: %v", err)
@@ -180,6 +192,54 @@ func MutateDB(mutator func(*models.Database) interface{}) interface{} {
 	}
 	cachedDB = cloneDatabase(db)
 	return result
+}
+
+func DeleteUserAccount(userID string) bool {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return false
+	}
+
+	if postgresEnabled() {
+		mu.Lock()
+		db, deleted, err := deletePostgresUserAccountState(context.Background(), userID)
+		if err != nil {
+			log.Printf("[STORE] delete postgres user account failed: %v", err)
+			mu.Unlock()
+			return false
+		}
+		if db != nil {
+			cachedDB = cloneDatabase(db)
+		}
+		mu.Unlock()
+		return deleted
+	}
+
+	mu.Lock()
+	if cachedDB == nil {
+		if err := loadCacheLocked(context.Background(), true); err != nil {
+			log.Printf("[STORE] delete account load failed: %v", err)
+			cachedDB = newDefaultDB()
+		}
+	}
+
+	db := cloneDatabase(cachedDB)
+	deleted := removeUserAccountFromDB(db, userID)
+	if !deleted {
+		mu.Unlock()
+		return false
+	}
+	normalizeDB(db)
+	if err := persistStateLocked(context.Background(), db); err != nil {
+		log.Printf("[STORE] persist account deletion failed: %v", err)
+	}
+	cachedDB = cloneDatabase(db)
+	mu.Unlock()
+
+	if err := deleteFileRequestLogsByUser(userID); err != nil {
+		log.Printf("[STORE] delete user request logs failed: %v", err)
+	}
+	return true
 }
 
 func ReadDBInternal() *models.Database {
@@ -208,7 +268,19 @@ func loadCacheLocked(ctx context.Context, createIfMissing bool) error {
 		if db, ok, err := loadPostgresState(ctx); err != nil {
 			return err
 		} else if ok {
-			if normalizeDB(db) {
+			changed := normalizeDB(db)
+			if len(db.RequestLogs) > 0 {
+				for _, item := range db.RequestLogs {
+					if item.ID != "" {
+						if err := insertPostgresRequestLog(ctx, item); err != nil {
+							log.Printf("[STORE] migrate request log to postgres failed: %v", err)
+						}
+					}
+				}
+				db.RequestLogs = []models.RequestLog{}
+				changed = true
+			}
+			if changed {
 				if err := savePostgresState(ctx, db); err != nil {
 					return err
 				}
@@ -602,6 +674,74 @@ func findFileRequestLog(id, userID string) (*models.RequestLog, bool, error) {
 	return found, found != nil, nil
 }
 
+func deleteFileRequestLogsByUser(userID string) error {
+	if strings.TrimSpace(userID) == "" {
+		return nil
+	}
+
+	requestLogMu.Lock()
+	defer requestLogMu.Unlock()
+
+	filePath := RequestLogFilePath()
+	input, err := os.Open(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	defer input.Close()
+
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		return err
+	}
+	tempFile := filePath + ".tmp"
+	output, err := os.OpenFile(tempFile, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+
+	reader := bufio.NewReaderSize(input, 1024*1024)
+	writer := bufio.NewWriterSize(output, 1024*1024)
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) > 0 {
+			keep := true
+			var item models.RequestLog
+			if jsonErr := json.Unmarshal(trimmed, &item); jsonErr == nil && item.UserID == userID {
+				keep = false
+			}
+			if keep {
+				if _, err := writer.Write(trimmed); err != nil {
+					output.Close()
+					return err
+				}
+				if err := writer.WriteByte('\n'); err != nil {
+					output.Close()
+					return err
+				}
+			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			output.Close()
+			return readErr
+		}
+	}
+	if err := writer.Flush(); err != nil {
+		output.Close()
+		return err
+	}
+	if err := output.Close(); err != nil {
+		return err
+	}
+	input.Close()
+	return os.Rename(tempFile, filePath)
+}
+
 func readFileRequestLogsLocked(keep func(models.RequestLog) bool, forList bool) ([]models.RequestLog, error) {
 	filePath := RequestLogFilePath()
 	f, err := os.Open(filePath)
@@ -748,6 +888,55 @@ func pruneRequestLogs(items []models.RequestLog, cutoff time.Time) []models.Requ
 		}
 	}
 	return result
+}
+
+func removeUserAccountFromDB(db *models.Database, userID string) bool {
+	if db == nil || userID == "" {
+		return false
+	}
+
+	removed := false
+	users := make([]models.User, 0, len(db.Users))
+	for _, user := range db.Users {
+		if user.ID == userID {
+			removed = true
+			continue
+		}
+		users = append(users, user)
+	}
+	if !removed {
+		return false
+	}
+	db.Users = users
+
+	for i := range db.InvitationCodes {
+		uses := make([]models.InvitationCodeUse, 0, len(db.InvitationCodes[i].UsedBy))
+		for _, use := range db.InvitationCodes[i].UsedBy {
+			if use.UserID != userID {
+				uses = append(uses, use)
+			}
+		}
+		db.InvitationCodes[i].UsedBy = uses
+		db.InvitationCodes[i].UsedCount = len(uses)
+	}
+
+	suggestions := make([]models.Suggestion, 0, len(db.Suggestions))
+	for _, suggestion := range db.Suggestions {
+		if suggestion.UserID != userID {
+			suggestions = append(suggestions, suggestion)
+		}
+	}
+	db.Suggestions = suggestions
+
+	logs := make([]models.RequestLog, 0, len(db.RequestLogs))
+	for _, item := range db.RequestLogs {
+		if item.UserID != userID {
+			logs = append(logs, item)
+		}
+	}
+	db.RequestLogs = logs
+
+	return true
 }
 
 func newDefaultDB() *models.Database {

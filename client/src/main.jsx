@@ -701,6 +701,17 @@ function App() {
     showToast("设置已保存");
   };
 
+  const deleteUserAccount = async () => {
+    await request("/api/user/account", {
+      method: "DELETE",
+      admin: false,
+      token: userToken
+    });
+    userLogout();
+    navigate("login");
+    showToast("账号已注销");
+  };
+
   const copyText = async (text) => {
     await navigator.clipboard.writeText(text);
     showToast("已复制");
@@ -1015,6 +1026,15 @@ function App() {
                 onCopy={copyText}
                 onUpdateSettings={(body) =>
                   updateUserSettings(body).catch((error) => showToast(error.message, "error"))
+                }
+                onDeleteAccount={() =>
+                  setConfirm({
+                    title: "注销账号",
+                    message: "确认注销当前账号？账号、所有 API Key 和个人请求记录会被删除，操作无法恢复。",
+                    confirmText: "注销账号",
+                    danger: true,
+                    action: deleteUserAccount
+                  })
                 }
                 onToast={showToast}
                 ModelAvailabilityDashboard={ModelAvailabilityDashboard}

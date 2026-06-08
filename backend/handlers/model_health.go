@@ -114,13 +114,19 @@ func addProviderModelsToAvailability(modelMap map[string]*modelAvailabilityItem,
 		if model.ID == "" {
 			continue
 		}
-		item := ensureModelAvailabilityItem(modelMap, model.ID, model.Name, model.Description, model.CliSupport)
+		publicID := proxy.PrefixedModelID(provider, model.ID)
+		name := model.Name
+		if name == "" {
+			name = model.ID
+		}
+		item := ensureModelAvailabilityItem(modelMap, publicID, name, model.Description, model.CliSupport)
 		addProviderAvailability(item, provider)
-		seen[model.ID] = true
+		seen[publicID] = true
 	}
 
 	for customID, upstreamID := range provider.ModelMappings {
-		if customID == "" || seen[customID] {
+		publicID := proxy.PrefixedModelID(provider, customID)
+		if customID == "" || seen[publicID] {
 			continue
 		}
 		name := customID
@@ -136,7 +142,7 @@ func addProviderModelsToAvailability(modelMap map[string]*modelAvailabilityItem,
 				break
 			}
 		}
-		item := ensureModelAvailabilityItem(modelMap, customID, name, description, cliSupport)
+		item := ensureModelAvailabilityItem(modelMap, publicID, name, description, cliSupport)
 		addProviderAvailability(item, provider)
 	}
 }

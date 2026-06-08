@@ -433,24 +433,35 @@ func availableModelsForKey(db *models.Database, apiKeyRecord *models.APIKeyRecor
 		}
 		for _, m := range p.Models {
 			if m.ID != "" {
-				modelMap[m.ID] = m
+				publicID := proxy.PrefixedModelID(p, m.ID)
+				item := m
+				item.ID = publicID
+				if item.Name == "" {
+					item.Name = m.ID
+				}
+				modelMap[publicID] = item
 			}
 		}
 		for customID, upstreamID := range p.ModelMappings {
 			if customID == "" || upstreamID == "" {
 				continue
 			}
-			if _, exists := modelMap[customID]; exists {
+			publicID := proxy.PrefixedModelID(p, customID)
+			if _, exists := modelMap[publicID]; exists {
 				continue
 			}
 			name := customID
+			description := ""
+			cliSupport := []string{}
 			for _, m := range p.Models {
 				if m.ID == upstreamID && m.Name != "" {
 					name = m.Name
+					description = m.Description
+					cliSupport = m.CliSupport
 					break
 				}
 			}
-			modelMap[customID] = models.Model{ID: customID, Name: name}
+			modelMap[publicID] = models.Model{ID: publicID, Name: name, Description: description, CliSupport: cliSupport}
 		}
 	}
 
@@ -460,13 +471,9 @@ func availableModelsForKey(db *models.Database, apiKeyRecord *models.APIKeyRecor
 	}
 
 	if apiKeyRecord != nil && len(apiKeyRecord.AllowedModels) > 0 {
-		allowedSet := make(map[string]bool)
-		for _, m := range apiKeyRecord.AllowedModels {
-			allowedSet[strings.TrimSpace(m)] = true
-		}
 		filtered := make([]models.Model, 0)
 		for _, m := range modelList {
-			if allowedSet[m.ID] {
+			if isModelAllowedByAPIKey(apiKeyRecord, m.ID) {
 				filtered = append(filtered, m)
 			}
 		}
@@ -478,6 +485,18 @@ func availableModelsForKey(db *models.Database, apiKeyRecord *models.APIKeyRecor
 	})
 
 	return modelList
+}
+
+func isModelAllowedByAPIKey(apiKeyRecord *models.APIKeyRecord, modelID string) bool {
+	if apiKeyRecord == nil || len(apiKeyRecord.AllowedModels) == 0 {
+		return true
+	}
+	for _, allowed := range apiKeyRecord.AllowedModels {
+		if proxy.IsModelAllowedByRule(allowed, modelID) {
+			return true
+		}
+	}
+	return false
 }
 
 func modelToOpenAIObject(m models.Model) map[string]interface{} {

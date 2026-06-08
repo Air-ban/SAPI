@@ -72,6 +72,7 @@ export function PortalView({
   onRefresh,
   onCopy,
   onUpdateSettings,
+  onDeleteAccount,
   onToast,
   ModelAvailabilityDashboard,
   onLoadRequestContent,
@@ -413,7 +414,11 @@ export function PortalView({
       ) : null}
 
       {currentPage === "settings" ? (
-        <UserSettingsSection user={user} onUpdateSettings={onUpdateSettings} />
+        <UserSettingsSection
+          user={user}
+          onUpdateSettings={onUpdateSettings}
+          onDeleteAccount={onDeleteAccount}
+        />
       ) : null}
 
       {currentPage === "suggestion" ? (

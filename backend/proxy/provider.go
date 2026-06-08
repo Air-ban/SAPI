@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -70,6 +71,7 @@ func GetModelProviderMapping(provider models.Provider, modelID string) *Provider
 	if modelID == "" {
 		return nil
 	}
+	modelID = strings.TrimSpace(modelID)
 	for _, m := range provider.Models {
 		if m.ID == modelID {
 			return &ProviderCandidate{provider, modelID}
@@ -99,7 +101,7 @@ func ChooseProviderCandidates(db *models.Database, body map[string]interface{}) 
 	model := ""
 	if body != nil {
 		if m, ok := body["model"].(string); ok {
-			model = m
+			model = strings.TrimSpace(m)
 		}
 	}
 
@@ -116,6 +118,11 @@ func ChooseProviderCandidates(db *models.Database, body map[string]interface{}) 
 	}
 
 	if model != "" {
+		var channelMatched bool
+		enabled, model, channelMatched = selectRequestedModelChannel(db, enabled, model)
+		if channelMatched && len(enabled) == 0 {
+			return nil
+		}
 		var matched []ProviderCandidate
 		for _, p := range enabled {
 			mapping := GetModelProviderMapping(p, model)
@@ -130,6 +137,7 @@ func ChooseProviderCandidates(db *models.Database, body map[string]interface{}) 
 }
 
 func ChooseAnthropicProviderCandidates(db *models.Database, model string) []ProviderCandidate {
+	model = strings.TrimSpace(model)
 	var enabled []models.Provider
 	for _, p := range db.Providers {
 		if p.Enabled && IsProviderAvailableForFailover(p) {
@@ -143,6 +151,11 @@ func ChooseAnthropicProviderCandidates(db *models.Database, model string) []Prov
 	}
 
 	if model != "" {
+		var channelMatched bool
+		enabled, model, channelMatched = selectRequestedModelChannel(db, enabled, model)
+		if channelMatched && len(enabled) == 0 {
+			return nil
+		}
 		var matched []ProviderCandidate
 		for _, p := range enabled {
 			mapping := GetModelProviderMapping(p, model)
@@ -152,6 +165,9 @@ func ChooseAnthropicProviderCandidates(db *models.Database, model string) []Prov
 		}
 		if len(matched) > 0 {
 			return matched
+		}
+		if channelMatched {
+			return nil
 		}
 	}
 
@@ -172,6 +188,33 @@ func ChooseAnthropicProviderCandidates(db *models.Database, model string) []Prov
 		return []ProviderCandidate{{Provider: first, UpstreamModel: firstModel}}
 	}
 	return []ProviderCandidate{{Provider: first, UpstreamModel: model}}
+}
+
+func selectRequestedModelChannel(db *models.Database, enabled []models.Provider, model string) ([]models.Provider, string, bool) {
+	channelID, innerID, ok := SplitPrefixedModelID(model)
+	if !ok {
+		return enabled, model, false
+	}
+
+	matchesKnownProvider := false
+	for _, p := range db.Providers {
+		if strings.TrimSpace(p.ID) == channelID {
+			matchesKnownProvider = true
+			break
+		}
+	}
+	if !matchesKnownProvider {
+		return enabled, model, false
+	}
+
+	filtered := make([]models.Provider, 0, 1)
+	for _, p := range enabled {
+		if strings.TrimSpace(p.ID) == channelID {
+			filtered = append(filtered, p)
+			break
+		}
+	}
+	return filtered, innerID, true
 }
 
 func ComputeAvailability(history []models.HealthHistoryEntry) float64 {

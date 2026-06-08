@@ -170,6 +170,80 @@ func TestDeletingLastUserAPIKeyDoesNotRestoreLegacyPrimaryKey(t *testing.T) {
 	}
 }
 
+func TestUserCanDeleteOwnAccount(t *testing.T) {
+	mux, _, _, userToken := setupSessionSecurityTest(t)
+
+	apiKey := "sk-sapi-delete-account"
+	store.MutateDB(func(db *models.Database) interface{} {
+		db.Users = []models.User{{
+			ID:       "usr_session",
+			Name:     "Session User",
+			Username: "session-user",
+			Enabled:  true,
+			APIKeys: []models.APIKeyRecord{{
+				ID:      "key_account",
+				Name:    "Account Key",
+				Key:     apiKey,
+				Enabled: true,
+			}},
+		}}
+		db.InvitationCodes = []models.InvitationCode{{
+			ID:   "inv_session",
+			Code: "WELCOME",
+			UsedBy: []models.InvitationCodeUse{{
+				UserID: "usr_session",
+				UsedAt: "2026-06-08T00:00:00.000Z",
+			}},
+			UsedCount: 1,
+		}}
+		db.Suggestions = []models.Suggestion{{
+			ID:      "sg_session",
+			UserID:  "usr_session",
+			Title:   "Feedback",
+			Content: "Delete me",
+		}}
+		return nil
+	})
+
+	store.AppendRequestLog(models.RequestLog{
+		ID:        "log_session",
+		UserID:    "usr_session",
+		Model:     "test-model",
+		Endpoint:  "/v1/chat/completions",
+		Method:    "POST",
+		Status:    200,
+		OK:        true,
+		Timestamp: store.Now(),
+	})
+
+	deleteRec := authedRequest(mux, http.MethodDelete, "/api/user/account", userToken)
+	if deleteRec.Code != http.StatusOK {
+		t.Fatalf("delete account returned %d body=%s", deleteRec.Code, deleteRec.Body.String())
+	}
+
+	db := store.ReadDB()
+	if len(db.Users) != 0 {
+		t.Fatalf("users = %#v, want empty", db.Users)
+	}
+	if len(db.Suggestions) != 0 {
+		t.Fatalf("suggestions = %#v, want empty", db.Suggestions)
+	}
+	if len(db.InvitationCodes) != 1 || db.InvitationCodes[0].UsedCount != 0 || len(db.InvitationCodes[0].UsedBy) != 0 {
+		t.Fatalf("invitation uses = %#v, want cleared", db.InvitationCodes)
+	}
+	if found := middleware.FindUserByKey(apiKey); found.User != nil || found.APIKeyRecord != nil {
+		t.Fatalf("deleted account API key still authenticates: user=%#v key=%#v", found.User, found.APIKeyRecord)
+	}
+
+	sessionRec := authedRequest(mux, http.MethodPost, "/api/user/session", userToken)
+	if sessionRec.Code != http.StatusUnauthorized {
+		t.Fatalf("deleted user session returned %d body=%s", sessionRec.Code, sessionRec.Body.String())
+	}
+	if _, ok := store.FindRequestLog("log_session", "usr_session"); ok {
+		t.Fatal("deleted account request log was still found")
+	}
+}
+
 func authedRequest(handler http.Handler, method, path, bearer string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")

@@ -52,6 +52,243 @@ CREATE TABLE IF NOT EXISTS sapi_state (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS sapi_app_config (
+  id text PRIMARY KEY,
+  version integer NOT NULL DEFAULT 1,
+  app_secret text NOT NULL,
+  site_email text NOT NULL DEFAULT '',
+  default_rpm_limit integer NOT NULL DEFAULT 30,
+  maintenance_mode boolean NOT NULL DEFAULT false,
+  maintenance_end_time text NOT NULL DEFAULT '',
+  show_only_available_models boolean NOT NULL DEFAULT false,
+  created_at text NOT NULL DEFAULT '',
+  updated_at text NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS sapi_smtp_config (
+  app_id text PRIMARY KEY REFERENCES sapi_app_config(id) ON DELETE CASCADE,
+  host text NOT NULL DEFAULT '',
+  port integer NOT NULL DEFAULT 587,
+  secure boolean NOT NULL DEFAULT false,
+  username text NOT NULL DEFAULT '',
+  password text NOT NULL DEFAULT '',
+  from_addr text NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS sapi_site_emails (
+  app_id text NOT NULL REFERENCES sapi_app_config(id) ON DELETE CASCADE,
+  position integer NOT NULL,
+  email text NOT NULL,
+  PRIMARY KEY (app_id, position),
+  UNIQUE (app_id, email)
+);
+
+CREATE TABLE IF NOT EXISTS sapi_site_banner (
+  app_id text PRIMARY KEY REFERENCES sapi_app_config(id) ON DELETE CASCADE,
+  content text NOT NULL DEFAULT '',
+  updated_at text NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS sapi_providers (
+  id text PRIMARY KEY,
+  position integer NOT NULL DEFAULT 0,
+  name text NOT NULL,
+  base_url text NOT NULL,
+  api_key text NOT NULL,
+  upstream_format text NOT NULL,
+  enabled boolean NOT NULL,
+  failover_threshold integer NOT NULL,
+  priority integer NOT NULL,
+  health_status text NOT NULL,
+  latency integer NOT NULL,
+  ping integer NOT NULL,
+  availability_7d double precision NOT NULL,
+  last_health_check text NOT NULL DEFAULT '',
+  created_at text NOT NULL DEFAULT '',
+  updated_at text NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS sapi_provider_models (
+  provider_id text NOT NULL REFERENCES sapi_providers(id) ON DELETE CASCADE,
+  position integer NOT NULL,
+  model_id text NOT NULL,
+  name text NOT NULL DEFAULT '',
+  description text NOT NULL DEFAULT '',
+  PRIMARY KEY (provider_id, position)
+);
+
+CREATE TABLE IF NOT EXISTS sapi_provider_model_cli_support (
+  provider_id text NOT NULL,
+  model_position integer NOT NULL,
+  position integer NOT NULL,
+  cli_support text NOT NULL,
+  PRIMARY KEY (provider_id, model_position, position),
+  FOREIGN KEY (provider_id, model_position) REFERENCES sapi_provider_models(provider_id, position) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS sapi_provider_model_mappings (
+  provider_id text NOT NULL REFERENCES sapi_providers(id) ON DELETE CASCADE,
+  model_id text NOT NULL,
+  upstream_model text NOT NULL,
+  PRIMARY KEY (provider_id, model_id)
+);
+
+CREATE TABLE IF NOT EXISTS sapi_provider_health_history (
+  provider_id text NOT NULL REFERENCES sapi_providers(id) ON DELETE CASCADE,
+  position integer NOT NULL,
+  timestamp text NOT NULL,
+  status text NOT NULL,
+  latency integer NOT NULL,
+  PRIMARY KEY (provider_id, position)
+);
+
+CREATE TABLE IF NOT EXISTS sapi_users (
+  id text PRIMARY KEY,
+  position integer NOT NULL DEFAULT 0,
+  username text NOT NULL,
+  email text NOT NULL DEFAULT '',
+  name text NOT NULL DEFAULT '',
+  password_hash text NOT NULL DEFAULT '',
+  enabled boolean NOT NULL,
+  receive_announcement_email boolean NOT NULL,
+  source text NOT NULL DEFAULT '',
+  github_id text NOT NULL DEFAULT '',
+  github_login text NOT NULL DEFAULT '',
+  github_avatar_url text NOT NULL DEFAULT '',
+  github_linked_at text NOT NULL DEFAULT '',
+  subscription_tier text NOT NULL DEFAULT '',
+  created_at text NOT NULL DEFAULT '',
+  updated_at text NOT NULL DEFAULT ''
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS sapi_users_username_unique_idx ON sapi_users (lower(username));
+CREATE UNIQUE INDEX IF NOT EXISTS sapi_users_email_unique_idx ON sapi_users (lower(email)) WHERE email <> '';
+CREATE UNIQUE INDEX IF NOT EXISTS sapi_users_github_id_unique_idx ON sapi_users (github_id) WHERE github_id <> '';
+
+CREATE TABLE IF NOT EXISTS sapi_user_api_keys (
+  id text PRIMARY KEY,
+  user_id text NOT NULL REFERENCES sapi_users(id) ON DELETE CASCADE,
+  position integer NOT NULL,
+  name text NOT NULL,
+  key_value text NOT NULL,
+  enabled boolean NOT NULL,
+  rpm_limit integer NOT NULL DEFAULT 0,
+  banned_until text NOT NULL DEFAULT '',
+  ban_reason text NOT NULL DEFAULT '',
+  invalid_request_count integer NOT NULL DEFAULT 0,
+  last_invalid_request_at text NOT NULL DEFAULT '',
+  created_at text NOT NULL DEFAULT '',
+  updated_at text NOT NULL DEFAULT '',
+  last_used_at text NOT NULL DEFAULT '',
+  UNIQUE (user_id, position),
+  UNIQUE (key_value)
+);
+
+CREATE TABLE IF NOT EXISTS sapi_user_api_key_allowed_models (
+  api_key_id text NOT NULL REFERENCES sapi_user_api_keys(id) ON DELETE CASCADE,
+  position integer NOT NULL,
+  model_id text NOT NULL,
+  PRIMARY KEY (api_key_id, position)
+);
+
+CREATE TABLE IF NOT EXISTS sapi_admin_api_keys (
+  id text PRIMARY KEY,
+  position integer NOT NULL UNIQUE,
+  name text NOT NULL,
+  key_value text NOT NULL,
+  enabled boolean NOT NULL,
+  rpm_limit integer NOT NULL DEFAULT 0,
+  banned_until text NOT NULL DEFAULT '',
+  ban_reason text NOT NULL DEFAULT '',
+  invalid_request_count integer NOT NULL DEFAULT 0,
+  last_invalid_request_at text NOT NULL DEFAULT '',
+  created_at text NOT NULL DEFAULT '',
+  updated_at text NOT NULL DEFAULT '',
+  last_used_at text NOT NULL DEFAULT '',
+  UNIQUE (key_value)
+);
+
+CREATE TABLE IF NOT EXISTS sapi_admin_api_key_allowed_models (
+  api_key_id text NOT NULL REFERENCES sapi_admin_api_keys(id) ON DELETE CASCADE,
+  position integer NOT NULL,
+  model_id text NOT NULL,
+  PRIMARY KEY (api_key_id, position)
+);
+
+CREATE TABLE IF NOT EXISTS sapi_invitation_codes (
+  id text PRIMARY KEY,
+  position integer NOT NULL DEFAULT 0,
+  code text NOT NULL UNIQUE,
+  note text NOT NULL DEFAULT '',
+  created_at text NOT NULL DEFAULT '',
+  expires_at text NOT NULL DEFAULT '',
+  max_uses integer NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS sapi_invitation_code_uses (
+  invitation_id text NOT NULL REFERENCES sapi_invitation_codes(id) ON DELETE CASCADE,
+  position integer NOT NULL,
+  user_id text NOT NULL,
+  used_at text NOT NULL,
+  PRIMARY KEY (invitation_id, position)
+);
+
+CREATE TABLE IF NOT EXISTS sapi_verification_codes (
+  position integer PRIMARY KEY,
+  email text NOT NULL,
+  code text NOT NULL,
+  purpose text NOT NULL,
+  created_at text NOT NULL,
+  used boolean NOT NULL DEFAULT false
+);
+
+CREATE TABLE IF NOT EXISTS sapi_admin_passkeys (
+  id text PRIMARY KEY,
+  position integer NOT NULL DEFAULT 0,
+  name text NOT NULL,
+  credential jsonb NOT NULL,
+  created_at text NOT NULL DEFAULT '',
+  updated_at text NOT NULL DEFAULT '',
+  last_used_at text NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS sapi_announcements (
+  id text PRIMARY KEY,
+  position integer NOT NULL DEFAULT 0,
+  title text NOT NULL,
+  content text NOT NULL,
+  type text NOT NULL,
+  enabled boolean NOT NULL,
+  send_email boolean NOT NULL,
+  created_at text NOT NULL DEFAULT '',
+  updated_at text NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS sapi_suggestions (
+  id text PRIMARY KEY,
+  position integer NOT NULL DEFAULT 0,
+  title text NOT NULL,
+  content text NOT NULL,
+  contact text NOT NULL DEFAULT '',
+  user_id text NOT NULL DEFAULT '',
+  user_name text NOT NULL DEFAULT '',
+  reply text NOT NULL DEFAULT '',
+  replied_at text NOT NULL DEFAULT '',
+  replied_by text NOT NULL DEFAULT '',
+  created_at text NOT NULL DEFAULT '',
+  updated_at text NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS sapi_token_usage (
+  position integer PRIMARY KEY,
+  payload jsonb NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sapi_documents (
+  position integer PRIMARY KEY,
+  payload jsonb NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sapi_request_logs (
   id text PRIMARY KEY,
   user_id text NOT NULL DEFAULT '',
@@ -84,6 +321,12 @@ CREATE TABLE IF NOT EXISTS sapi_request_logs (
 );
 
 ALTER TABLE sapi_request_logs ADD COLUMN IF NOT EXISTS request_content jsonb NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE sapi_providers ADD COLUMN IF NOT EXISTS position integer NOT NULL DEFAULT 0;
+ALTER TABLE sapi_users ADD COLUMN IF NOT EXISTS position integer NOT NULL DEFAULT 0;
+ALTER TABLE sapi_invitation_codes ADD COLUMN IF NOT EXISTS position integer NOT NULL DEFAULT 0;
+ALTER TABLE sapi_admin_passkeys ADD COLUMN IF NOT EXISTS position integer NOT NULL DEFAULT 0;
+ALTER TABLE sapi_announcements ADD COLUMN IF NOT EXISTS position integer NOT NULL DEFAULT 0;
+ALTER TABLE sapi_suggestions ADD COLUMN IF NOT EXISTS position integer NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS sapi_request_logs_timestamp_idx ON sapi_request_logs (timestamp DESC);
 CREATE INDEX IF NOT EXISTS sapi_request_logs_user_timestamp_idx ON sapi_request_logs (user_id, timestamp DESC);
@@ -130,40 +373,25 @@ func loadPostgresState(ctx context.Context) (*models.Database, bool, error) {
 		return nil, false, nil
 	}
 
-	var raw []byte
-	err := pgPool.QueryRow(ctx, `SELECT payload FROM sapi_state WHERE id = 'main'`).Scan(&raw)
-	if err == pgx.ErrNoRows {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, err
+	if db, ok, err := loadPostgresNormalizedState(ctx, pgPool); err != nil || ok {
+		return db, ok, err
 	}
 
-	var db models.Database
-	if err := json.Unmarshal(raw, &db); err != nil {
+	db, ok, err := loadPostgresLegacyState(ctx, pgPool)
+	if err != nil || !ok {
+		return db, ok, err
+	}
+	if err := savePostgresNormalizedState(ctx, db); err != nil {
 		return nil, false, err
 	}
-	return &db, true, nil
+	return db, true, nil
 }
 
 func savePostgresState(ctx context.Context, db *models.Database) error {
 	if pgPool == nil {
 		return nil
 	}
-
-	state := cloneDatabase(db)
-	state.RequestLogs = nil
-	raw, err := json.Marshal(state)
-	if err != nil {
-		return err
-	}
-
-	_, err = pgPool.Exec(ctx, `
-INSERT INTO sapi_state (id, payload, updated_at)
-VALUES ('main', $1::jsonb, now())
-ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = now()
-`, raw)
-	return err
+	return savePostgresNormalizedState(ctx, db)
 }
 
 func insertPostgresRequestLog(ctx context.Context, item models.RequestLog) error {
@@ -187,7 +415,13 @@ func insertPostgresRequestLog(ctx context.Context, item models.RequestLog) error
 		requestContentRaw = []byte(`{}`)
 	}
 
-	_, err = pgPool.Exec(ctx, `
+	tx, err := pgPool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	_, err = tx.Exec(ctx, `
 INSERT INTO sapi_request_logs (
   id, user_id, user_name, username, api_key_id, api_key_name, api_key_preview,
   provider_id, provider_name, model, upstream_model, endpoint, method, status,
@@ -204,7 +438,20 @@ ON CONFLICT (id) DO NOTHING
 		item.OK, item.Stream, item.DurationMs, item.PromptTokens, item.CompletionTokens, item.TotalTokens,
 		item.CachedTokens, item.CacheCreationTokens, item.CacheMissTokens, item.ReasoningTokens,
 		item.ErrorCode, item.ErrorMessage, requestContentRaw, ts)
-	return err
+	if err != nil {
+		return err
+	}
+	if item.UserID != "" && item.APIKeyID != "" {
+		tsText := ts.UTC().Format("2006-01-02T15:04:05.000Z")
+		if _, err := tx.Exec(ctx, `
+UPDATE sapi_user_api_keys
+SET last_used_at = $1, updated_at = $1
+WHERE id = $2 AND user_id = $3
+`, tsText, item.APIKeyID, item.UserID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 func prunePostgresRequestLogs(ctx context.Context, cutoff time.Time) error {
@@ -308,4 +555,12 @@ WHERE id = $1`
 	}
 	item.Timestamp = ts.UTC().Format(time.RFC3339)
 	return &item, true, nil
+}
+
+func deletePostgresUserRequestLogsTx(ctx context.Context, q postgresQuerier, userID string) error {
+	if userID == "" {
+		return nil
+	}
+	_, err := q.Exec(ctx, `DELETE FROM sapi_request_logs WHERE user_id = $1`, userID)
+	return err
 }
