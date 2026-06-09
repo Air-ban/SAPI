@@ -254,8 +254,10 @@ func publicConfigForRequest(r *http.Request) map[string]interface{} {
 			"enabled": !db.RegistrationDisabled,
 		},
 		"captcha": map[string]interface{}{
-			"enabled": cfg.TencentCaptchaAppID != "" && cfg.TencentCaptchaAppSecretKey != "",
-			"appId":   cfg.TencentCaptchaAppID,
+			"provider": "turnstile",
+			"enabled":  cfg.TurnstileSecretKey != "",
+			"siteKey":  cfg.TurnstileSiteKey,
+			"appId":    cfg.TencentCaptchaAppID,
 		},
 		"github": map[string]interface{}{
 			"enabled":              githubEnabled,

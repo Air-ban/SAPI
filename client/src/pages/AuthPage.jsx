@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -62,6 +62,54 @@ export function AuthPage({
   const [registerMethod, setRegisterMethod] = useState("email");
   const [agreed, setAgreed] = useState(false);
   const [termsOpen, setTermsOpen] = useState(false);
+  const turnstileRef = useRef(null);
+  const turnstileTokenRef = useRef("");
+  const turnstileWidgetIdRef = useRef(null);
+  const captchaEnabled = publicConfig?.captcha?.provider === "turnstile" && Boolean(publicConfig?.captcha?.enabled);
+  const captchaSiteKey = publicConfig?.captcha?.siteKey || "";
+
+  const resetTurnstile = () => {
+    turnstileTokenRef.current = "";
+    if (turnstileWidgetIdRef.current != null && window.turnstile) {
+      window.turnstile.reset(turnstileWidgetIdRef.current);
+    }
+  };
+
+  const renderTurnstile = () => {
+    if (!captchaEnabled || !captchaSiteKey || !turnstileRef.current) return;
+    if (window.turnstile) {
+      if (turnstileWidgetIdRef.current != null) {
+        window.turnstile.remove(turnstileWidgetIdRef.current);
+      }
+      turnstileWidgetIdRef.current = window.turnstile.render(turnstileRef.current, {
+        sitekey: captchaSiteKey,
+        callback: (token) => { turnstileTokenRef.current = token; },
+        "expired-callback": resetTurnstile,
+        "error-callback": resetTurnstile
+      });
+    }
+  };
+
+  useEffect(() => {
+    if (!captchaEnabled || !captchaSiteKey) return;
+    if (window.turnstile) {
+      renderTurnstile();
+      return;
+    }
+    if (document.querySelector('script[src*="turnstile"]')) {
+      const check = setInterval(() => {
+        if (window.turnstile) { clearInterval(check); renderTurnstile(); }
+      }, 200);
+      return () => clearInterval(check);
+    }
+    const script = document.createElement("script");
+    script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+    script.async = true;
+    script.defer = true;
+    script.onload = renderTurnstile;
+    document.head.appendChild(script);
+    return () => { /* keep script, just cleanup widget */ };
+  }, [captchaEnabled, captchaSiteKey, mode]);
 
   const update = (field) => (event) => {
     setForm((current) => ({ ...current, [field]: event.target.value }));
@@ -86,12 +134,18 @@ export function AuthPage({
       onToast("请输入有效的邮箱地址", "warning");
       return;
     }
+    if (captchaEnabled && !turnstileTokenRef.current) {
+      onToast("请先完成人机验证", "warning");
+      return;
+    }
     setCodeLoading(true);
     try {
-      await onSendCode(form.email, "register");
+      await onSendCode(form.email, "register", turnstileTokenRef.current);
       setCountdown(60);
+      resetTurnstile();
       onToast("验证码已发送，请检查收件箱和垃圾邮件文件夹", "success");
     } catch (error) {
+      resetTurnstile();
       onToast(error.message, "error");
     } finally {
       setCodeLoading(false);
@@ -126,6 +180,11 @@ export function AuthPage({
 
   const submit = async (event) => {
     event.preventDefault();
+
+    if (captchaEnabled && !turnstileTokenRef.current) {
+      onToast("请先完成人机验证", "warning");
+      return;
+    }
 
     if (isRegister && !agreed) {
       onToast("请先同意用户协议和隐私政策", "warning");
@@ -168,7 +227,8 @@ export function AuthPage({
           password: form.password,
           verificationCode: form.verificationCode,
           invitationCode: registerMethod === "invite" ? form.invitationCode : "",
-          termsAccepted: agreed
+          termsAccepted: agreed,
+          turnstileToken: turnstileTokenRef.current
         });
       } else {
         const submitLogin = isAdminLogin ? onAdminLogin : onLogin;
@@ -177,10 +237,12 @@ export function AuthPage({
         }
         await submitLogin({
           username: form.username,
-          password: form.password
+          password: form.password,
+          turnstileToken: turnstileTokenRef.current
         });
       }
     } catch (error) {
+      resetTurnstile();
       const message = error?.code === "admin_login_required"
         ? "管理员账号请使用管理后台登录入口"
         : error?.code === "password_reset_unavailable"
@@ -373,6 +435,9 @@ export function AuthPage({
                     }
                   />
                 ) : null}
+                {captchaEnabled ? (
+                  <Box ref={turnstileRef} sx={{ display: "flex", justifyContent: "center", minHeight: 65 }} />
+                ) : null}
                 <Button
                   type="submit"
                   variant="contained"
@@ -442,7 +507,14 @@ export function AuthPage({
       <ForgotPasswordDialog
         open={forgotOpen}
         onClose={() => setForgotOpen(false)}
-        onSendCode={onSendForgotCode}
+        onSendCode={async (email) => {
+          if (captchaEnabled && !turnstileTokenRef.current) {
+            onToast("请先完成人机验证", "warning");
+            throw new Error("captcha");
+          }
+          await onSendForgotCode(email, turnstileTokenRef.current);
+          resetTurnstile();
+        }}
         onReset={onResetPassword}
         onToast={onToast}
       />

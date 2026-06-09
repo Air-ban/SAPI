@@ -50,6 +50,10 @@ func handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !verifyTurnstileRequest(w, r, body) {
+		return
+	}
+
 	username := security.SafeSingleLine(toString(body["username"]), 128)
 	password, _ := body["password"].(string)
 
@@ -77,6 +81,10 @@ func handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	cfg := config.Load()
 	body, ok := readJSONBody(w, r)
 	if !ok {
+		return
+	}
+
+	if !verifyTurnstileRequest(w, r, body) {
 		return
 	}
 
@@ -134,6 +142,10 @@ func handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 func handleSendVerificationCode(w http.ResponseWriter, r *http.Request) {
 	body, ok := readJSONBody(w, r)
 	if !ok {
+		return
+	}
+
+	if !verifyTurnstileRequest(w, r, body) {
 		return
 	}
 
@@ -209,6 +221,10 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	cfg := config.Load()
 	body, ok := readJSONBody(w, r)
 	if !ok {
+		return
+	}
+
+	if !verifyTurnstileRequest(w, r, body) {
 		return
 	}
 
@@ -338,6 +354,10 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 func handleForgotPasswordSendCode(w http.ResponseWriter, r *http.Request) {
 	body, ok := readJSONBody(w, r)
 	if !ok {
+		return
+	}
+
+	if !verifyTurnstileRequest(w, r, body) {
 		return
 	}
 
@@ -763,4 +783,27 @@ func getRecordLastUsedAt(r *models.APIKeyRecord) string {
 		return ""
 	}
 	return r.LastUsedAt
+}
+
+func extractTurnstileToken(body map[string]interface{}) string {
+	if v, ok := body["turnstileToken"].(string); ok {
+		return v
+	}
+	if v, ok := body["captchaTicket"].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func verifyTurnstileRequest(w http.ResponseWriter, r *http.Request, body map[string]interface{}) bool {
+	cfg := config.Load()
+	if strings.TrimSpace(cfg.TurnstileSecretKey) == "" {
+		return true
+	}
+	token := extractTurnstileToken(body)
+	if !security.VerifyTurnstile(r.Context(), token) {
+		utils.SendError(w, 400, "Turnstile verification failed. Please refresh and try again.", "turnstile_failed")
+		return false
+	}
+	return true
 }

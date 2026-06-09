@@ -362,6 +362,7 @@ func TestReadJSONBodyRejectsOversizedBody(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
+	os.Setenv("SAPI_TURNSTILE_SECRET_KEY", " ")
 	code := m.Run()
 	os.Exit(code)
 }

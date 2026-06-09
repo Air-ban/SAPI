@@ -546,20 +546,20 @@ function App() {
     navigate("admin");
   };
 
-  const loginAdmin = async ({ username, password, captchaTicket, captchaRandstr }) => {
+  const loginAdmin = async ({ username, password, turnstileToken }) => {
     const data = await request("/api/admin/login", {
       method: "POST",
       admin: false,
-      body: { username, password, captchaTicket, captchaRandstr }
+      body: { username, password, turnstileToken }
     });
     await completeAdminLogin(data);
   };
 
-  const loginUser = async ({ username, password, captchaTicket, captchaRandstr }) => {
+  const loginUser = async ({ username, password, turnstileToken }) => {
     const data = await request("/api/auth/login", {
       method: "POST",
       admin: false,
-      body: { username, password, captchaTicket, captchaRandstr }
+      body: { username, password, turnstileToken }
     });
 
     if (data.role === "admin") {
@@ -644,19 +644,19 @@ function App() {
     showToast("Passkey 已删除");
   };
 
-  const sendVerificationCode = async (email, purpose = "register", captchaTicket = "", captchaRandstr = "") => {
+  const sendVerificationCode = async (email, purpose = "register", turnstileToken = "") => {
     await request("/api/auth/send-verification-code", {
       method: "POST",
       admin: false,
-      body: { email, purpose, captchaTicket, captchaRandstr }
+      body: { email, purpose, turnstileToken }
     });
   };
 
-  const sendForgotPasswordCode = async (email, captchaTicket = "", captchaRandstr = "") => {
+  const sendForgotPasswordCode = async (email, turnstileToken = "") => {
     await request("/api/auth/forgot-password/send-code", {
       method: "POST",
       admin: false,
-      body: { email, captchaTicket, captchaRandstr }
+      body: { email, turnstileToken }
     });
   };
 
@@ -668,11 +668,11 @@ function App() {
     });
   };
 
-  const userRegister = async ({ username, email, password, verificationCode, invitationCode, termsAccepted, captchaTicket, captchaRandstr }) => {
+  const userRegister = async ({ username, email, password, verificationCode, invitationCode, termsAccepted, turnstileToken }) => {
     const data = await request("/api/auth/register", {
       method: "POST",
       admin: false,
-      body: { username, email, password, verificationCode, invitationCode, termsAccepted, captchaTicket, captchaRandstr }
+      body: { username, email, password, verificationCode, invitationCode, termsAccepted, turnstileToken }
     });
     localStorage.setItem(USER_TOKEN_KEY, data.token);
     clearAdminSession();

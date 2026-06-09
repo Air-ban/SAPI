@@ -35,6 +35,8 @@ type Config struct {
 	TencentCaptchaAppSecretKey string
 	TencentSecretID            string
 	TencentSecretKey           string
+	TurnstileSiteKey           string
+	TurnstileSecretKey         string
 	GitHubClientID             string
 	GitHubClientSecret         string
 	GitHubRedirectURL          string
@@ -101,6 +103,8 @@ func Load() *Config {
 		TencentCaptchaAppSecretKey: getEnv("SAPI_TENCENT_CAPTCHA_APP_SECRET_KEY", ""),
 		TencentSecretID:            getEnv("SAPI_TENCENT_SECRET_ID", ""),
 		TencentSecretKey:           getEnv("SAPI_TENCENT_SECRET_KEY", ""),
+		TurnstileSiteKey:           getEnv("SAPI_TURNSTILE_SITE_KEY", ""),
+		TurnstileSecretKey:         getEnv("SAPI_TURNSTILE_SECRET_KEY", ""),
 		GitHubClientID:             getEnv("SAPI_GITHUB_CLIENT_ID", ""),
 		GitHubClientSecret:         getEnv("SAPI_GITHUB_CLIENT_SECRET", ""),
 		GitHubRedirectURL:          githubRedirectURL,
