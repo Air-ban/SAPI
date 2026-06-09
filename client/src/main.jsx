@@ -747,7 +747,12 @@ function App() {
       token: userToken,
       body
     });
-    setUserSession((current) => ({ ...(current || {}), user: data.user }));
+    if ("collapseModelProviders" in body) {
+      const session = await loadUserSession(userToken);
+      setUserSession(session);
+    } else {
+      setUserSession((current) => ({ ...(current || {}), user: data.user }));
+    }
     showToast("设置已保存");
   };
 

@@ -72,7 +72,7 @@ func writeUserSession(w http.ResponseWriter, r *http.Request, includeSession boo
 	}
 	payload := map[string]interface{}{
 		"user":   sanitizeUser(user),
-		"config": serviceConfigForRequest(r),
+		"config": serviceConfigForRequest(r, user),
 	}
 	if includeSession {
 		session := currentSessionPayload(r)
@@ -425,6 +425,12 @@ func handleUserSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if isAdminVirtualUser(user) {
+		if v, ok := body["collapseModelProviders"].(bool); ok {
+			store.MutateDB(func(db *models.Database) interface{} {
+				db.AdminCollapseModelProviders = v
+				return nil
+			})
+		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"user": sanitizeUser(adminVirtualUserFromDB(store.ReadDB())),
 		})
@@ -437,6 +443,9 @@ func handleUserSettings(w http.ResponseWriter, r *http.Request) {
 				u := &db.Users[i]
 				if v, ok := body["receiveAnnouncementEmail"].(bool); ok {
 					u.ReceiveAnnouncementEmail = v
+				}
+				if v, ok := body["collapseModelProviders"].(bool); ok {
+					u.CollapseModelProviders = v
 				}
 				u.UpdatedAt = store.Now()
 				return u
@@ -633,10 +642,14 @@ func updateUserAPIKeyRecord(k *models.APIKeyRecord, user *models.User, body map[
 
 func adminVirtualUserFromDB(db *models.Database) *models.User {
 	keys := []models.APIKeyRecord{}
+	collapse := false
 	if db != nil {
 		keys = db.AdminAPIKeys
+		collapse = db.AdminCollapseModelProviders
 	}
-	return middleware.AdminVirtualUserWithAPIKeys(config.Load(), keys)
+	user := middleware.AdminVirtualUserWithAPIKeys(config.Load(), keys)
+	user.CollapseModelProviders = collapse
+	return user
 }
 
 func isAdminVirtualUser(user *models.User) bool {

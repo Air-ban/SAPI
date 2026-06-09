@@ -761,7 +761,14 @@ export function ChatSection({ config, apiKeys = [], selectedKey = "", onToast, o
     const allowed = selectedKeyRecord?.allowedModels || [];
     if (!allowed.length) return modelOptions;
     const allowedSet = new Set(allowed);
-    const filtered = modelOptions.filter((item) => allowedSet.has(item.id));
+    const filtered = modelOptions.filter((item) => {
+      if (allowedSet.has(item.id)) return true;
+      for (const allowedModel of allowed) {
+        const idx = allowedModel.indexOf("/");
+        if (idx > 0 && allowedModel.slice(idx + 1) === item.id) return true;
+      }
+      return false;
+    });
     return filtered.length ? filtered : modelOptions;
   }, [modelOptions, selectedKeyRecord]);
 

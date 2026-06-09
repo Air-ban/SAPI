@@ -9,11 +9,13 @@ import {
   Typography
 } from "@mui/material";
 import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
+import HubIcon from "@mui/icons-material/Hub";
 import SettingsIcon from "@mui/icons-material/Settings";
 import { Section } from "../components/Section";
 
 export function UserSettingsSection({ user, onUpdateSettings, onDeleteAccount }) {
   const [saving, setSaving] = useState(false);
+  const [savingCollapse, setSavingCollapse] = useState(false);
   const isAdmin = user?.id === "__admin__";
 
   const handleToggle = async (checked) => {
@@ -22,6 +24,15 @@ export function UserSettingsSection({ user, onUpdateSettings, onDeleteAccount })
       await onUpdateSettings({ receiveAnnouncementEmail: checked });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleCollapseToggle = async (checked) => {
+    setSavingCollapse(true);
+    try {
+      await onUpdateSettings({ collapseModelProviders: checked });
+    } finally {
+      setSavingCollapse(false);
     }
   };
 
@@ -44,6 +55,37 @@ export function UserSettingsSection({ user, onUpdateSettings, onDeleteAccount })
                   checked={user?.receiveAnnouncementEmail !== false}
                   onChange={(e) => handleToggle(e.target.checked)}
                   disabled={saving}
+                />
+              }
+              label=""
+              sx={{ m: 0, justifyContent: "flex-end" }}
+            />
+          </Box>
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: { xs: "1fr", md: "1fr auto" },
+              gap: 2,
+              alignItems: "center",
+              pt: 2,
+              borderTop: "1px solid",
+              borderColor: "divider"
+            }}
+          >
+            <Stack spacing={0.5}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 760 }}>
+                合并同名模型
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                开启后，来自不同供应商的同名模型会合并显示为一个条目。调用时自动在提供该模型的供应商之间路由，某个供应商不可用时自动切换下一个。
+              </Typography>
+            </Stack>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={user?.collapseModelProviders === true}
+                  onChange={(e) => handleCollapseToggle(e.target.checked)}
+                  disabled={savingCollapse}
                 />
               }
               label=""

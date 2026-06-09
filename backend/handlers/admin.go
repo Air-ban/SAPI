@@ -79,7 +79,7 @@ func writeAdminState(w http.ResponseWriter, r *http.Request, includeSession bool
 		"users":                   sanitizeUsers(db.Users),
 		"adminApiKeys":            sanitizeAdminAPIKeys(db.AdminAPIKeys),
 		"adminPasskeys":           sanitizeAdminPasskeys(db.AdminPasskeys),
-		"publicConfig":            serviceConfigForRequest(r),
+		"publicConfig":            serviceConfigForRequest(r, nil),
 		"invitationCodes":         db.InvitationCodes,
 		"announcements":           db.Announcements,
 		"suggestions":             db.Suggestions,

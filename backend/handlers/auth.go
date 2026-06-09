@@ -591,6 +591,7 @@ func sanitizeUser(user *models.User) map[string]interface{} {
 		"subscriptionTier":         tier,
 		"subscriptionRpmLimit":     rpmLimit,
 		"defaultRpmLimit":          rpmLimit,
+		"collapseModelProviders":   user.CollapseModelProviders,
 		"createdAt":                user.CreatedAt,
 		"updatedAt":                user.UpdatedAt,
 	}

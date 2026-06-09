@@ -79,7 +79,9 @@ func RequireUserAccount(next http.HandlerFunc) http.HandlerFunc {
 
 		cfg := config.Load()
 		if payload.Role == "admin" && auth.SafeEqual(payload.Sub, cfg.AdminUser) {
-			ctx := context.WithValue(r.Context(), userContextKey, AdminVirtualUserWithAPIKeys(cfg, db.AdminAPIKeys))
+			adminUser := AdminVirtualUserWithAPIKeys(cfg, db.AdminAPIKeys)
+			adminUser.CollapseModelProviders = db.AdminCollapseModelProviders
+			ctx := context.WithValue(r.Context(), userContextKey, adminUser)
 			ctx = context.WithValue(ctx, tokenPayloadContextKey, payload)
 			next(w, r.WithContext(ctx))
 			return
@@ -190,9 +192,11 @@ func FindUserByKey(apiKey string) *FindUserByKeyResult {
 		k := &db.AdminAPIKeys[i]
 		if k.Enabled && auth.SafeEqual(k.Key, apiKey) {
 			banned, retryAfter, reason := APIKeyBanStatus(k)
+			adminUser := AdminVirtualUser(config.Load())
+			adminUser.CollapseModelProviders = db.AdminCollapseModelProviders
 			return &FindUserByKeyResult{
 				DB:           db,
-				User:         AdminVirtualUser(config.Load()),
+				User:         adminUser,
 				APIKeyRecord: k,
 				Banned:       banned,
 				RetryAfter:   retryAfter,

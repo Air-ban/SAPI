@@ -62,12 +62,12 @@ store.MutateDB(func(db *models.Database) interface{} {
 
 ### Adding new fields to Database
 1. Add to `backend/models/models.go` struct tag (JSON key is lowercaseCamel: `"myNewField"`)
-2. Update `store.normalizeDB()` and `sanitizeProvider()` if the field needs normalization
+2. Update `store.normalizeDB()` and `store.RedactProvider()` if the field needs normalization / redaction
 3. If editable via admin, add handler + route + frontend form
 4. No migration needed — the JSON store defaults missing fields to zero values
 
 ### Admin API pattern
-- Register in `MountAdminRoutes` (`backend/handlers/admin.go:27-65`)
+- Register in `MountAdminRoutes` (`backend/handlers/admin.go:25-67`)
 - Use `middleware.RequireAdmin` wrapper
 - Include in `writeAdminState` payload (line 75-99) if frontend needs it
 - Use `toBool(body["key"])`, `toString(body["key"])` for form fields
@@ -94,9 +94,22 @@ No separate admin login token; uses the same JWT mechanism as user sessions.
 - **Optional Redis:** Set `SAPI_REDIS_URL`, used for rate limiting (falls back to in-memory)
 - **JSON field naming:** Marshal uses `json:"..."` struct tags — all lowercaseCamel in the file
 
+### Request handling pattern
+- Parse JSON body with `readJSONBody(w, r)` (`backend/handlers/json_body.go:12`) — returns `(map[string]interface{}, bool)`
+- Send errors with `utils.SendError(w, code, message, errorCode)`
+- Extract bearer token with `utils.GetBearerToken(r)`
+- Form fields on admin routes use `toString(body["key"])` and `toBool(body["key"])`
+
+### Proxy routing
+Bare paths coexist with `/v1/`-prefixed paths:
+- `POST /chat/completions` and `POST /v1/chat/completions`
+- `POST /messages` and `POST /v1/messages`
+- `POST /responses` and `POST /v1/responses`
+All proxy handlers live in `backend/handlers/proxy.go:24` (`MountProxyRoutes`).
+
 ## Health / Available Models
 
-`availableModelsForKey` in `backend/handlers/public.go:422` builds the `/v1/models` response.
+`availableModelsForKey` in `backend/handlers/public.go:449` builds the `/v1/models` response.
 Governed by `db.ShowOnlyAvailableModels`:
 - `false` (default): all enabled providers' models appear
 - `true`: only providers with `HealthStatus == "healthy"` + pass failover check

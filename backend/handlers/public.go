@@ -268,13 +268,13 @@ func publicConfigForRequest(r *http.Request) map[string]interface{} {
 }
 
 func serviceConfig() map[string]interface{} {
-	return serviceConfigForRequest(nil)
+	return serviceConfigForRequest(nil, nil)
 }
 
-func serviceConfigForRequest(r *http.Request) map[string]interface{} {
+func serviceConfigForRequest(r *http.Request, user *models.User) map[string]interface{} {
 	cfg := config.Load()
 	db := store.ReadDB()
-	modelsList := availableModelsForKey(db, nil)
+	modelsList := availableModelsForKey(db, nil, user)
 	baseURL := publicBaseURLForRequest(r, cfg)
 	if baseURL == "" {
 		baseURL = cfg.PublicBaseURL
@@ -366,7 +366,7 @@ func handlePublicKey(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"valid":  true,
-		"config": serviceConfigForRequest(r),
+		"config": serviceConfigForRequest(r, result.User),
 	})
 }
 
@@ -376,7 +376,7 @@ func handleModelsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	modelList := availableModelsForKey(result.DB, result.APIKeyRecord)
+	modelList := availableModelsForKey(result.DB, result.APIKeyRecord, result.User)
 	data := make([]map[string]interface{}, len(modelList))
 	for i, m := range modelList {
 		data[i] = modelToOpenAIObject(m)
@@ -400,7 +400,7 @@ func handleModelRetrieve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for _, model := range availableModelsForKey(result.DB, result.APIKeyRecord) {
+	for _, model := range availableModelsForKey(result.DB, result.APIKeyRecord, result.User) {
 		if model.ID == modelID {
 			json.NewEncoder(w).Encode(modelToOpenAIObject(model))
 			return
@@ -446,16 +446,17 @@ func validateModelsRequest(w http.ResponseWriter, r *http.Request) (*middleware.
 	return result, true
 }
 
-func availableModelsForKey(db *models.Database, apiKeyRecord *models.APIKeyRecord) []models.Model {
+func availableModelsForKey(db *models.Database, apiKeyRecord *models.APIKeyRecord, user *models.User) []models.Model {
 	modelMap := make(map[string]models.Model)
 	if db == nil {
 		return []models.Model{}
 	}
+	collapse := user != nil && user.CollapseModelProviders
 	for _, p := range db.Providers {
 		if !p.Enabled {
 			continue
 		}
-		if db.ShowOnlyAvailableModels && (p.HealthStatus != "healthy" || !proxy.IsProviderAvailableForFailover(p)) {
+		if db.ShowOnlyAvailableModels && !collapse && (p.HealthStatus != "healthy" || !proxy.IsProviderAvailableForFailover(p)) {
 			continue
 		}
 		for _, m := range p.Models {
@@ -495,6 +496,39 @@ func availableModelsForKey(db *models.Database, apiKeyRecord *models.APIKeyRecor
 	modelList := make([]models.Model, 0, len(modelMap))
 	for _, v := range modelMap {
 		modelList = append(modelList, v)
+	}
+
+	if collapse {
+		collapsed := make(map[string]models.Model)
+		for _, m := range modelList {
+			_, inner, hasPrefix := proxy.SplitPrefixedModelID(m.ID)
+			key := m.ID
+			if hasPrefix && inner != "" {
+				key = inner
+			}
+			if existing, ok := collapsed[key]; ok {
+				if existing.Name == "" || existing.Name == existing.ID {
+					if m.Name != "" {
+						existing.Name = m.Name
+					}
+				}
+				if existing.Description == "" && m.Description != "" {
+					existing.Description = m.Description
+				}
+				if len(existing.CliSupport) == 0 && len(m.CliSupport) > 0 {
+					existing.CliSupport = m.CliSupport
+				}
+				existing.ID = key
+				collapsed[key] = existing
+			} else {
+				m.ID = key
+				collapsed[key] = m
+			}
+		}
+		modelList = make([]models.Model, 0, len(collapsed))
+		for _, v := range collapsed {
+			modelList = append(modelList, v)
+		}
 	}
 
 	if apiKeyRecord != nil && len(apiKeyRecord.AllowedModels) > 0 {

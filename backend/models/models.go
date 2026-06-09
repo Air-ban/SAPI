@@ -31,6 +31,7 @@ type Database struct {
 	MaintenanceMode         bool               `json:"maintenanceMode"`
 	MaintenanceEndTime      string             `json:"maintenanceEndTime"`
 	ShowOnlyAvailableModels bool               `json:"showOnlyAvailableModels"`
+	AdminCollapseModelProviders bool           `json:"adminCollapseModelProviders"`
 	CreatedAt               string             `json:"createdAt"`
 	UpdatedAt               string             `json:"updatedAt"`
 }
@@ -101,6 +102,7 @@ type User struct {
 	GitHubAvatarURL          string         `json:"githubAvatarUrl"`
 	GitHubLinkedAt           string         `json:"githubLinkedAt"`
 	SubscriptionTier         string         `json:"subscriptionTier"`
+	CollapseModelProviders   bool           `json:"collapseModelProviders"`
 	CreatedAt                string         `json:"createdAt"`
 	UpdatedAt                string         `json:"updatedAt"`
 }
