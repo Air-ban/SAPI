@@ -13,6 +13,9 @@ const (
 	TierPro   = "pro"
 	TierUltra = "ultra"
 	TierMax   = "MAX"
+
+	GitHubUserRPMLimit = 52
+	EduUserRPMLimit    = 50
 )
 
 type TierInfo struct {
@@ -75,12 +78,41 @@ func RPMLimitForUser(user *models.User) int {
 	if user != nil && user.ID == models.AdminVirtualUserID {
 		return 0
 	}
+	if IsGitHubUser(user) {
+		return GitHubUserRPMLimit
+	}
+	if IsEduUser(user) {
+		return EduUserRPMLimit
+	}
 	return RPMLimitForTier(TierForUser(user))
+}
+
+func IsGitHubUser(user *models.User) bool {
+	if user == nil {
+		return false
+	}
+	return strings.TrimSpace(user.GitHubID) != "" ||
+		strings.TrimSpace(user.GitHubLogin) != "" ||
+		strings.EqualFold(strings.TrimSpace(user.Source), "github")
+}
+
+func IsEduUser(user *models.User) bool {
+	if user == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(user.Source), "edu") ||
+		strings.HasSuffix(strings.ToLower(strings.TrimSpace(user.Email)), ".edu.cn")
 }
 
 func EffectiveAPIKeyRPMLimit(user *models.User, apiKeyRecord *models.APIKeyRecord) int {
 	if user != nil && user.ID == models.AdminVirtualUserID {
 		return 0
+	}
+	if IsGitHubUser(user) {
+		return GitHubUserRPMLimit
+	}
+	if IsEduUser(user) {
+		return EduUserRPMLimit
 	}
 	planLimit := RPMLimitForUser(user)
 	if apiKeyRecord == nil || apiKeyRecord.RPMLimit <= 0 {
@@ -98,6 +130,12 @@ func EffectiveAPIKeyRPMLimit(user *models.User, apiKeyRecord *models.APIKeyRecor
 func ClampAPIKeyRPMLimit(user *models.User, rpmLimit int) int {
 	if rpmLimit <= 0 {
 		return 0
+	}
+	if IsGitHubUser(user) {
+		return GitHubUserRPMLimit
+	}
+	if IsEduUser(user) {
+		return EduUserRPMLimit
 	}
 	planLimit := RPMLimitForUser(user)
 	if planLimit <= 0 {
