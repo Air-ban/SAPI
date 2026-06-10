@@ -32,6 +32,29 @@ func TestIsGPTModelID(t *testing.T) {
 	}
 }
 
+func TestIsModelAllowedByRuleMatchesPrefixedAndInnerIDs(t *testing.T) {
+	tests := []struct {
+		name      string
+		allowed   string
+		requested string
+		want      bool
+	}{
+		{name: "exact prefixed", allowed: "openai/gpt-image-2", requested: "openai/gpt-image-2", want: true},
+		{name: "inner allowed prefixed requested", allowed: "gpt-image-2", requested: "openai/gpt-image-2", want: true},
+		{name: "prefixed allowed inner requested", allowed: "openai/gpt-image-2", requested: "gpt-image-2", want: true},
+		{name: "different model", allowed: "openai/gpt-image-2", requested: "flux-image", want: false},
+		{name: "empty requested", allowed: "openai/gpt-image-2", requested: "", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsModelAllowedByRule(tt.allowed, tt.requested); got != tt.want {
+				t.Fatalf("IsModelAllowedByRule(%q, %q) = %v, want %v", tt.allowed, tt.requested, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestChooseProviderCandidatesRoutesPrefixedModelToChannel(t *testing.T) {
 	db := &models.Database{
 		Providers: []models.Provider{

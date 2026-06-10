@@ -75,8 +75,12 @@ func IsModelAllowedByRule(allowedModel, requestedModel string) bool {
 	if allowedModel == requestedModel {
 		return true
 	}
+	_, allowedInner, allowedPrefixed := SplitPrefixedModelID(allowedModel)
 	_, requestedInner, requestedPrefixed := SplitPrefixedModelID(requestedModel)
-	return requestedPrefixed && allowedModel == requestedInner
+	if requestedPrefixed && allowedModel == requestedInner {
+		return true
+	}
+	return allowedPrefixed && requestedModel == allowedInner
 }
 
 func hostChannelName(rawURL string) string {

@@ -378,6 +378,104 @@ func TestChatCompletionsAggregatesUpstreamSSEForNonStreamRequest(t *testing.T) {
 	}
 }
 
+func TestImagesGenerationUsesUserAPIKeyAndMappedUpstreamModel(t *testing.T) {
+	var mu sync.Mutex
+	var gotPath string
+	var gotBody map[string]interface{}
+	var gotAuth string
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		mu.Unlock()
+
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"created": 123,
+			"data": []map[string]string{{
+				"b64_json": "aW1hZ2U=",
+			}},
+		})
+	}))
+	defer upstream.Close()
+
+	app, apiKey := setupForcedFormatProxyTest(t, models.Provider{
+		ID:             "prv_image",
+		Name:           "Image Gateway",
+		BaseURL:        upstream.URL,
+		APIKey:         "upstream-image-key",
+		UpstreamFormat: models.UpstreamFormatOpenAI,
+		Models:         []models.Model{{ID: "real-image", Name: "real-image"}},
+		ModelMappings:  map[string]string{"public-image": "real-image"},
+		Enabled:        true,
+		HealthStatus:   "unknown",
+		Availability7d: 100,
+		CreatedAt:      store.Now(),
+		UpdatedAt:      store.Now(),
+	})
+
+	rec := postJSON(t, app, "/v1/images/generations", map[string]interface{}{
+		"model":           "public-image",
+		"prompt":          "make a quiet test image",
+		"response_format": "b64_json",
+	}, apiKey)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/v1/images/generations returned %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "aW1hZ2U=") {
+		t.Fatalf("expected image response, got %s", rec.Body.String())
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if gotPath != "/v1/images/generations" {
+		t.Fatalf("upstream path = %q, want /v1/images/generations", gotPath)
+	}
+	if gotAuth != "Bearer upstream-image-key" {
+		t.Fatalf("upstream auth = %q, want provider key", gotAuth)
+	}
+	if gotBody["model"] != "real-image" {
+		t.Fatalf("upstream model = %#v, want real-image", gotBody["model"])
+	}
+}
+
+func TestImagesGenerationAllowsInnerModelWhenKeyAllowsPrefixedModel(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": []map[string]string{{"b64_json": "aW1hZ2U="}},
+		})
+	}))
+	defer upstream.Close()
+
+	app, apiKey := setupForcedFormatProxyTest(t, models.Provider{
+		ID:             "prv_image",
+		Name:           "Image Gateway",
+		BaseURL:        upstream.URL,
+		APIKey:         "upstream-image-key",
+		UpstreamFormat: models.UpstreamFormatOpenAI,
+		Models:         []models.Model{{ID: "gpt-image-2", Name: "gpt-image-2"}},
+		ModelMappings:  map[string]string{},
+		Enabled:        true,
+		HealthStatus:   "unknown",
+		Availability7d: 100,
+		CreatedAt:      store.Now(),
+		UpdatedAt:      store.Now(),
+	})
+	store.MutateDB(func(db *models.Database) interface{} {
+		db.Users[0].APIKeys[0].AllowedModels = []string{"image-gateway/gpt-image-2"}
+		return nil
+	})
+
+	rec := postJSON(t, app, "/v1/images/generations", map[string]interface{}{
+		"model":  "gpt-image-2",
+		"prompt": "make a quiet test image",
+	}, apiKey)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/v1/images/generations returned %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestWebSocketProxyForwardsChatJSONRequest(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" {
