@@ -24,7 +24,7 @@
 | `MountPublicRoutes` | `backend/handlers/public.go` | 健康检查、公开配置、模型列表、公告、横幅、维护状态、Swagger。 |
 | `MountAuthRoutes` | `backend/handlers/auth.go` | 管理/用户登录、注册、验证码、忘记密码、GitHub OAuth、管理员 Passkey。 |
 | `MountUserRoutes` | `backend/handlers/user.go` | 用户会话、API Key、设置、用量、请求日志、建议反馈。 |
-| `MountAdminRoutes` | `backend/handlers/admin.go` | 管理状态、Provider、用户、订阅、邀请码、SMTP、公告、建议、维护、横幅。 |
+| `MountAdminRoutes` | `backend/handlers/admin.go` | 管理状态、服务器状态、日志导出、Provider、用户、订阅、邀请码、SMTP、公告、建议、维护、横幅。 |
 | `MountProxyRoutes` | `backend/handlers/proxy.go` | `/v1/*`、`/responses`、`/messages`、`/chat/completions`。 |
 
 ## 鉴权
@@ -60,12 +60,15 @@ Passkey:
 - `MutateDB(fn)`: clone 当前状态，执行修改，normalize，持久化，再替换缓存。
 - `AppendRequestLog(item)`: 代理请求结束后写请求日志。
 - `RequestLogsSince(db, since, userID, limit)`: 从 PostgreSQL、内存或 JSONL 查询请求日志。
+- `RequestLogForUserView(item)`: 用户侧脱敏，清除 IP、设备、请求 JSON 和 `hasRequestContent`。
+- `WriteRequestLogsTarGZ(w, logs, meta)`: 写出 `metadata.json` 和 `request-logs.jsonl` 到 tar.gz。
 
 `backend/store/postgres.go`
 - 自动创建 `sapi_state` 和 `sapi_request_logs`。
 - `savePostgresState()` 只保存主状态，不保存高频请求日志。
 - `insertPostgresRequestLog()` 将请求日志写入表。
 - `queryPostgresRequestLogs()` 读取摘要，不返回完整请求 JSON，只返回 `has_request_content` 标记。
+- `prunePostgresRequestLogs()` 归档 7 天前日志后删除。
 
 ## 数据规范化
 `normalizeDB()` 在 store 内部执行:
@@ -176,6 +179,15 @@ Gemini:
 - `WriteUpstreamStreamToResponse()`: 逐块转发 SSE，并从流中提取 usage。
 - `RelayStreamToAnthropic()`: Anthropic 原生流转发。
 
+## WebSocket 站内工具代理
+`backend/handlers/ws_proxy.go`
+- `GET /api/ws/proxy`: 浏览器内 Chat/生图模块复用的 WebSocket 请求通道。
+- 内部请求直接分发到 SAPI handler。
+- 外部请求只允许 HTTPS OpenAI 兼容路径。
+- 外部目标禁止 localhost、私网、链路本地、多播、保留地址和 URL credentials。
+- 外部请求不跟随重定向。
+- 外部 client 使用连接池和 HTTP/2，减少重复建连延迟。
+
 ## 请求日志和 usage
 代理请求完成后写入 `models.RequestLog`:
 - 用户、API Key、Provider、模型。
@@ -187,7 +199,10 @@ Gemini:
 完整请求内容查看:
 - 列表中只返回 `hasRequestContent`。
 - 管理端调用 `/api/admin/request-logs/{id}`。
-- 用户调用 `/api/user/request-logs/{id}`，只能查看自己的日志。
+- 用户调用 `/api/user/request-logs/{id}` 只能确认自己的日志摘要，不返回请求 JSON、IP 或设备信息。
+- 管理端可调用 `/api/admin/request-logs/export` 导出全局 tar.gz。
+- 管理端可调用 `/api/admin/users/{id}/request-logs/export` 导出单用户 tar.gz。
+- JSONL/PostgreSQL 中 7 天前日志会先归档为 tar.gz 再清理。
 
 `usage.GetUsageStats(db, userID, days)`:
 - 聚合用户、API Key、模型、天、小时。
@@ -211,12 +226,21 @@ Gemini:
 - `requestBlob(path, options)`: 下载导出文件。
 - 非 JSON 响应会转换为可读错误，避免前端把 HTML 错页当 JSON。
 
+`client/src/utils/openaiCompat.js`
+- `normalizeOpenAIBaseURL()`: 接受根 URL 或 `/v1` URL，规范为根 URL。
+- `useOpenAIModelCatalog()`: 通过 WebSocket 拉取 `/v1/models`。
+- `openAICompatRequest()`: 统一转发 SAPI Key 和自有 API 请求。
+
 ## 前端页面
 - `AuthPage`: 登录、注册、GitHub、Passkey、忘记密码。
 - `PortalView`: 用户控制台，API Key、用量、模型、调用示例、设置、建议。
-- `AdminView`: 管理后台，概览、用量、Provider、用户、邀请码、SMTP、公告、建议。
+- `AdminView`: 管理后台，概览、用量、服务器中控、Provider、用户、邀请码、SMTP、公告、建议。
+- `ServerStatusSection`: 调用 `/api/admin/server-status`，展示 fastfetch 和 Go/store 状态，支持刷新频率。
+- `BaseUrlLatencySection`: 用户侧测试当前 Base URL 到 `/api/health` 的浏览器链路延迟。
+- `ChatSection`: 站内 Chat，可选 SAPI Key 或自有 OpenAI 兼容 API。
+- `ImagePlaygroundSection`: 站内生图，可选 SAPI Key 或自有 OpenAI 兼容 API。
 - `ModelAvailabilityDashboard`: 模型可用性 Dashboard，TTL 5 分钟。
-- `UsageSection`: 用量统计、最近请求、请求 JSON 展开。
+- `UsageSection`: 用量统计、最近请求；用户侧隐私模式隐藏 IP、设备和请求 JSON，管理侧可展开请求 JSON。
 - `RequestHeatmap`: 用户请求热力图。
 
 ## 错误响应

@@ -52,7 +52,7 @@ SAPI_POSTGRES_MAX_CONNS=20
 PostgreSQL 启用后自动创建:
 
 - `sapi_state`: 保存主状态 JSONB，不保存高频请求日志。
-- `sapi_request_logs`: 保存请求日志和请求 JSON 内容，自动保留 7 天。
+- `sapi_request_logs`: 保存请求日志和请求 JSON 内容，7 天前记录会归档为 tar.gz 后清理。
 - `sapi_request_logs_timestamp_idx`
 - `sapi_request_logs_user_timestamp_idx`
 - `sapi_request_logs_api_key_idx`
@@ -145,6 +145,8 @@ SAPI_IPPURE_TIMEOUT_MS=1200
 | `SAPI_IPPURE_TIMEOUT_MS` | `1200` | 查询超时毫秒数。超时只写入日志错误状态，不影响转发响应。 |
 
 为保存用户真实 IP，生产环境应同时正确配置 `SAPI_TRUST_PROXY_HEADERS=true` 和 `SAPI_TRUSTED_PROXY_CIDRS`。只有直连来源命中可信代理 CIDR 时，系统才会读取 `CF-Connecting-IP`、`True-Client-IP`、`X-Real-IP` 或 `X-Forwarded-For`；否则会忽略这些可伪造请求头。私网、回环、文档保留地址和其他非公网地址会跳过 IPPure 远端查询。
+
+用户端 usage 和请求日志详情不会返回 IPPure、设备信息或请求 JSON；这些字段仅保存在服务端日志和管理端导出中。
 
 ## CORS
 当前 CORS 固定开放:

@@ -10,10 +10,11 @@ SAPI 是一个轻量级 LLM API 中转站。管理员在后台配置上游 LLM A
 - **用户系统**：注册/登录、GitHub OAuth、邀请码、腾讯云验证码
 - **API Key 管理**：用户自助创建、模型白名单、RPM 限制、自动封禁
 - **订阅分级**：lite/base/pro/ultra/MAX 五档 RPM 订阅
-- **管理后台**：Provider 管理、用户管理、用量统计、公告、建议反馈
+- **管理后台**：Provider 管理、用户管理、用量统计、服务器中控、公告、建议反馈
 - **健康检查**：Provider 健康探测、故障自动切换、模型可用性 Dashboard
 - **运维功能**：站点公告、横幅、维护模式、SMTP 邮件邀请
 - **安全增强**：WebAuthn Passkey 登录、IP 限流、请求体限制、可信代理头
+- **审计归档**：请求日志服务端留存，7 天归档 tar.gz，用户端隐藏 IP/设备/请求 JSON
 
 ## 快速启动
 
@@ -147,6 +148,11 @@ cd backend && go test ./...
 
 # 前端构建验证
 npm run build
+
+# 进程级烟测
+cd backend && go build -o ../bin/sapi-smoke .
+cd ..
+npm run smoke
 
 # 生产构建
 cd backend && go build -o sapi-main .

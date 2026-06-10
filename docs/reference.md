@@ -82,8 +82,9 @@ curl http://localhost:3000/api/auth/register -H "Content-Type: application/json"
 | `PUT` | `/api/user/api-keys/{id}` | 更新 Key 名称和模型白名单。 |
 | `DELETE` | `/api/user/api-keys/{id}` | 删除 Key。 |
 | `PUT` | `/api/user/settings` | 更新用户设置。 |
+| `DELETE` | `/api/user/account` | 注销当前用户账号并删除个人 API Key 和请求日志。 |
 | `GET` | `/api/user/usage?days=365` | 用户用量统计。 |
-| `GET` | `/api/user/request-logs/{id}` | 查看自己的请求 JSON 内容。 |
+| `GET` | `/api/user/request-logs/{id}` | 查看自己的请求日志摘要，不返回 IP、设备或请求 JSON。 |
 | `GET` | `/api/user/suggestions` | 查看自己的建议和回复。 |
 
 创建 API Key:
@@ -105,7 +106,9 @@ curl -X PUT http://localhost:3000/api/user/api-keys/key_id -H "Authorization: Be
 | `GET` | `/api/admin/state` | 轻量管理状态，不内联 usage。 |
 | `GET` | `/api/admin/state?includeUsage=true` | 兼容旧行为，返回 usage。 |
 | `GET` | `/api/admin/usage?days=30` | 全局 usage。 |
+| `GET` | `/api/admin/server-status` | 服务器状态，包含 fastfetch、Go runtime、store health。 |
 | `GET` | `/api/admin/request-logs/{id}` | 查看任意请求 JSON 内容。 |
+| `GET` | `/api/admin/request-logs/export` | 导出全局请求日志 tar.gz。 |
 
 ### Provider
 | 方法 | 路径 | 说明 |
@@ -142,7 +145,7 @@ curl http://localhost:3000/api/admin/providers/models -H "Authorization: Bearer 
 | `DELETE` | `/api/admin/users/{id}` | 删除用户。 |
 | `PUT` | `/api/admin/users/{id}/password` | 重置用户密码。 |
 | `GET` | `/api/admin/users/{id}/usage?days=365` | 用户 usage。 |
-| `GET` | `/api/admin/users/{id}/request-logs/export` | 导出用户请求日志。 |
+| `GET` | `/api/admin/users/{id}/request-logs/export` | 导出用户请求日志 tar.gz。 |
 | `PUT` | `/api/admin/users/{userId}/api-keys/{keyId}` | 更新用户 Key RPM 或封禁状态。 |
 | `GET` | `/api/admin/api-keys` | 管理员 API Key 列表。 |
 | `POST` | `/api/admin/api-keys` | 创建管理员 API Key。 |
@@ -164,6 +167,21 @@ curl -X PUT http://localhost:3000/api/admin/users/usr_id/api-keys/key_id -H "Aut
 ```bash
 curl -X PUT http://localhost:3000/api/admin/users/usr_id/api-keys/key_id -H "Authorization: Bearer <admin-jwt>" -H "Content-Type: application/json" -d '{"banned":true}'
 ```
+
+导出日志:
+```bash
+curl "http://localhost:3000/api/admin/request-logs/export?days=7&includeContent=true" -H "Authorization: Bearer <admin-jwt>" -o request-logs.tar.gz
+curl "http://localhost:3000/api/admin/users/usr_id/request-logs/export?days=7&includeContent=true" -H "Authorization: Bearer <admin-jwt>" -o user-request-logs.tar.gz
+```
+
+tar.gz 内容:
+- `metadata.json`
+- `request-logs.jsonl`
+
+查询参数:
+- `days`: `1` 到 `7`。
+- `limit`: 全局最多 `100000`，单用户最多 `20000`。
+- `includeContent=false`: 只导出摘要，不补全请求 JSON。
 
 ### 订阅和站点配置
 | 方法 | 路径 | 说明 |

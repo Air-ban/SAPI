@@ -258,10 +258,55 @@ curl "http://localhost:3000/api/admin/users/usr_id/usage?days=365" \
 ```bash
 curl "http://localhost:3000/api/admin/users/usr_id/request-logs/export?days=7" \
   -H "Authorization: Bearer <admin-jwt>" \
-  -o user-request-logs.json
+  -o user-request-logs.tar.gz
 ```
 
+导出全局请求日志:
+```bash
+curl "http://localhost:3000/api/admin/request-logs/export?days=7&includeContent=true" \
+  -H "Authorization: Bearer <admin-jwt>" \
+  -o request-logs.tar.gz
+```
+
+导出文件是 tar.gz，包含:
+- `metadata.json`
+- `request-logs.jsonl`
+
 管理后台热力图基于 usage 中的按小时和按天聚合数据生成。
+
+## 管理端服务器中控
+管理后台 `服务器中控` 调用:
+```bash
+curl http://localhost:3000/api/admin/server-status \
+  -H "Authorization: Bearer <admin-jwt>"
+```
+
+返回:
+- `fastfetch.available`
+- `fastfetch.modules`
+- `goVersion`
+- `goroutines`
+- `memory`
+- `store`
+
+服务端安装 `fastfetch` 时展示主机、CPU、内存、磁盘等模块；未安装时仍返回 Go runtime 和 store health。前端可设置自动刷新频率。
+
+## 用户端 BaseURL 测速
+用户控制台首页提供 Base URL 到 `/api/health` 的浏览器侧测速。结果包含最佳、平均和最近状态。测速只发起健康检查，不携带 API Key。
+
+## 站内 Chat 和生图
+用户控制台:
+- `站内 Chat`: Responses/OpenAI 兼容聊天，支持附件、Markdown/HTML 渲染和下载。
+- `生图工坊`: Images API 和 Responses 图像工具调用。
+
+API 来源:
+- `SAPI Key`: 使用当前站点 API Key。
+- `自有 API`: 填写自有 OpenAI 兼容 Base URL 和 API Key。
+
+模型列表:
+- 通过当前来源的 `/v1/models` 动态获取。
+- SAPI 来源获取失败时回退到站点公开模型配置。
+- 自有 API Key 只在当前 WebSocket 请求中使用，不写入 SAPI 状态。
 
 ## AstrBot 接入
 AstrBot 使用 OpenAI 兼容提供商接入 SAPI。
@@ -389,11 +434,11 @@ curl http://localhost:3000/api/suggestions \
 
 ## 请求内容留存
 模型转发请求会把用户提交的请求 JSON 内容写入请求日志，保留 7 天:
-- JSON 存储模式: 写入 `data/sapi.json` 或旁路日志摘要中的请求内容。
+- JSON 存储模式: 主状态只存摘要，完整内容写入 `*.request-logs.jsonl`。
 - PostgreSQL 存储模式: 写入 `sapi_request_logs.request_content` JSONB 字段。
 - 响应正文不会被持久化保存。
 
-管理后台和用户控制台的最近请求记录中可以展开查看请求 JSON。
+用户控制台不会显示 IP、设备信息或请求 JSON。管理后台可查看完整请求 JSON，并可导出 tar.gz。7 天前日志会先归档到 `request-log-archives/*.tar.gz` 再清理。
 
 ## 错误格式
 统一错误响应:

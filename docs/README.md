@@ -31,6 +31,9 @@ go run .
 ```bash
 cd backend && go test ./...
 npm run build
+cd backend && go build -o ../bin/sapi-smoke .
+cd ..
+npm run smoke
 curl http://localhost:3000/api/health
 curl http://localhost:3000/api/ready
 ```

@@ -123,20 +123,23 @@ sequenceDiagram
 ## 存储架构
 默认 JSON 模式:
 - 主状态写入 `data/sapi.json`。
-- 请求日志写入旁路 JSONL 文件，内存保留最近摘要。
+- 请求日志写入旁路 JSONL 文件，内存和主状态只保留最近摘要。
+- 7 天前日志归档为 tar.gz 后清理。
 - `MutateDB` 会 clone 状态、执行 mutator、normalize、持久化。
 
 PostgreSQL 模式:
 - `sapi_state`: 主状态 JSONB，不保存高频请求日志。
 - `sapi_request_logs`: 请求日志、请求 JSON 内容、token、耗时、状态。
 - 启动时自动建表和索引。
-- 请求日志按 7 天清理。
+- 请求日志按 7 天归档 tar.gz 后清理。
 
 ## 性能设计
 - 控制面和代理面共享一个 Go 进程，避免额外网关跳转。
 - Provider 健康检查异步运行。
 - Admin 状态接口默认不聚合 usage；usage 通过 `/api/admin/usage` 单独加载。
 - 前端普通 admin 操作只刷新轻量状态；Provider 操作才刷新 health/model availability。
+- 站内 Chat/生图通过 WebSocket 代理复用浏览器连接，模型列表按所选 API 来源动态读取 `/v1/models`。
+- 外部自有 API 仅允许 HTTPS OpenAI 兼容路径，不跟随重定向。
 - Vite manual chunks 拆分 UI、图表、Markdown、图标依赖，降低单 chunk 体积。
 - 静态资源 hash 文件长期缓存，`index.html` 不缓存。
 
@@ -147,3 +150,4 @@ PostgreSQL 模式:
 - API Key 请求体连续 20 次不合规会自动封禁 1 小时。
 - 默认不信任代理头；只有 `SAPI_TRUST_PROXY_HEADERS=true` 且直连 IP 命中 `SAPI_TRUSTED_PROXY_CIDRS` 才读取真实客户端 IP。
 - 请求体按控制面和代理面分开限流。
+- 用户端隐藏 IP、设备和请求 JSON；完整审计只在服务端和管理端导出中可见。

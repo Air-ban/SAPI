@@ -71,6 +71,14 @@ go test ./...
 npm run build
 ```
 
+进程级烟测:
+```bash
+cd backend
+go build -o ../bin/sapi-smoke .
+cd ..
+npm run smoke
+```
+
 文档和空白检查:
 ```bash
 git diff --check
@@ -82,7 +90,14 @@ cd backend
 go test -race ./...
 cd ..
 npm run build
+npm run smoke
 ```
+
+GitHub Actions:
+- `.github/workflows/ci.yml`
+- Ruff: 只检查已跟踪 Python 文件；无 Python 文件时跳过。
+- Go: `cd backend && go test ./...`
+- Frontend + smoke: `npm ci`、`npm run build`、`go build -o ../bin/sapi-smoke .`、`npm run smoke`
 
 ## 目录结构
 ```text
@@ -152,11 +167,13 @@ store.AppendRequestLog(item)
 ```
 
 请求日志规则:
-- JSON 模式保存摘要和 7 天请求内容。
+- JSON 模式主状态不保存完整请求内容；摘要留在内存和状态，完整内容写入旁路 `*.request-logs.jsonl`。
 - PostgreSQL 模式写入 `sapi_request_logs`，主状态不承载高频日志。
 - 列表接口只返回 `hasRequestContent`。
-- 详情接口才返回完整 `requestContent`。
+- 管理端详情接口返回完整 `requestContent`。
+- 用户端 usage 和日志详情会清除 IP、设备、请求 JSON 和 `hasRequestContent`。
 - 响应正文不持久化。
+- 7 天前日志会压缩归档为 `request-log-archives/*.tar.gz`。
 
 ## 订阅开发
 订阅分组定义在 `backend/subscription/subscription.go`:
@@ -199,6 +216,14 @@ store.AppendRequestLog(item)
 - `POST /messages/count_tokens`
 - `POST /v1/messages/count_tokens`
 - `POST /v1/*`
+
+站内 Chat/生图 WebSocket 代理:
+- 入口: `GET /api/ws/proxy`
+- 内部目标: 只允许上面列出的 OpenAI/Responses/Images/Models 路径。
+- 外部目标: 只允许 HTTPS，禁止 URL 用户信息、localhost、私网、链路本地和多播地址。
+- 外部 GET: `/v1/models`、`/models`
+- 外部 POST: `/responses`、`/v1/responses`、`/v1/chat/completions`、`/chat/completions`、`/v1/images/generations`、`/v1/images/edits`
+- 外部请求不跟随重定向，解析域名后按已验证公网 IP 建连。
 
 调用前置逻辑:
 1. 从 `Authorization: Bearer <key>` 或 `X-API-Key` 读取 SAPI Key。
@@ -278,6 +303,12 @@ UI 约定:
 - 表格、按钮、Chip、输入框都要检查两种模式下可读。
 - 管理后台偏操作型，优先密集、可扫描、低装饰的布局。
 
+站内 Chat 和生图:
+- `client/src/utils/openaiCompat.js` 统一处理 OpenAI 兼容 Base URL、模型列表和 WebSocket 请求。
+- 用户可选择 SAPI Key 或自有 OpenAI 兼容 Base URL/API Key。
+- 模型列表通过 `/v1/models` 动态获取；SAPI 模式在失败时回落到公开配置模型。
+- 自有 API Key 只通过当前 WebSocket 请求转发，不写入站点状态。
+
 ## 常见开发任务
 新增管理员接口:
 1. Handler 写入 `backend/handlers/admin.go` 或独立 admin 文件。
@@ -307,6 +338,7 @@ cd backend
 go test ./...
 cd ..
 npm run build
+npm run smoke
 git diff --check
 ```
 

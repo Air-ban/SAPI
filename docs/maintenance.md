@@ -91,9 +91,12 @@ backend/logs/v1chat-YYYY-MM-DD.log
 
 请求日志:
 
-- JSON 模式: 写入状态文件中的请求日志字段。
+- JSON 模式: 主状态只保留请求摘要，完整请求内容写入旁路 `*.request-logs.jsonl`。
 - PostgreSQL 模式: 写入 `sapi_request_logs`。
 - 请求 JSON 内容随请求日志保存，自动保留 7 天；响应正文不持久化保存。
+- 用户端接口和 UI 不返回 IP、设备或请求 JSON。
+- 管理端可导出全局或单用户 tar.gz，文件包含 `metadata.json` 和 `request-logs.jsonl`。
+- 7 天前日志会归档到 `request-log-archives/*.tar.gz` 后清理。
 
 查看最近错误:
 
@@ -164,6 +167,8 @@ psql "$SAPI_POSTGRES_URL" -c "select count(*) from sapi_request_logs;"
 psql "$SAPI_POSTGRES_URL" -c "delete from sapi_request_logs where timestamp < now() - interval '7 days';"
 ```
 
+通常不需要手工执行删除；服务端会在写入请求日志时周期性归档并清理 7 天前记录。手工删除会跳过 tar.gz 归档。
+
 清理后建议:
 
 ```bash
@@ -177,6 +182,8 @@ psql "$SAPI_POSTGRES_URL" -c "vacuum analyze sapi_request_logs;"
 - `/api/admin/usage?days=30` 单独聚合用量。
 - `/api/admin/state?includeUsage=true` 仅用于兼容旧调用，不建议普通后台操作使用。
 - Provider 变更才需要刷新 Provider health 和模型可用性。
+- `服务器中控` 页面可通过 `/api/admin/server-status` 查看 fastfetch/Go/store 状态并设置刷新频率。
+- 用户控制台首页可用 BaseURL 测速检查浏览器到当前站点 `/api/health` 的链路延迟。
 
 如果后台操作变慢，按顺序检查:
 
@@ -257,6 +264,7 @@ SMTP 密码:
 | `502 upstream_request_failed` | 上游网络、鉴权、模型名。 | 检查 Provider API Key、Base URL、上游状态。 |
 | `400 smtp_not_configured` | SMTP 是否完整。 | 配置 Host/User/Pass，并测试邮件。 |
 | 管理端操作慢 | state/usage/health 是否混在一次刷新。 | 使用轻量 `/api/admin/state`，usage 调 `/api/admin/usage`，检查 PostgreSQL 请求日志表。 |
+| 首字延迟高 | CDN/反代/BaseURL 测速、上游连接、Provider 健康。 | 用用户端 BaseURL 测速排除站点链路，再检查上游 Provider 和 `/api/health/models`。 |
 | `/api/ready` Redis `degraded` | Redis ping 失败。 | 检查 `SAPI_REDIS_URL`、网络、连接池。 |
 | `/api/ready` PostgreSQL `degraded` | PostgreSQL ping 失败。 | 检查 `SAPI_POSTGRES_URL`、连接数、数据库权限。 |
 
@@ -268,6 +276,7 @@ cd backend
 go test ./...
 cd ..
 npm run build
+npm run smoke
 ```
 
 发布后检查:

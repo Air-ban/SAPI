@@ -138,6 +138,14 @@ systemctl restart sapi
 curl -fsS http://127.0.0.1:3000/api/health
 ```
 
+按仓库 systemd 用户服务约定构建:
+```bash
+npm run build
+cd backend
+go build -o ../bin/sapi-main-linux-amd64-github-single-domain .
+systemctl --user restart sapi.service
+```
+
 ## Nginx 反向代理
 示例:
 ```nginx
@@ -241,6 +249,10 @@ cd backend
 go test ./...
 cd ..
 npm run build
+cd backend
+go build -o ../bin/sapi-smoke .
+cd ..
+npm run smoke
 ```
 
 发布后:
@@ -249,6 +261,12 @@ curl -fsS https://sapi.example.com/api/health
 curl -fsS https://sapi.example.com/api/ready
 curl -fsS https://sapi.example.com/v1/models -H "Authorization: Bearer sk-sapi-..."
 ```
+
+GitHub Actions 会在 `main` push 和 PR 上运行:
+- Ruff
+- Go tests
+- Frontend build
+- Smoke test
 
 浏览器检查:
 - `/#login`
