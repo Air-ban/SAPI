@@ -168,6 +168,28 @@ func BuildAnthropicMessagesUpstreamRequestDetailed(provider models.Provider, bod
 	}, err
 }
 
+func BuildAnthropicCountTokensUpstreamRequestDetailed(provider models.Provider, body map[string]interface{}, upstreamModel string) (ChatCompletionsUpstreamRequest, error) {
+	payload := cloneMap(body)
+	if upstreamModel != "" {
+		payload["model"] = upstreamModel
+	}
+	reqBody, err := json.Marshal(payload)
+
+	headers := make(http.Header)
+	headers.Set("Content-Type", "application/json")
+	headers.Set("Accept-Encoding", "identity")
+	headers.Set("x-api-key", provider.APIKey)
+	headers.Set("anthropic-version", "2023-06-01")
+
+	return ChatCompletionsUpstreamRequest{
+		URL:                         utils.BuildUpstreamURL(provider.BaseURL, "/v1/messages/count_tokens"),
+		Body:                        reqBody,
+		Headers:                     headers,
+		Kind:                        UpstreamAnthropic,
+		NeedsChatResponseConversion: false,
+	}, err
+}
+
 func BuildOpenAICompatibleUpstreamRequestDetailed(provider models.Provider, path, rawQuery string, body []byte, contentType, upstreamModel string) (ChatCompletionsUpstreamRequest, error) {
 	headers := make(http.Header)
 	headers.Set("Accept-Encoding", "identity")

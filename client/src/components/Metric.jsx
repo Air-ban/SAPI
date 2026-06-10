@@ -8,10 +8,31 @@ export const Metric = React.memo(function Metric({ icon, label, value }) {
       sx={{
         p: 1.5,
         minWidth: 0,
+        position: "relative",
+        overflow: "hidden",
         cursor: "default",
-        transition: "border-color 0.15s ease",
+        background: (theme) => theme.palette.app.glass,
+        borderColor: "app.glassBorder",
+        boxShadow: (theme) => theme.palette.app.softShadow,
+        transition:
+          "transform 0.22s cubic-bezier(.2,.8,.2,1), border-color 0.2s ease, box-shadow 0.2s ease",
+        "&::after": {
+          content: '""',
+          position: "absolute",
+          inset: "auto 0 0 0",
+          height: 3,
+          background: (theme) => theme.palette.app.accentGradient,
+          opacity: 0.74
+        },
         "&:hover": {
-          borderColor: "app.borderStrong"
+          transform: "translateY(-2px)",
+          borderColor: "app.borderStrong",
+          boxShadow: (theme) => theme.palette.app.shadow
+        },
+        "@media (prefers-reduced-motion: reduce)": {
+          "&:hover": {
+            transform: "none"
+          }
         }
       }}
     >
@@ -23,11 +44,12 @@ export const Metric = React.memo(function Metric({ icon, label, value }) {
             display: "grid",
             placeItems: "center",
             borderRadius: 1,
-            bgcolor: "app.paperAlt",
+            bgcolor: "app.primarySoft",
             border: "1px solid",
-            borderColor: "divider",
+            borderColor: "app.glassBorder",
             color: "primary.main",
             flexShrink: 0,
+            boxShadow: "inset 0 1px 0 rgba(255,255,255,0.42)",
             "& svg": { fontSize: 18 }
           }}
         >

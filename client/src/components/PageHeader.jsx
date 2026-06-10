@@ -14,10 +14,14 @@ export const PageHeader = React.memo(function PageHeader({ eyebrow, title, descr
         zIndex: 5,
         mx: { xs: -0.5, sm: -1 },
         px: { xs: 0.5, sm: 1 },
-        py: 1,
-        bgcolor: "background.default",
+        py: 1.1,
+        borderRadius: 1.5,
+        bgcolor: "transparent",
+        background: (theme) => theme.palette.app.overlay,
+        backdropFilter: "blur(22px) saturate(1.18)",
         borderBottom: "1px solid",
-        borderColor: "divider"
+        borderColor: "app.glassBorder",
+        boxShadow: (theme) => `0 1px 0 ${theme.palette.app.glassEdge}`
       }}
     >
       <Box sx={{ minWidth: 0 }}>

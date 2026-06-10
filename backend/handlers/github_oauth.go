@@ -142,13 +142,14 @@ func handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 		redirectGitHubAuth(w, r, cfg, "", "invalid_state")
 		return
 	}
-	statePayload, err := verifyGitHubOAuthState(state, app, cfg)
+	statePayload, verifiedApp, err := verifyGitHubOAuthStateForCallback(state, app, cfg)
 	if err != nil {
 		log.Printf("[GITHUB_OAUTH] callback failed stage=verify_state host=%s err=%v", r.Host, err)
 		clearGitHubOAuthCookies(w, r, cfg)
 		redirectGitHubAuth(w, r, cfg, "", "invalid_state")
 		return
 	}
+	app = verifiedApp
 	termsAccepted := statePayload.TermsAccepted
 	if githubTermsAcceptedForState(r, cookie.Value) {
 		termsAccepted = true
@@ -673,6 +674,57 @@ func verifyGitHubOAuthState(value string, app config.GitHubOAuthApp, cfg *config
 	}
 	state.ReturnBaseURL = strings.TrimRight(strings.TrimSpace(state.ReturnBaseURL), "/")
 	return &state, nil
+}
+
+func verifyGitHubOAuthStateForCallback(value string, requestApp config.GitHubOAuthApp, cfg *config.Config) (*githubOAuthState, config.GitHubOAuthApp, error) {
+	candidates := githubOAuthAppCandidatesForCallback(requestApp, cfg)
+	if len(candidates) == 0 {
+		return nil, config.GitHubOAuthApp{}, fmt.Errorf("missing github oauth app")
+	}
+
+	var lastErr error
+	for _, candidate := range candidates {
+		state, err := verifyGitHubOAuthState(value, candidate, cfg)
+		if err == nil {
+			return state, candidate, nil
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return nil, config.GitHubOAuthApp{}, lastErr
+	}
+	return nil, config.GitHubOAuthApp{}, fmt.Errorf("invalid github state")
+}
+
+func githubOAuthAppCandidatesForCallback(requestApp config.GitHubOAuthApp, cfg *config.Config) []config.GitHubOAuthApp {
+	var candidates []config.GitHubOAuthApp
+	add := func(app config.GitHubOAuthApp) {
+		app.ClientID = strings.TrimSpace(app.ClientID)
+		app.ClientSecret = strings.TrimSpace(app.ClientSecret)
+		app.RedirectURL = strings.TrimSpace(app.RedirectURL)
+		if app.ClientID == "" || app.ClientSecret == "" || app.RedirectURL == "" {
+			return
+		}
+		for _, existing := range candidates {
+			if existing.ClientID == app.ClientID && auth.SafeEqual(existing.ClientSecret, app.ClientSecret) && auth.SafeEqual(existing.RedirectURL, app.RedirectURL) {
+				return
+			}
+		}
+		candidates = append(candidates, app)
+	}
+
+	add(requestApp)
+	if cfg != nil {
+		add(config.GitHubOAuthApp{
+			ClientID:     cfg.GitHubClientID,
+			ClientSecret: cfg.GitHubClientSecret,
+			RedirectURL:  cfg.GitHubRedirectURL,
+		})
+		for _, app := range cfg.GitHubOAuthApps {
+			add(app)
+		}
+	}
+	return candidates
 }
 
 func clearGitHubStateCookie(w http.ResponseWriter, r *http.Request, cfg *config.Config) {

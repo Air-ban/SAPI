@@ -12,7 +12,14 @@ export function ThemeModeToggle({ mode, onToggle, sx }) {
         aria-label={isDark ? "切换到白模式" : "切换到暗黑模式"}
         onClick={onToggle}
         size="small"
-        sx={sx}
+        sx={{
+          border: "1px solid",
+          borderColor: "app.glassBorder",
+          bgcolor: "app.sidebarSurface",
+          backdropFilter: "blur(14px) saturate(1.16)",
+          boxShadow: "inset 0 1px 0 rgba(255,255,255,0.18)",
+          ...sx
+        }}
       >
         {isDark ? <LightModeIcon fontSize="small" /> : <DarkModeIcon fontSize="small" />}
       </IconButton>

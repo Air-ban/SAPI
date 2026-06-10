@@ -31,12 +31,44 @@ import PaletteIcon from "@mui/icons-material/Palette";
 import StopCircleIcon from "@mui/icons-material/StopCircle";
 import { EmptyState } from "../components/EmptyState";
 import { normalizeModelFrontend } from "../utils/helpers";
+import { wsProxyRequest } from "../utils/wsProxy";
 
 const REFERENCE_PROJECT_URL = "https://github.com/CookSleep/gpt_image_playground";
 const MAX_REFERENCE_IMAGES = 8;
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const RESULT_LIMIT = 30;
 const PROMPT_REWRITE_GUARD_PREFIX = "Use the following text as the complete prompt. Do not rewrite it:";
+
+const glassPanelSx = {
+  position: "relative",
+  overflow: "hidden",
+  borderColor: "app.glassBorder",
+  background: (theme) => theme.palette.app.glassStrong,
+  boxShadow: (theme) => theme.palette.app.softShadow,
+  "&::before": {
+    content: '""',
+    position: "absolute",
+    inset: "0 0 auto 0",
+    height: 1,
+    bgcolor: "app.glassEdge",
+    opacity: 0.8,
+    pointerEvents: "none"
+  }
+};
+
+const controlIconSx = {
+  width: 32,
+  height: 32,
+  borderRadius: 1.25,
+  bgcolor: "app.accentSoftRose",
+  border: "1px solid",
+  borderColor: "app.glassBorder",
+  display: "grid",
+  placeItems: "center",
+  color: "app.accentRose",
+  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.42)",
+  "& svg": { fontSize: 18 }
+};
 
 const SIZE_PRESETS = {
   "1K": {
@@ -300,6 +332,43 @@ function buildImageEditForm({ model, prompt, params, returnBase64, referenceImag
   return form;
 }
 
+function buildImageEditWSForm({ model, prompt, params, returnBase64, referenceImages, maskImage }) {
+  const form = [
+    { name: "model", value: model },
+    { name: "prompt", value: prompt },
+    { name: "size", value: params.size },
+    { name: "output_format", value: params.outputFormat },
+    { name: "moderation", value: params.moderation }
+  ];
+  if (params.quality !== "auto") form.push({ name: "quality", value: params.quality });
+  if (params.outputFormat !== "png" && params.outputCompression != null) {
+    form.push({ name: "output_compression", value: String(params.outputCompression) });
+  }
+  if (params.n > 1) form.push({ name: "n", value: String(params.n) });
+  if (returnBase64) form.push({ name: "response_format", value: "b64_json" });
+
+  referenceImages.forEach((image, index) => {
+    const mime = image.dataUrl.match(/^data:([^;]+)/)?.[1] || image.type || "image/png";
+    const ext = mime.split("/")[1] || "png";
+    form.push({
+      name: "image[]",
+      filename: `reference-${index + 1}.${ext}`,
+      contentType: mime,
+      dataUrl: image.dataUrl
+    });
+  });
+  if (maskImage?.dataUrl) {
+    const mime = maskImage.dataUrl.match(/^data:([^;]+)/)?.[1] || maskImage.type || "image/png";
+    form.push({
+      name: "mask",
+      filename: "mask.png",
+      contentType: mime,
+      dataUrl: maskImage.dataUrl
+    });
+  }
+  return form;
+}
+
 function ImageTile({ result, index, outputFormat, onCopy, onUseAsReference }) {
   const filename = `sapi-image-${index + 1}.${imageExtension(result.url, outputFormat)}`;
   return (
@@ -307,9 +376,24 @@ function ImageTile({ result, index, outputFormat, onCopy, onUseAsReference }) {
       variant="outlined"
       sx={{
         overflow: "hidden",
-        bgcolor: "background.paper",
+        position: "relative",
+        background: (theme) => theme.palette.app.glass,
+        borderColor: "app.glassBorder",
+        boxShadow: (theme) => theme.palette.app.softShadow,
         display: "flex",
-        flexDirection: "column"
+        flexDirection: "column",
+        transition:
+          "transform 0.22s cubic-bezier(.2,.8,.2,1), border-color 0.2s ease, box-shadow 0.2s ease",
+        "&:hover": {
+          transform: "translateY(-2px)",
+          borderColor: "app.borderStrong",
+          boxShadow: (theme) => theme.palette.app.shadow
+        },
+        "@media (prefers-reduced-motion: reduce)": {
+          "&:hover": {
+            transform: "none"
+          }
+        }
       }}
     >
       <Box
@@ -320,7 +404,7 @@ function ImageTile({ result, index, outputFormat, onCopy, onUseAsReference }) {
           width: "100%",
           aspectRatio: "1 / 1",
           objectFit: "contain",
-          bgcolor: "app.paperAlt",
+          bgcolor: "rgba(0,0,0,0.04)",
           borderBottom: "1px solid",
           borderColor: "divider"
         }}
@@ -379,8 +463,9 @@ function ReferenceImageStrip({ images, maskImage, onRemove, onClearMask }) {
                   objectFit: "cover",
                   borderRadius: 1,
                   border: "1px solid",
-                  borderColor: "divider",
-                  bgcolor: "app.paperAlt"
+                  borderColor: "app.glassBorder",
+                  bgcolor: "app.paperAlt",
+                  boxShadow: (theme) => theme.palette.app.softShadow
                 }}
               />
               <IconButton
@@ -402,7 +487,17 @@ function ReferenceImageStrip({ images, maskImage, onRemove, onClearMask }) {
         </Box>
       ) : null}
       {maskImage ? (
-        <Paper variant="outlined" sx={{ p: 1, display: "flex", alignItems: "center", gap: 1 }}>
+        <Paper
+          variant="outlined"
+          sx={{
+            p: 1,
+            display: "flex",
+            alignItems: "center",
+            gap: 1,
+            borderColor: "app.glassBorder",
+            background: (theme) => theme.palette.app.glass
+          }}
+        >
           <Box component="img" src={maskImage.dataUrl} alt="遮罩" sx={{ width: 42, height: 42, objectFit: "cover", borderRadius: 1 }} />
           <Box sx={{ minWidth: 0, flex: 1 }}>
             <Typography variant="body2" noWrap sx={{ fontWeight: 680 }}>{maskImage.name}</Typography>
@@ -563,30 +658,29 @@ export function ImagePlaygroundSection({ config, apiKeys = [], selectedKey = "",
       let response;
 
       if (apiMode === "responses") {
-        response = await fetch("/responses", {
+        response = await wsProxyRequest({
+          path: "/responses",
           method: "POST",
-          cache: "no-store",
           signal: controller.signal,
           headers: {
             Authorization: `Bearer ${key}`,
-            "Content-Type": "application/json",
             Accept: "application/json"
           },
-          body: JSON.stringify(buildResponsesBody({
+          body: buildResponsesBody({
             model: model.trim(),
             prompt: cleanPrompt,
             params,
             referenceImages,
             maskImage
-          }))
+          })
         });
       } else if (referenceImages.length || maskImage) {
-        response = await fetch("/v1/images/edits", {
+        response = await wsProxyRequest({
+          path: "/v1/images/edits",
           method: "POST",
-          cache: "no-store",
           signal: controller.signal,
           headers: { Authorization: `Bearer ${key}` },
-          body: buildImageEditForm({
+          form: buildImageEditWSForm({
             model: model.trim(),
             prompt: cleanPrompt,
             params,
@@ -596,21 +690,20 @@ export function ImagePlaygroundSection({ config, apiKeys = [], selectedKey = "",
           })
         });
       } else {
-        response = await fetch("/v1/images/generations", {
+        response = await wsProxyRequest({
+          path: "/v1/images/generations",
           method: "POST",
-          cache: "no-store",
           signal: controller.signal,
           headers: {
             Authorization: `Bearer ${key}`,
-            "Content-Type": "application/json",
             Accept: "application/json"
           },
-          body: JSON.stringify(buildImageJSONBody({
+          body: buildImageJSONBody({
             model: model.trim(),
             prompt: cleanPrompt,
             params,
             returnBase64
-          }))
+          })
         });
       }
 
@@ -686,28 +779,23 @@ export function ImagePlaygroundSection({ config, apiKeys = [], selectedKey = "",
     <Box
       sx={{
         display: "grid",
-        gridTemplateColumns: { xs: "1fr", lg: "380px minmax(0, 1fr)" },
-        gap: 2,
+        gridTemplateColumns: { xs: "1fr", lg: "360px minmax(0, 1fr)" },
+        gap: { xs: 1.5, lg: 2.25 },
         alignItems: "start"
       }}
     >
-      <Paper variant="outlined" sx={{ p: { xs: 1.5, sm: 2 }, position: { lg: "sticky" }, top: { lg: 88 } }}>
+      <Paper
+        variant="outlined"
+        sx={{
+          ...glassPanelSx,
+          p: { xs: 1.5, sm: 2 },
+          position: { lg: "sticky" },
+          top: { lg: 88 }
+        }}
+      >
         <Stack spacing={1.5}>
           <Stack direction="row" spacing={1} alignItems="center">
-            <Box
-              sx={{
-                width: 28,
-                height: 28,
-                borderRadius: 1,
-                bgcolor: "app.paperAlt",
-                border: "1px solid",
-                borderColor: "divider",
-                display: "grid",
-                placeItems: "center",
-                color: "text.secondary",
-                "& svg": { fontSize: 17 }
-              }}
-            >
+            <Box sx={controlIconSx}>
               <PaletteIcon />
             </Box>
             <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
@@ -937,11 +1025,20 @@ export function ImagePlaygroundSection({ config, apiKeys = [], selectedKey = "",
         </Stack>
       </Paper>
 
-      <Paper variant="outlined" sx={{ p: { xs: 1.5, sm: 2 }, minHeight: 560 }}>
+      <Paper
+        variant="outlined"
+        sx={{
+          ...glassPanelSx,
+          p: { xs: 1.5, sm: 2 },
+          minHeight: 560
+        }}
+      >
         <Stack spacing={1.5}>
           <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "stretch", sm: "center" }} justifyContent="space-between">
             <Stack direction="row" spacing={1} alignItems="center">
-              <ImageIcon color="action" />
+              <Box sx={{ ...controlIconSx, color: "app.accentCyan", bgcolor: "app.accentSoftCyan" }}>
+                <ImageIcon />
+              </Box>
               <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
                 生成结果
               </Typography>

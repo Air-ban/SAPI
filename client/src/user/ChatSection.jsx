@@ -37,6 +37,7 @@ import VideocamIcon from "@mui/icons-material/Videocam";
 import { marked } from "marked";
 import { EmptyState } from "../components/EmptyState";
 import { normalizeModelFrontend } from "../utils/helpers";
+import { wsProxyRequest } from "../utils/wsProxy";
 
 const MAX_ATTACHMENTS = 6;
 const MAX_TEXT_BYTES = 2 * 1024 * 1024;
@@ -88,6 +89,37 @@ const DEFAULT_FUNCTION_TOOL = JSON.stringify(
   null,
   2
 );
+
+const glassPanelSx = {
+  position: "relative",
+  overflow: "hidden",
+  borderColor: "app.glassBorder",
+  background: (theme) => theme.palette.app.glassStrong,
+  boxShadow: (theme) => theme.palette.app.softShadow,
+  "&::before": {
+    content: '""',
+    position: "absolute",
+    inset: "0 0 auto 0",
+    height: 1,
+    bgcolor: "app.glassEdge",
+    opacity: 0.8,
+    pointerEvents: "none"
+  }
+};
+
+const controlIconSx = {
+  width: 32,
+  height: 32,
+  borderRadius: 1.25,
+  bgcolor: "app.primarySoft",
+  border: "1px solid",
+  borderColor: "app.glassBorder",
+  display: "grid",
+  placeItems: "center",
+  color: "primary.main",
+  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.42)",
+  "& svg": { fontSize: 18 }
+};
 
 function makeID(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
@@ -497,9 +529,10 @@ function PreviewFrame({ content, mode }) {
         width: "100%",
         minHeight: { xs: 300, md: 380 },
         border: "1px solid",
-        borderColor: "divider",
+        borderColor: "app.glassBorder",
         borderRadius: 1,
-        bgcolor: "background.paper"
+        bgcolor: "background.paper",
+        boxShadow: (theme) => theme.palette.app.softShadow
       }}
     />
   );
@@ -515,7 +548,18 @@ function AttachmentPreview({ attachment, compact = false, onRemove, onDownload }
         gridTemplateColumns: attachment.kind === "image" && !compact ? "64px minmax(0, 1fr) auto" : "minmax(0, 1fr) auto",
         gap: 1,
         alignItems: "center",
-        bgcolor: "app.paperAlt"
+        background: (theme) => theme.palette.app.glass,
+        borderColor: "app.glassBorder",
+        transition: "transform 0.18s cubic-bezier(.2,.8,.2,1), border-color 0.18s ease",
+        "&:hover": {
+          transform: "translateY(-1px)",
+          borderColor: "app.borderStrong"
+        },
+        "@media (prefers-reduced-motion: reduce)": {
+          "&:hover": {
+            transform: "none"
+          }
+        }
       }}
     >
       {attachment.kind === "image" && !compact ? (
@@ -598,8 +642,33 @@ function ChatMessage({ message, onCopy, onDownloadAttachment }) {
       variant="outlined"
       sx={{
         p: { xs: 1.25, sm: 1.5 },
-        bgcolor: isAssistant ? "background.paper" : "app.paperAlt",
-        borderColor: message.error ? "error.main" : "divider"
+        position: "relative",
+        overflow: "hidden",
+        background: (theme) => (isAssistant ? theme.palette.app.glassStrong : theme.palette.app.glass),
+        borderColor: message.error ? "error.main" : isAssistant ? "app.glassBorder" : "app.border",
+        boxShadow: (theme) => theme.palette.app.softShadow,
+        transition:
+          "transform 0.2s cubic-bezier(.2,.8,.2,1), border-color 0.2s ease, box-shadow 0.2s ease",
+        "&::before": {
+          content: '""',
+          position: "absolute",
+          top: 0,
+          bottom: 0,
+          left: 0,
+          width: 3,
+          background: (theme) => (isAssistant ? theme.palette.app.accentGradient : theme.palette.app.accentCyan),
+          opacity: isAssistant ? 0.9 : 0.65
+        },
+        "&:hover": {
+          transform: "translateY(-1px)",
+          borderColor: message.error ? "error.main" : "app.borderStrong",
+          boxShadow: (theme) => theme.palette.app.shadow
+        },
+        "@media (prefers-reduced-motion: reduce)": {
+          "&:hover": {
+            transform: "none"
+          }
+        }
       }}
     >
       <Stack spacing={1.25}>
@@ -949,18 +1018,17 @@ export function ChatSection({ config, apiKeys = [], selectedKey = "", onToast, o
     abortRef.current = controller;
     try {
       const requestBody = buildResponseRequest({ model, input, mode, schemaDraft, functionDraft });
-      const response = await fetch("/responses", {
+      const response = await wsProxyRequest({
+        path: "/responses",
         method: "POST",
-        cache: "no-store",
         signal: controller.signal,
         headers: {
           "Authorization": `Bearer ${key}`,
-          "Content-Type": "application/json",
           "Accept": "application/json",
           "Cache-Control": "no-store",
           "Pragma": "no-cache"
         },
-        body: JSON.stringify(requestBody)
+        body: requestBody
       });
       const raw = await response.text();
       let data = null;
@@ -1022,28 +1090,23 @@ export function ChatSection({ config, apiKeys = [], selectedKey = "", onToast, o
     <Box
       sx={{
         display: "grid",
-        gridTemplateColumns: { xs: "1fr", lg: "360px minmax(0, 1fr)" },
-        gap: 2,
+        gridTemplateColumns: { xs: "1fr", lg: "340px minmax(0, 1fr)" },
+        gap: { xs: 1.5, lg: 2.25 },
         alignItems: "start"
       }}
     >
-      <Paper variant="outlined" sx={{ p: { xs: 1.5, sm: 2 }, position: { lg: "sticky" }, top: { lg: 88 } }}>
+      <Paper
+        variant="outlined"
+        sx={{
+          ...glassPanelSx,
+          p: { xs: 1.5, sm: 2 },
+          position: { lg: "sticky" },
+          top: { lg: 88 }
+        }}
+      >
         <Stack spacing={1.5}>
           <Stack direction="row" spacing={1} alignItems="center">
-            <Box
-              sx={{
-                width: 28,
-                height: 28,
-                borderRadius: 1,
-                bgcolor: "app.paperAlt",
-                border: "1px solid",
-                borderColor: "divider",
-                display: "grid",
-                placeItems: "center",
-                color: "text.secondary",
-                "& svg": { fontSize: 17 }
-              }}
-            >
+            <Box sx={controlIconSx}>
               <ChatBubbleOutlineIcon />
             </Box>
             <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
@@ -1190,11 +1253,20 @@ export function ChatSection({ config, apiKeys = [], selectedKey = "", onToast, o
         </Stack>
       </Paper>
 
-      <Paper variant="outlined" sx={{ p: { xs: 1.5, sm: 2 }, minHeight: 520 }}>
+      <Paper
+        variant="outlined"
+        sx={{
+          ...glassPanelSx,
+          p: { xs: 1.5, sm: 2 },
+          minHeight: 520
+        }}
+      >
         <Stack spacing={1.5}>
           <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
             <Stack direction="row" spacing={1} alignItems="center">
-              <CodeIcon color="action" />
+              <Box sx={{ ...controlIconSx, color: "app.accentViolet", bgcolor: "app.accentSoftViolet" }}>
+                <CodeIcon />
+              </Box>
               <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
                 Responses 会话
               </Typography>

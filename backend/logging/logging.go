@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"sapi/auth"
+	"sapi/device"
 	"sapi/ippure"
 	"sapi/models"
 	"sapi/store"
@@ -113,6 +114,7 @@ func RecordRequestLog(params RequestLogParams) {
 		ErrorCode:           params.ErrorCode,
 		ErrorMessage:        params.ErrorMessage,
 		ClientIPInfo:        ippure.LookupRequest(params.Request),
+		ClientDevice:        device.FromRequest(params.Request),
 		RequestContent:      params.RequestContent,
 		Timestamp:           store.Now(),
 	})

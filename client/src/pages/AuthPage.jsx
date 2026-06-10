@@ -303,7 +303,8 @@ export function AuthPage({
           placeItems: "center",
           px: 2,
           py: 4,
-          bgcolor: "background.default"
+          bgcolor: "background.default",
+          background: (theme) => theme.palette.app.pageBg
         }}
       >
         <Paper
@@ -313,7 +314,9 @@ export function AuthPage({
             maxWidth: 440,
             p: { xs: 2.25, sm: 3 },
             boxShadow: (theme) => theme.palette.app.shadow,
-            bgcolor: "background.paper"
+            borderColor: "app.glassBorder",
+            background: (theme) => theme.palette.app.glassStrong,
+            backdropFilter: "blur(26px) saturate(1.2)"
           }}
         >
           <Stack spacing={2.2}>
@@ -328,8 +331,9 @@ export function AuthPage({
                   borderRadius: 1.25,
                   display: "grid",
                   placeItems: "center",
-                  bgcolor: "primary.main",
-                  color: "primary.contrastText"
+                  background: (theme) => theme.palette.app.accentGradient,
+                  color: "primary.contrastText",
+                  boxShadow: (theme) => theme.palette.app.softShadow
                 }}
               >
                 {isRegister ? <PersonAddIcon /> : isAdminLogin ? <AdminPanelSettingsIcon /> : <LoginIcon />}
@@ -439,7 +443,7 @@ export function AuthPage({
                         helperText="使用管理员提供的邀请码进行注册。"
                         sx={{
                           '& .MuiOutlinedInput-root': {
-                            bgcolor: 'app.paperAlt'
+                            bgcolor: 'app.inputBg'
                           }
                         }}
                       />

@@ -4,12 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/gorilla/websocket"
 
 	"sapi/auth"
 	"sapi/config"
@@ -209,6 +213,69 @@ func TestAnthropicMessagesProxyUsesForcedNativeAnthropicFormat(t *testing.T) {
 	}
 }
 
+func TestAnthropicCountTokensProxiesToNativeAnthropicUpstream(t *testing.T) {
+	var mu sync.Mutex
+	var gotPath string
+	var gotBody map[string]interface{}
+	var gotAPIKey string
+	var gotAuth string
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotPath = r.URL.Path
+		gotAPIKey = r.Header.Get("x-api-key")
+		gotAuth = r.Header.Get("Authorization")
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		mu.Unlock()
+
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"input_tokens":            42,
+			"cache_read_input_tokens": 7,
+		})
+	}))
+	defer upstream.Close()
+
+	app, apiKey := setupForcedFormatProxyTest(t, models.Provider{
+		ID:             "prv_anthropic_count",
+		Name:           "Generic Anthropic Gateway",
+		BaseURL:        upstream.URL,
+		APIKey:         "sk-ant",
+		UpstreamFormat: models.UpstreamFormatAnthropic,
+		ModelMappings:  map[string]string{"public-claude": "claude-real"},
+		Enabled:        true,
+		HealthStatus:   "unknown",
+		Availability7d: 100,
+		CreatedAt:      store.Now(),
+		UpdatedAt:      store.Now(),
+	})
+
+	rec := postJSON(t, app, "/v1/messages/count_tokens", map[string]interface{}{
+		"model": "public-claude",
+		"messages": []map[string]string{{
+			"role":    "user",
+			"content": "hello",
+		}},
+	}, apiKey)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/v1/messages/count_tokens returned %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"input_tokens":42`) || !strings.Contains(rec.Body.String(), `"cache_read_input_tokens":7`) {
+		t.Fatalf("expected upstream token count response, got %s", rec.Body.String())
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if gotPath != "/v1/messages/count_tokens" {
+		t.Fatalf("upstream path = %q, want /v1/messages/count_tokens", gotPath)
+	}
+	if gotAPIKey != "sk-ant" || gotAuth != "" {
+		t.Fatalf("unexpected auth headers x-api-key=%q authorization=%q", gotAPIKey, gotAuth)
+	}
+	if gotBody["model"] != "claude-real" {
+		t.Fatalf("expected mapped Anthropic count_tokens model, got %#v", gotBody["model"])
+	}
+}
+
 func TestChatCompletionsRejectsGPTModels(t *testing.T) {
 	app, apiKey := setupForcedFormatProxyTest(t, models.Provider{
 		ID:             "prv_gpt",
@@ -309,6 +376,237 @@ func TestChatCompletionsAggregatesUpstreamSSEForNonStreamRequest(t *testing.T) {
 	if normalized == nil || normalized.PromptTokens != 4 || normalized.CompletionTokens != 2 || normalized.CachedTokens != 1 {
 		t.Fatalf("unexpected aggregated usage: %#v", normalized)
 	}
+}
+
+func TestWebSocketProxyForwardsChatJSONRequest(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("upstream path = %q, want /v1/chat/completions", r.URL.Path)
+		}
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["model"] != "claude-public" {
+			t.Fatalf("model = %#v, want claude-public", body["model"])
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":      "chatcmpl_ws",
+			"object":  "chat.completion",
+			"created": 123,
+			"model":   "claude-public",
+			"choices": []map[string]interface{}{{
+				"index": 0,
+				"message": map[string]interface{}{
+					"role":    "assistant",
+					"content": "ws ok",
+				},
+				"finish_reason": "stop",
+			}},
+		})
+	}))
+	defer upstream.Close()
+
+	app, apiKey := setupForcedFormatProxyTest(t, models.Provider{
+		ID:             "prv_ws_chat",
+		Name:           "OpenAI WS Chat",
+		BaseURL:        upstream.URL,
+		APIKey:         "upstream-key",
+		UpstreamFormat: models.UpstreamFormatOpenAI,
+		Models:         []models.Model{{ID: "claude-public", Name: "claude-public"}},
+		Enabled:        true,
+		HealthStatus:   "unknown",
+		Availability7d: 100,
+		CreatedAt:      store.Now(),
+		UpdatedAt:      store.Now(),
+	})
+
+	resp := sendWebSocketProxyTestRequest(t, app, map[string]interface{}{
+		"id":     "chat",
+		"method": "POST",
+		"path":   "/v1/chat/completions",
+		"headers": map[string]string{
+			"Authorization": "Bearer " + apiKey,
+			"Accept":        "application/json",
+		},
+		"body": map[string]interface{}{
+			"model": "claude-public",
+			"messages": []map[string]string{{
+				"role":    "user",
+				"content": "hello",
+			}},
+		},
+	})
+	if resp.Type != "response" || resp.Status != http.StatusOK {
+		t.Fatalf("ws response = %#v", resp)
+	}
+	if !strings.Contains(resp.Body, "ws ok") {
+		t.Fatalf("ws body = %s, want upstream response", resp.Body)
+	}
+}
+
+func TestWebSocketProxyForwardsImageEditMultipartRequest(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/images/edits" {
+			t.Fatalf("upstream path = %q, want /v1/images/edits", r.URL.Path)
+		}
+		if err := r.ParseMultipartForm(8 << 20); err != nil {
+			t.Fatal(err)
+		}
+		if got := r.FormValue("model"); got != "real-image" {
+			t.Fatalf("multipart model = %q, want real-image", got)
+		}
+		files := r.MultipartForm.File["image[]"]
+		if len(files) != 1 {
+			t.Fatalf("image files = %d, want 1", len(files))
+		}
+		file, err := files[0].Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer file.Close()
+		raw, _ := io.ReadAll(file)
+		if string(raw) != "abc" {
+			t.Fatalf("image file = %q, want abc", string(raw))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": []map[string]string{{"b64_json": "aW1hZ2U="}},
+		})
+	}))
+	defer upstream.Close()
+
+	app, apiKey := setupForcedFormatProxyTest(t, models.Provider{
+		ID:             "prv_ws_image",
+		Name:           "OpenAI WS Images",
+		BaseURL:        upstream.URL,
+		APIKey:         "upstream-key",
+		UpstreamFormat: models.UpstreamFormatOpenAI,
+		Models:         []models.Model{{ID: "real-image", Name: "real-image"}},
+		ModelMappings:  map[string]string{"public-image": "real-image"},
+		Enabled:        true,
+		HealthStatus:   "unknown",
+		Availability7d: 100,
+		CreatedAt:      store.Now(),
+		UpdatedAt:      store.Now(),
+	})
+
+	resp := sendWebSocketProxyTestRequest(t, app, map[string]interface{}{
+		"id":     "image",
+		"method": "POST",
+		"path":   "/v1/images/edits",
+		"headers": map[string]string{
+			"Authorization": "Bearer " + apiKey,
+		},
+		"form": []map[string]string{
+			{"name": "model", "value": "public-image"},
+			{"name": "prompt", "value": "edit it"},
+			{"name": "image[]", "filename": "ref.png", "contentType": "image/png", "dataUrl": "data:image/png;base64,YWJj"},
+		},
+	})
+	if resp.Type != "response" || resp.Status != http.StatusOK {
+		t.Fatalf("ws response = %#v", resp)
+	}
+	if !strings.Contains(resp.Body, "aW1hZ2U=") {
+		t.Fatalf("ws body = %s, want image response", resp.Body)
+	}
+}
+
+func TestProxyRequestLogCapturesClientDeviceWithoutSensitiveHeaders(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":      "chatcmpl_device",
+			"object":  "chat.completion",
+			"created": 123,
+			"model":   "claude-public",
+			"choices": []map[string]interface{}{{
+				"index": 0,
+				"message": map[string]interface{}{
+					"role":    "assistant",
+					"content": "ok",
+				},
+				"finish_reason": "stop",
+			}},
+			"usage": map[string]interface{}{
+				"prompt_tokens":     1,
+				"completion_tokens": 1,
+				"total_tokens":      2,
+			},
+		})
+	}))
+	defer upstream.Close()
+
+	app, apiKey := setupForcedFormatProxyTest(t, models.Provider{
+		ID:             "prv_device",
+		Name:           "OpenAI Device Gateway",
+		BaseURL:        upstream.URL,
+		APIKey:         "upstream-key",
+		UpstreamFormat: models.UpstreamFormatOpenAI,
+		Models:         []models.Model{{ID: "claude-public", Name: "claude-public"}},
+		Enabled:        true,
+		HealthStatus:   "unknown",
+		Availability7d: 100,
+		CreatedAt:      store.Now(),
+		UpdatedAt:      store.Now(),
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"claude-public","messages":[{"role":"user","content":"hello"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", apiKey)
+	req.Header.Set("Cookie", "session=secret")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+	req.Header.Set("Sec-CH-UA-Platform", `"Windows"`)
+	rec := httptest.NewRecorder()
+	app.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("chat completions returned %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	logs := store.ReadDB().RequestLogs
+	if len(logs) != 1 {
+		t.Fatalf("expected one request log, got %d: %#v", len(logs), logs)
+	}
+	device := logs[0].ClientDevice
+	if device == nil {
+		t.Fatal("expected client device info to be recorded")
+	}
+	if device.BrowserName != "Chrome" || device.OSName != "Windows" || device.DeviceType != "desktop" {
+		t.Fatalf("unexpected parsed device info: %#v", device)
+	}
+	if len(device.Languages) == 0 || device.Languages[0] != "zh-CN" {
+		t.Fatalf("unexpected device languages: %#v", device.Languages)
+	}
+	for _, sensitive := range []string{"Authorization", "X-API-Key", "Cookie"} {
+		if _, ok := device.Headers[sensitive]; ok {
+			t.Fatalf("sensitive header %s should not be recorded: %#v", sensitive, device.Headers)
+		}
+	}
+}
+
+func sendWebSocketProxyTestRequest(t *testing.T, app http.Handler, payload interface{}) websocketProxyResponse {
+	t.Helper()
+	server := httptest.NewServer(app)
+	defer server.Close()
+
+	serverURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wsURL := url.URL{Scheme: "ws", Host: serverURL.Host, Path: "/api/ws/proxy"}
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL.String(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	if err := conn.WriteJSON(payload); err != nil {
+		t.Fatal(err)
+	}
+	var resp websocketProxyResponse
+	if err := conn.ReadJSON(&resp); err != nil {
+		t.Fatal(err)
+	}
+	return resp
 }
 
 func setupForcedFormatProxyTest(t *testing.T, provider models.Provider) (http.Handler, string) {

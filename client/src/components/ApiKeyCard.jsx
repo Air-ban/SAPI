@@ -89,7 +89,33 @@ export const ApiKeyCard = React.memo(function ApiKeyCard({ apiKey, usage, onCopy
         gridTemplateColumns: { xs: "1fr", md: "minmax(0, 1fr) auto" },
         gap: 1.5,
         alignItems: "center",
-        bgcolor: "app.paperAlt"
+        position: "relative",
+        overflow: "hidden",
+        background: (theme) => theme.palette.app.glass,
+        borderColor: "app.glassBorder",
+        boxShadow: (theme) => theme.palette.app.softShadow,
+        transition:
+          "transform 0.2s cubic-bezier(.2,.8,.2,1), border-color 0.2s ease, box-shadow 0.2s ease",
+        "&::before": {
+          content: '""',
+          position: "absolute",
+          top: 0,
+          bottom: 0,
+          left: 0,
+          width: 3,
+          bgcolor: apiKey.enabled ? "app.accentGreen" : "app.accentAmber",
+          opacity: 0.8
+        },
+        "&:hover": {
+          transform: "translateY(-1px)",
+          borderColor: "app.borderStrong",
+          boxShadow: (theme) => theme.palette.app.shadow
+        },
+        "@media (prefers-reduced-motion: reduce)": {
+          "&:hover": {
+            transform: "none"
+          }
+        }
       }}
     >
       <Stack spacing={1} sx={{ minWidth: 0 }}>

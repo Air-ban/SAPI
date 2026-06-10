@@ -62,12 +62,7 @@ export function formatUserName(item) {
 
 export function cacheHitText(request) {
   const cachedTokens = Number(request?.cachedTokens || 0);
-  const cacheMissTokens = Number(request?.cacheMissTokens || 0);
-  if (!cachedTokens && !cacheMissTokens) return "0";
-  if (!cacheMissTokens) return formatNumber(cachedTokens);
-
-  const hitRate = Math.round((cachedTokens / (cachedTokens + cacheMissTokens)) * 100);
-  return `${formatNumber(cachedTokens)} (${hitRate}%)`;
+  return formatNumber(cachedTokens);
 }
 
 export function requestStatusColor(request) {

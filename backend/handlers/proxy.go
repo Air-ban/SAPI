@@ -22,6 +22,7 @@ import (
 )
 
 func MountProxyRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/ws/proxy", handleWebSocketProxy)
 	mux.HandleFunc("POST /chat/completions", handleProxyToProvider)
 	mux.HandleFunc("POST /responses", handleResponsesProxyHandler)
 	mux.HandleFunc("POST /v1/responses", handleResponsesProxyHandler)
@@ -864,28 +865,143 @@ func handleAnthropicCountTokensHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	requestContent := cloneRequestContent(body)
 
-	inputTokens := proxy.EstimateAnthropicInputTokens(body)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"input_tokens": inputTokens,
-	})
 	model, _ := body["model"].(string)
-	recordProxyRequestLog(r, logging.RequestLogParams{
-		UserID:         info.User.ID,
-		UserName:       info.User.Name,
-		Username:       info.User.Username,
-		APIKeyID:       getKeyID(info.APIKeyRecord),
-		APIKeyName:     getKeyName(info.APIKeyRecord),
-		APIKeyPreview:  maskKeyPreview(info.APIKeyRecord.Key),
-		Model:          model,
-		Endpoint:       r.URL.Path,
-		Method:         r.Method,
-		Status:         200,
-		OK:             true,
-		Stream:         false,
-		Usage:          map[string]interface{}{"input_tokens": float64(inputTokens)},
-		RequestContent: requestContent,
-	})
-	_ = info
+	if len(model) > 200 {
+		sendInvalidProxyBodyError(w, info, 400, "Model name is too long.", "invalid_model")
+		return
+	}
+
+	candidates := proxy.ChooseAnthropicProviderCandidates(info.DB, model)
+	if len(candidates) == 0 {
+		proxy.SendAnthropicError(w, 503, "api_error", "No enabled upstream provider is configured.")
+		return
+	}
+
+	var lastError error
+	sawNativeAnthropic := false
+
+	for i := range candidates {
+		candidate := &candidates[i]
+		if proxy.ProviderUpstreamKind(candidate.Provider) != proxy.UpstreamAnthropic {
+			continue
+		}
+		sawNativeAnthropic = true
+		startedAt := time.Now()
+		upstreamModelForLog := candidate.UpstreamModel
+		if upstreamModelForLog == "" {
+			upstreamModelForLog = model
+		}
+
+		upstreamReq, err := proxy.BuildAnthropicCountTokensUpstreamRequestDetailed(candidate.Provider, body, candidate.UpstreamModel)
+		if err != nil {
+			lastError = err
+			continue
+		}
+
+		req, err := http.NewRequestWithContext(r.Context(), "POST", upstreamReq.URL, bytes.NewReader(upstreamReq.Body))
+		if err != nil {
+			lastError = err
+			continue
+		}
+		for key, values := range upstreamReq.Headers {
+			for _, v := range values {
+				req.Header.Add(key, v)
+			}
+		}
+
+		resp, err := proxy.DoUpstream(req)
+		if err != nil {
+			proxy.RecordProviderFailure(candidate.Provider.ID)
+			lastError = err
+			continue
+		}
+
+		if !isOK(resp.StatusCode) && proxy.IsUpstreamProviderError(resp.StatusCode) {
+			recordProxyRequestLog(r, logging.RequestLogParams{
+				UserID:         info.User.ID,
+				UserName:       info.User.Name,
+				Username:       info.User.Username,
+				APIKeyID:       getKeyID(info.APIKeyRecord),
+				APIKeyName:     getKeyName(info.APIKeyRecord),
+				APIKeyPreview:  maskKeyPreview(info.APIKeyRecord.Key),
+				ProviderID:     candidate.Provider.ID,
+				ProviderName:   candidate.Provider.Name,
+				Model:          model,
+				UpstreamModel:  upstreamModelForLog,
+				Endpoint:       "/v1/messages/count_tokens",
+				Method:         "POST",
+				Status:         resp.StatusCode,
+				OK:             false,
+				Stream:         false,
+				DurationMs:     int(time.Since(startedAt).Milliseconds()),
+				RequestContent: requestContent,
+			})
+			proxy.RecordProviderFailure(candidate.Provider.ID)
+			resp.Body.Close()
+			lastError = fmt.Errorf("upstream provider responded with HTTP %d", resp.StatusCode)
+			continue
+		}
+
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if !isOK(resp.StatusCode) {
+			var errPayload map[string]interface{}
+			json.Unmarshal(bodyBytes, &errPayload)
+			errMsg := "Upstream provider error."
+			if errData, ok := errPayload["error"].(map[string]interface{}); ok {
+				if msg, ok := errData["message"].(string); ok {
+					errMsg = msg
+				}
+			}
+			proxy.SendAnthropicError(w, resp.StatusCode, "api_error", errMsg)
+			return
+		}
+
+		usage := utils.ExtractUsageFromResponseText(string(bodyBytes))
+		if usage == nil {
+			var payload map[string]interface{}
+			if json.Unmarshal(bodyBytes, &payload) == nil && utils.NormalizeUsage(payload) != nil {
+				usage = payload
+			}
+		}
+
+		utils.CopyUpstreamHeaders(resp.Header, w, map[string]string{
+			"Content-Type":      "application/json",
+			"Anthropic-Version": "2023-06-01",
+		})
+		w.WriteHeader(resp.StatusCode)
+		w.Write(bodyBytes)
+
+		recordProxyRequestLog(r, logging.RequestLogParams{
+			UserID:         info.User.ID,
+			UserName:       info.User.Name,
+			Username:       info.User.Username,
+			APIKeyID:       getKeyID(info.APIKeyRecord),
+			APIKeyName:     getKeyName(info.APIKeyRecord),
+			APIKeyPreview:  maskKeyPreview(info.APIKeyRecord.Key),
+			ProviderID:     candidate.Provider.ID,
+			ProviderName:   candidate.Provider.Name,
+			Model:          model,
+			UpstreamModel:  upstreamModelForLog,
+			Endpoint:       "/v1/messages/count_tokens",
+			Method:         "POST",
+			Status:         resp.StatusCode,
+			OK:             true,
+			Stream:         false,
+			DurationMs:     int(time.Since(startedAt).Milliseconds()),
+			Usage:          usage,
+			RequestContent: requestContent,
+		})
+		proxy.RecordProviderSuccess(candidate.Provider.ID)
+		return
+	}
+
+	msg := "Count tokens requires an Anthropic upstream provider; local token estimation is disabled."
+	if sawNativeAnthropic && lastError != nil {
+		msg = "All Anthropic count_tokens upstream providers failed. Last error: " + lastError.Error()
+	}
+	proxy.SendAnthropicError(w, 502, "api_error", msg)
 }
 
 func handleAnthropicMessagesProxyHandler(w http.ResponseWriter, r *http.Request) {

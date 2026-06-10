@@ -780,6 +780,7 @@ func unmarshalRequestLogSummaryLine(line []byte) (models.RequestLog, error) {
 		ErrorCode           string                      `json:"errorCode"`
 		ErrorMessage        string                      `json:"errorMessage"`
 		ClientIPInfo        *models.RequestClientIPInfo `json:"clientIpInfo,omitempty"`
+		ClientDevice        *models.RequestClientDevice `json:"clientDevice,omitempty"`
 		HasRequestContent   bool                        `json:"hasRequestContent,omitempty"`
 		Timestamp           string                      `json:"timestamp"`
 	}
@@ -816,6 +817,7 @@ func unmarshalRequestLogSummaryLine(line []byte) (models.RequestLog, error) {
 		ErrorCode:           summary.ErrorCode,
 		ErrorMessage:        summary.ErrorMessage,
 		ClientIPInfo:        summary.ClientIPInfo,
+		ClientDevice:        summary.ClientDevice,
 		HasRequestContent:   summary.HasRequestContent || bytes.Contains(line, []byte(`"requestContent"`)),
 		Timestamp:           summary.Timestamp,
 	}, nil

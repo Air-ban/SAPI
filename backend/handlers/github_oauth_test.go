@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -400,6 +401,101 @@ func TestGitHubCallbackForwardsSiblingSubdomainState(t *testing.T) {
 	}
 }
 
+func TestGitHubCallbackUsesStateAppWhenSiblingHostHasOwnApp(t *testing.T) {
+	originalClient := githubHTTPClient
+	defer func() {
+		githubHTTPClient = originalClient
+	}()
+
+	t.Setenv("SAPI_DATA_FILE", filepath.Join(t.TempDir(), "sapi.json"))
+	t.Setenv("SAPI_POSTGRES_URL", " ")
+	t.Setenv("DATABASE_URL", " ")
+	t.Setenv("SAPI_REDIS_URL", " ")
+	t.Setenv("REDIS_URL", " ")
+	t.Setenv("SAPI_GITHUB_CLIENT_ID", "primary-client-id")
+	t.Setenv("SAPI_GITHUB_CLIENT_SECRET", "primary-secret")
+	t.Setenv("SAPI_GITHUB_REDIRECT_URL", "https://sapi.eterultimate.asia/api/auth/github/callback")
+	t.Setenv("SAPI_PUBLIC_BASE_URL", "https://sapi.eterultimate.asia")
+	t.Setenv("SAPI_PUBLIC_BASE_URLS", "https://sapi.eterultimate.asia,https://sapicn.eterultimate.asia")
+	t.Setenv("SAPI_GITHUB_CLIENT_ID_SAPICN_ETERULTIMATE_ASIA", "sapicn-client-id")
+	t.Setenv("SAPI_GITHUB_CLIENT_SECRET_SAPICN_ETERULTIMATE_ASIA", "sapicn-secret")
+	t.Setenv("SAPI_GITHUB_REDIRECT_URL_SAPICN_ETERULTIMATE_ASIA", "https://sapicn.eterultimate.asia/api/auth/github/callback")
+
+	cfg := config.Load()
+	if err := store.Init(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	primaryApp := config.GitHubOAuthApp{
+		ClientID:     "primary-client-id",
+		ClientSecret: "primary-secret",
+		RedirectURL:  "https://sapi.eterultimate.asia/api/auth/github/callback",
+	}
+	state, err := signGitHubPayload(githubOAuthState{
+		Kind:          githubStateKind,
+		Nonce:         "nonce",
+		ClientID:      primaryApp.ClientID,
+		RedirectURL:   primaryApp.RedirectURL,
+		ReturnBaseURL: "https://sapicn.eterultimate.asia",
+		TermsAccepted: true,
+		ExpiresAt:     time.Now().Add(time.Minute).Unix(),
+	}, primaryApp.ClientSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var exchangedRedirectURI string
+	githubHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch {
+		case req.Method == http.MethodPost && req.URL.String() == "https://github.com/login/oauth/access_token":
+			raw, _ := io.ReadAll(req.Body)
+			values, _ := url.ParseQuery(string(raw))
+			exchangedRedirectURI = values.Get("redirect_uri")
+			return jsonResponse(200, map[string]interface{}{"access_token": "github-token"}), nil
+		case req.Method == http.MethodGet && req.URL.String() == "https://api.github.com/user":
+			return jsonResponse(200, map[string]interface{}{
+				"id":         42,
+				"login":      "candidate",
+				"name":       "Candidate",
+				"email":      "candidate@example.com",
+				"avatar_url": "https://avatars.example/candidate.png",
+			}), nil
+		case req.Method == http.MethodGet && req.URL.String() == "https://api.github.com/user/emails":
+			return jsonResponse(200, []map[string]interface{}{{
+				"email":    "candidate@example.com",
+				"primary":  true,
+				"verified": true,
+			}}), nil
+		default:
+			t.Fatalf("unexpected GitHub request %s %s", req.Method, req.URL.String())
+			return nil, nil
+		}
+	})}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/github/callback?code=github-code&state="+url.QueryEscape(state), nil)
+	req.Host = "sapicn.eterultimate.asia"
+	req.AddCookie(&http.Cookie{Name: githubStateCookieName, Value: state})
+	req.AddCookie(&http.Cookie{Name: githubTermsCookieName, Value: state})
+	rec := httptest.NewRecorder()
+
+	handleGitHubCallback(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s", rec.Code, rec.Body.String())
+	}
+	if exchangedRedirectURI != primaryApp.RedirectURL {
+		t.Fatalf("token exchange redirect_uri = %q, want %q", exchangedRedirectURI, primaryApp.RedirectURL)
+	}
+	target := browserRedirectTarget(t, rec)
+	if !strings.HasPrefix(target, "https://sapicn.eterultimate.asia/#github-auth?") || strings.Contains(target, "error=") {
+		t.Fatalf("callback target = %q, want successful sapicn github-auth redirect", target)
+	}
+	db := store.ReadDB()
+	if len(db.Users) != 1 || db.Users[0].GitHubID != "42" {
+		t.Fatalf("users = %#v, want created GitHub user", db.Users)
+	}
+}
+
 func TestPublicBaseURLUsesForwardedHostBehindProxy(t *testing.T) {
 	cfg := &config.Config{
 		PublicBaseURL: "https://sapi.eterultimate.asia",
@@ -421,6 +517,21 @@ func TestPublicBaseURLUsesForwardedHostBehindProxy(t *testing.T) {
 	}
 	if _, ok := githubOAuthAppForRequest(req, cfg); !ok {
 		t.Fatal("expected GitHub OAuth to be enabled for forwarded public host")
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
+}
+
+func jsonResponse(status int, payload interface{}) *http.Response {
+	raw, _ := json.Marshal(payload)
+	return &http.Response{
+		StatusCode: status,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(string(raw))),
 	}
 }
 

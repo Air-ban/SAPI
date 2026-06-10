@@ -152,6 +152,7 @@ type RequestLog struct {
 	ErrorMessage        string                 `json:"errorMessage"`
 	ClientGeo           *RequestClientGeo      `json:"clientGeo,omitempty"`
 	ClientIPInfo        *RequestClientIPInfo   `json:"clientIpInfo,omitempty"`
+	ClientDevice        *RequestClientDevice   `json:"clientDevice,omitempty"`
 	RequestContent      map[string]interface{} `json:"requestContent,omitempty"`
 	HasRequestContent   bool                   `json:"hasRequestContent,omitempty"`
 	Timestamp           string                 `json:"timestamp"`
@@ -164,6 +165,25 @@ type RequestClientGeo struct {
 	Source       string `json:"source,omitempty"`
 	NetworkHash  string `json:"networkHash,omitempty"`
 	NetworkScope string `json:"networkScope,omitempty"`
+}
+
+type RequestClientDevice struct {
+	UserAgent      string            `json:"userAgent,omitempty"`
+	BrowserName    string            `json:"browserName,omitempty"`
+	BrowserVersion string            `json:"browserVersion,omitempty"`
+	OSName         string            `json:"osName,omitempty"`
+	OSVersion      string            `json:"osVersion,omitempty"`
+	DeviceType     string            `json:"deviceType,omitempty"`
+	DeviceModel    string            `json:"deviceModel,omitempty"`
+	Platform       string            `json:"platform,omitempty"`
+	Architecture   string            `json:"architecture,omitempty"`
+	Bitness        string            `json:"bitness,omitempty"`
+	Mobile         bool              `json:"mobile,omitempty"`
+	Bot            bool              `json:"bot,omitempty"`
+	Languages      []string          `json:"languages,omitempty"`
+	Origin         string            `json:"origin,omitempty"`
+	Referrer       string            `json:"referrer,omitempty"`
+	Headers        map[string]string `json:"headers,omitempty"`
 }
 
 type RequestClientIPInfo struct {

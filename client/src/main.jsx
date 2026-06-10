@@ -979,7 +979,14 @@ function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <Box sx={{ display: "flex", minHeight: "100vh", bgcolor: "background.default" }}>
+      <Box
+        sx={{
+          display: "flex",
+          minHeight: "100vh",
+          bgcolor: "background.default",
+          background: (theme) => theme.palette.app.pageBg
+        }}
+      >
         <AppBar
           position="fixed"
           color="inherit"
@@ -987,9 +994,10 @@ function App() {
           sx={{
             display: { md: "none" },
             borderBottom: "1px solid",
-            borderColor: "divider",
+            borderColor: "app.glassBorder",
             bgcolor: "app.overlay",
-            backdropFilter: "blur(12px)"
+            backdropFilter: "blur(22px) saturate(1.18)",
+            boxShadow: (theme) => theme.palette.app.softShadow
           }}
         >
           <Toolbar sx={{ gap: 1 }}>
@@ -1013,8 +1021,14 @@ function App() {
               "& .MuiDrawer-paper": {
                 width: DRAWER_WIDTH,
                 border: 0,
-                bgcolor: "app.sidebarBg",
-                color: "app.sidebarText"
+                background: (theme) => theme.palette.app.sidebarBg,
+                color: "app.sidebarText",
+                boxShadow: {
+                  xs: (theme) => theme.palette.app.shadow,
+                  md: "none"
+                },
+                borderRight: "1px solid",
+                borderColor: "app.sidebarBorder"
               }
             }}
           >
@@ -1029,7 +1043,8 @@ function App() {
             minWidth: 0,
             pt: { xs: 9, md: 3 },
             px: { xs: 2, sm: 3, lg: 4 },
-            pb: 4
+            pb: 4,
+            position: "relative"
           }}
         >
           <Box sx={{ maxWidth: 1280, mx: "auto" }}>
