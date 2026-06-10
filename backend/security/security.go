@@ -180,6 +180,23 @@ func ClientIP(r *http.Request) string {
 	return "unknown"
 }
 
+func ClientIPFromHeaders(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	for _, candidate := range []string{
+		r.Header.Get("CF-Connecting-IP"),
+		r.Header.Get("True-Client-IP"),
+		r.Header.Get("X-Real-IP"),
+		firstForwardedFor(r.Header.Get("X-Forwarded-For")),
+	} {
+		if ip := normalizeIP(candidate); ip != "" {
+			return ip
+		}
+	}
+	return ""
+}
+
 func TrustsProxyHeaders(r *http.Request) bool {
 	if r == nil {
 		return false

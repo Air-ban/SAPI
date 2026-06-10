@@ -37,6 +37,7 @@ type Config struct {
 	TencentSecretKey           string
 	TurnstileSiteKey           string
 	TurnstileSecretKey         string
+	TurnstileProxy             string
 	GitHubClientID             string
 	GitHubClientSecret         string
 	GitHubRedirectURL          string
@@ -105,6 +106,7 @@ func Load() *Config {
 		TencentSecretKey:           getEnv("SAPI_TENCENT_SECRET_KEY", ""),
 		TurnstileSiteKey:           getEnv("SAPI_TURNSTILE_SITE_KEY", ""),
 		TurnstileSecretKey:         getEnv("SAPI_TURNSTILE_SECRET_KEY", ""),
+		TurnstileProxy:             getEnv("SAPI_TURNSTILE_PROXY", ""),
 		GitHubClientID:             getEnv("SAPI_GITHUB_CLIENT_ID", ""),
 		GitHubClientSecret:         getEnv("SAPI_GITHUB_CLIENT_SECRET", ""),
 		GitHubRedirectURL:          githubRedirectURL,

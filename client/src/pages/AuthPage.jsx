@@ -65,14 +65,48 @@ export function AuthPage({
   const turnstileRef = useRef(null);
   const turnstileTokenRef = useRef("");
   const turnstileWidgetIdRef = useRef(null);
+  const turnstileErrCountRef = useRef(0);
+  const turnstileErrTimerRef = useRef(null);
   const captchaEnabled = publicConfig?.captcha?.provider === "turnstile" && Boolean(publicConfig?.captcha?.enabled);
   const captchaSiteKey = publicConfig?.captcha?.siteKey || "";
 
-  const resetTurnstile = () => {
+  const doTurnstileReset = (delay) => {
     turnstileTokenRef.current = "";
-    if (turnstileWidgetIdRef.current != null && window.turnstile) {
+    if (turnstileErrTimerRef.current) clearTimeout(turnstileErrTimerRef.current);
+    if (!turnstileWidgetIdRef.current || !window.turnstile) return;
+    if (typeof delay === "number" && delay > 0) {
+      turnstileErrTimerRef.current = setTimeout(() => {
+        if (turnstileWidgetIdRef.current != null && window.turnstile) {
+          window.turnstile.reset(turnstileWidgetIdRef.current);
+        }
+      }, delay);
+    } else {
       window.turnstile.reset(turnstileWidgetIdRef.current);
     }
+  };
+
+  const handleTurnstileError = () => {
+    turnstileErrCountRef.current += 1;
+    if (turnstileErrCountRef.current > 3) {
+      if (turnstileErrTimerRef.current) clearTimeout(turnstileErrTimerRef.current);
+      turnstileErrTimerRef.current = setTimeout(() => {
+        turnstileErrCountRef.current = 0;
+        if (turnstileWidgetIdRef.current != null && window.turnstile) {
+          window.turnstile.reset(turnstileWidgetIdRef.current);
+        }
+      }, 30000);
+      return;
+    }
+    doTurnstileReset(turnstileErrCountRef.current >= 2 ? 3000 : 1000);
+  };
+
+  const handleTurnstileExpired = () => {
+    doTurnstileReset(0);
+  };
+
+  const resetTurnstile = () => {
+    turnstileErrCountRef.current = 0;
+    doTurnstileReset(0);
   };
 
   const renderTurnstile = () => {
@@ -81,11 +115,15 @@ export function AuthPage({
       if (turnstileWidgetIdRef.current != null) {
         window.turnstile.remove(turnstileWidgetIdRef.current);
       }
+      turnstileErrCountRef.current = 0;
       turnstileWidgetIdRef.current = window.turnstile.render(turnstileRef.current, {
         sitekey: captchaSiteKey,
-        callback: (token) => { turnstileTokenRef.current = token; },
-        "expired-callback": resetTurnstile,
-        "error-callback": resetTurnstile
+        callback: (token) => {
+          turnstileTokenRef.current = token;
+          turnstileErrCountRef.current = 0;
+        },
+        "expired-callback": handleTurnstileExpired,
+        "error-callback": handleTurnstileError
       });
     }
   };

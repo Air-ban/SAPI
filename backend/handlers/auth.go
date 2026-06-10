@@ -801,7 +801,11 @@ func verifyTurnstileRequest(w http.ResponseWriter, r *http.Request, body map[str
 		return true
 	}
 	token := extractTurnstileToken(body)
-	if !security.VerifyTurnstile(r.Context(), token) {
+	clientIP := security.ClientIPFromHeaders(r)
+	if clientIP == "" {
+		clientIP = security.ClientIP(r)
+	}
+	if !security.VerifyTurnstile(r.Context(), token, clientIP) {
 		utils.SendError(w, 400, "Turnstile verification failed. Please refresh and try again.", "turnstile_failed")
 		return false
 	}
