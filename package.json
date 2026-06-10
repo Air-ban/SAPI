@@ -5,7 +5,8 @@
   "description": "HanGuan's SuperAPI - a lightweight LLM API relay with admin-managed upstream APIs and user-facing API keys.",
   "scripts": {
     "build": "vite build",
-    "client:dev": "vite --host 0.0.0.0"
+    "client:dev": "vite --host 0.0.0.0",
+    "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
     "@emotion/react": "^11.13.3",

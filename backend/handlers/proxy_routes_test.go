@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -606,6 +607,89 @@ func TestWebSocketProxyForwardsImageEditMultipartRequest(t *testing.T) {
 	}
 	if !strings.Contains(resp.Body, "aW1hZ2U=") {
 		t.Fatalf("ws body = %s, want image response", resp.Body)
+	}
+}
+
+func TestWebSocketProxyFetchesExternalModels(t *testing.T) {
+	oldLookup := websocketProxyLookupIP
+	oldDoExternal := websocketProxyDoExternal
+	t.Cleanup(func() {
+		websocketProxyLookupIP = oldLookup
+		websocketProxyDoExternal = oldDoExternal
+	})
+
+	websocketProxyLookupIP = func(host string) ([]net.IP, error) {
+		if host != "api.example.com" {
+			t.Fatalf("lookup host = %q, want api.example.com", host)
+		}
+		return []net.IP{net.ParseIP("93.184.216.34")}, nil
+	}
+	websocketProxyDoExternal = func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodGet {
+			t.Fatalf("method = %q, want GET", req.Method)
+		}
+		if req.URL.String() != "https://api.example.com/v1/models?fresh=1" {
+			t.Fatalf("url = %q", req.URL.String())
+		}
+		if got := req.Header.Get("Authorization"); got != "Bearer external-key" {
+			t.Fatalf("authorization = %q", got)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"object":"list","data":[{"id":"gpt-image-1"}]}`)),
+		}, nil
+	}
+
+	source := httptest.NewRequest(http.MethodGet, "/api/ws/proxy", nil)
+	resp := executeWebSocketProxyRequest(source, websocketProxyRequest{
+		ID:     "models",
+		Method: http.MethodGet,
+		URL:    "https://api.example.com/v1/models?fresh=1",
+		Headers: map[string]string{
+			"Authorization": "Bearer external-key",
+			"Cookie":        "should-not-forward",
+		},
+	})
+
+	if resp.Type != "response" || resp.Status != http.StatusOK {
+		t.Fatalf("ws response = %#v", resp)
+	}
+	if !strings.Contains(resp.Body, "gpt-image-1") {
+		t.Fatalf("body = %s, want model list", resp.Body)
+	}
+}
+
+func TestWebSocketProxyRejectsUnsafeExternalTargets(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		url    string
+	}{
+		{name: "private ip", method: http.MethodGet, url: "https://10.0.0.8/v1/models"},
+		{name: "localhost", method: http.MethodGet, url: "https://localhost/v1/models"},
+		{name: "http scheme", method: http.MethodGet, url: "http://api.example.com/v1/models"},
+		{name: "unsupported path", method: http.MethodGet, url: "https://api.example.com/v1/files"},
+	}
+
+	oldLookup := websocketProxyLookupIP
+	t.Cleanup(func() { websocketProxyLookupIP = oldLookup })
+	websocketProxyLookupIP = func(host string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("93.184.216.34")}, nil
+	}
+
+	source := httptest.NewRequest(http.MethodGet, "/api/ws/proxy", nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := executeWebSocketProxyRequest(source, websocketProxyRequest{
+				ID:     "unsafe",
+				Method: tt.method,
+				URL:    tt.url,
+			})
+			if resp.Type != "error" || resp.Code != "invalid_request" {
+				t.Fatalf("ws response = %#v, want invalid_request error", resp)
+			}
+		})
 	}
 }
 

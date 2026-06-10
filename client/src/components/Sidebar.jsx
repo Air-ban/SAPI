@@ -21,6 +21,7 @@ import SchoolIcon from "@mui/icons-material/School";
 import SettingsIcon from "@mui/icons-material/Settings";
 import DnsIcon from "@mui/icons-material/Dns";
 import CampaignOutlinedIcon from "@mui/icons-material/CampaignOutlined";
+import ComputerIcon from "@mui/icons-material/Computer";
 import VpnKeyIcon from "@mui/icons-material/VpnKey";
 import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
 import LogoutIcon from "@mui/icons-material/Logout";
@@ -74,6 +75,7 @@ export function Sidebar({
       pages: [
         { id: "overview", icon: <AnalyticsIcon />, primary: "后台首页", secondary: "用量、用户、来源总览" },
         { id: "usage", icon: <BarChartIcon />, primary: "用量日志", secondary: "请求明细和统计" },
+        { id: "server", icon: <ComputerIcon />, primary: "服务器中控", secondary: "状态、资源、刷新" },
         { id: "users", icon: <KeyIcon />, primary: "用户和 Key", secondary: "账号、权限、限速" },
         { id: "providers", icon: <ApiIcon />, primary: "模型来源", secondary: "上游 API 和模型" },
         { id: "responses", icon: <DnsIcon />, primary: "代理入口", secondary: "端点和转发说明" },

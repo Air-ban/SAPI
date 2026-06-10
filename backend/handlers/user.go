@@ -494,7 +494,10 @@ func handleUserUsage(w http.ResponseWriter, r *http.Request) {
 	if isAdminVirtualUser(user) {
 		userID = ""
 	}
-	json.NewEncoder(w).Encode(usage.GetUsageStats(db, userID, days))
+	stats := usage.GetUsageStats(db, userID, days)
+	stats.Recent = store.RequestLogsForUserView(stats.Recent)
+	stats.RecentRequests = store.RequestLogsForUserView(stats.RecentRequests)
+	json.NewEncoder(w).Encode(stats)
 }
 
 func handleUserRequestLog(w http.ResponseWriter, r *http.Request) {
@@ -512,7 +515,8 @@ func handleUserRequestLog(w http.ResponseWriter, r *http.Request) {
 		utils.SendError(w, 404, "Request log not found.", "not_found")
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"requestLog": item})
+	safe := store.RequestLogForUserView(*item)
+	json.NewEncoder(w).Encode(map[string]interface{}{"requestLog": safe})
 }
 
 func handleUserSuggestions(w http.ResponseWriter, r *http.Request) {

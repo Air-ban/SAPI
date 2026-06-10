@@ -168,7 +168,7 @@ export function UserRow({ user, usage, subscriptionTiers = FALLBACK_TIERS, after
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = filename || `sapi-user-${user.username || user.id}-request-logs.json`;
+      link.download = filename || `sapi-user-${user.username || user.id}-request-logs.tar.gz`;
       document.body.appendChild(link);
       link.click();
       link.remove();

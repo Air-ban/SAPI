@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import {
   Box,
   Button,
+  CircularProgress,
   IconButton,
   InputAdornment,
   Stack,
@@ -14,6 +15,7 @@ import AnalyticsIcon from "@mui/icons-material/Analytics";
 import ApiIcon from "@mui/icons-material/Api";
 import BarChartIcon from "@mui/icons-material/BarChart";
 import ClearIcon from "@mui/icons-material/Clear";
+import DownloadIcon from "@mui/icons-material/Download";
 import DnsIcon from "@mui/icons-material/Dns";
 import KeyIcon from "@mui/icons-material/Key";
 import LogoutIcon from "@mui/icons-material/Logout";
@@ -41,6 +43,8 @@ import { ModelsVisibilityToggle } from "./ModelsVisibilityToggle";
 import { AnnouncementsSection } from "./AnnouncementsSection";
 import { AdminSuggestionsSection } from "./AdminSuggestionsSection";
 import { AdminPasskeysSection } from "./AdminPasskeysSection";
+import { ServerStatusSection } from "./ServerStatusSection";
+import { requestBlob } from "../utils/api";
 
 export function AdminView({
   page = "overview",
@@ -63,6 +67,7 @@ export function AdminView({
   const [providerDialogOpen, setProviderDialogOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState(null);
   const [userSearch, setUserSearch] = useState("");
+  const [globalExportLoading, setGlobalExportLoading] = useState(false);
 
   const providers = state?.providers || [];
   const users = state?.users || [];
@@ -79,12 +84,13 @@ export function AdminView({
       return username.includes(normalizedUserSearch) || email.includes(normalizedUserSearch);
     });
   }, [users, normalizedUserSearch]);
-  const currentPage = ["overview", "usage", "providers", "responses", "users", "invitations", "smtp", "announcements", "suggestions"].includes(page)
+  const currentPage = ["overview", "usage", "server", "providers", "responses", "users", "invitations", "smtp", "announcements", "suggestions"].includes(page)
     ? page
     : "overview";
   const pageMeta = {
     overview: { title: "上游 API 与用户 Key", description: "供应商、用户和用量摘要。" },
     usage: { title: "请求与用量", description: "查看全局 Token 统计和最近请求。" },
+    server: { title: "服务器中控", description: "查看 fastfetch 主机状态、Go 运行时和存储健康信息。" },
     providers: { title: "上游供应商", description: "配置模型来源、密钥和启用状态。" },
     users: { title: "用户账号", description: "管理用户 Key 和访问状态。" },
     invitations: { title: "邀请码管理", description: "创建、发送和管理邀请码。" },
@@ -94,6 +100,26 @@ export function AdminView({
   }[currentPage] || {
     title: "上游 API 与用户 Key",
     description: "供应商、用户和用量摘要。"
+  };
+
+  const downloadGlobalRequestLogs = async () => {
+    setGlobalExportLoading(true);
+    try {
+      const { blob, filename } = await requestBlob("/api/admin/request-logs/export?days=7&includeContent=true");
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename || "sapi-request-logs.tar.gz";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      onToast?.("请求日志已导出", "success");
+    } catch (error) {
+      onToast?.(error.message, "error");
+    } finally {
+      setGlobalExportLoading(false);
+    }
   };
 
   return (
@@ -137,7 +163,25 @@ export function AdminView({
         <ProviderHealthSection providers={providerHealth} />
       ) : null}
 
-      {currentPage === "usage" && usage ? <UsageSection usage={usage} onLoadRequestContent={onLoadRequestContent} /> : null}
+      {currentPage === "usage" && usage ? (
+        <Stack spacing={1.5}>
+          <Stack direction={{ xs: "column", sm: "row" }} justifyContent="flex-end" alignItems={{ xs: "stretch", sm: "center" }}>
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={globalExportLoading ? <CircularProgress size={16} /> : <DownloadIcon />}
+              onClick={downloadGlobalRequestLogs}
+              disabled={globalExportLoading}
+              sx={{ alignSelf: { xs: "stretch", sm: "flex-end" } }}
+            >
+              导出近 7 天日志
+            </Button>
+          </Stack>
+          <UsageSection usage={usage} onLoadRequestContent={onLoadRequestContent} />
+        </Stack>
+      ) : null}
+
+      {currentPage === "server" ? <ServerStatusSection onToast={onToast} /> : null}
 
       {currentPage === "responses" ? (
         <ProxySettingsSection

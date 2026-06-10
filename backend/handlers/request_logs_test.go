@@ -1,9 +1,13 @@
 package handlers
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -127,8 +131,14 @@ func TestRequestLogDetailReturnsContentWithAccessControl(t *testing.T) {
 	ownerReq.Header.Set("Authorization", "Bearer "+ownerToken)
 	ownerRec := httptest.NewRecorder()
 	mux.ServeHTTP(ownerRec, ownerReq)
-	if ownerRec.Code != http.StatusOK || !strings.Contains(ownerRec.Body.String(), "large-secret-payload") {
-		t.Fatalf("expected owner detail to include request content, got %d body=%s", ownerRec.Code, ownerRec.Body.String())
+	if ownerRec.Code != http.StatusOK {
+		t.Fatalf("expected owner detail to return 200, got %d body=%s", ownerRec.Code, ownerRec.Body.String())
+	}
+	ownerBody := ownerRec.Body.String()
+	for _, forbidden := range []string{"large-secret-payload", "requestContent", "hasRequestContent", "clientIpInfo", "clientDevice"} {
+		if strings.Contains(ownerBody, forbidden) {
+			t.Fatalf("owner detail should be privacy-sanitized and omit %q, body=%s", forbidden, ownerBody)
+		}
 	}
 
 	otherReq := httptest.NewRequest(http.MethodGet, "/api/user/request-logs/log_with_content", nil)
@@ -205,31 +215,64 @@ func TestAdminUserRequestLogsExportIncludesContent(t *testing.T) {
 	if got := rec.Header().Get("Content-Disposition"); !strings.Contains(got, "attachment") || !strings.Contains(got, "owner") {
 		t.Fatalf("unexpected content disposition %q", got)
 	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "large-secret-payload") {
-		t.Fatalf("expected export to include request content, body=%s", body)
+	if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "gzip") {
+		t.Fatalf("expected gzip export, got content-type %q", got)
 	}
 
+	entries := readTarGZEntries(t, rec.Body.Bytes())
+	if !strings.Contains(string(entries["request-logs.jsonl"]), "large-secret-payload") {
+		t.Fatalf("expected export to include request content, jsonl=%s", string(entries["request-logs.jsonl"]))
+	}
 	var payload struct {
 		RequestLogCount int `json:"requestLogCount"`
-		RequestLogs     []struct {
-			UserID         string                 `json:"userId"`
-			RequestContent map[string]interface{} `json:"requestContent"`
-		} `json:"requestLogs"`
-		User map[string]interface{} `json:"user"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+	if err := json.Unmarshal(entries["metadata.json"], &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.RequestLogCount != 1 || len(payload.RequestLogs) != 1 {
-		t.Fatalf("expected one exported log, got count=%d len=%d", payload.RequestLogCount, len(payload.RequestLogs))
+	if payload.RequestLogCount != 1 {
+		t.Fatalf("expected one exported log, got count=%d", payload.RequestLogCount)
 	}
-	if payload.RequestLogs[0].UserID != "usr_owner" || payload.RequestLogs[0].RequestContent == nil {
-		t.Fatalf("unexpected exported log %#v", payload.RequestLogs[0])
+	var exported models.RequestLog
+	if err := json.Unmarshal(bytesTrimLine(entries["request-logs.jsonl"]), &exported); err != nil {
+		t.Fatal(err)
 	}
-	if _, ok := payload.User["apiKey"]; ok {
+	if exported.UserID != "usr_owner" || exported.RequestContent == nil {
+		t.Fatalf("unexpected exported log %#v", exported)
+	}
+	if strings.Contains(string(entries["metadata.json"]), "apiKey") {
 		t.Fatal("exported user summary should not include API key material")
 	}
+}
+
+func readTarGZEntries(t *testing.T, data []byte) map[string][]byte {
+	t.Helper()
+	gz, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	entries := map[string][]byte{}
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		content, err := io.ReadAll(tr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries[header.Name] = content
+	}
+	return entries
+}
+
+func bytesTrimLine(data []byte) []byte {
+	return []byte(strings.TrimSpace(string(data)))
 }
 
 func TestFileStoreKeepsRequestContentOutOfMainState(t *testing.T) {

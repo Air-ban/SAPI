@@ -1,10 +1,13 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os/exec"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,7 +29,9 @@ func MountAdminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/state", handleDeprecatedSessionGET)
 	mux.HandleFunc("POST /api/admin/session", middleware.RequireAdmin(handleAdminSession))
 	mux.HandleFunc("GET /api/admin/usage", middleware.RequireAdmin(handleAdminUsage))
+	mux.HandleFunc("GET /api/admin/server-status", middleware.RequireAdmin(handleAdminServerStatus))
 	mux.HandleFunc("GET /api/admin/request-logs/{id}", middleware.RequireAdmin(handleAdminRequestLog))
+	mux.HandleFunc("GET /api/admin/request-logs/export", middleware.RequireAdmin(handleAdminRequestLogsExport))
 	mux.HandleFunc("GET /api/admin/smtp-config", middleware.RequireAdmin(handleAdminGetSMTP))
 	mux.HandleFunc("PUT /api/admin/smtp-config", middleware.RequireAdmin(handleAdminUpdateSMTP))
 	mux.HandleFunc("POST /api/admin/smtp-config/test", middleware.RequireAdmin(handleAdminTestSMTP))
@@ -142,6 +147,60 @@ func handleAdminRequestLog(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"requestLog": item})
 }
 
+func handleAdminServerStatus(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+	defer cancel()
+
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+	payload := map[string]interface{}{
+		"checkedAt":  time.Now().UTC().Format(time.RFC3339),
+		"goVersion":  runtime.Version(),
+		"goroutines": runtime.NumGoroutine(),
+		"memory": map[string]interface{}{
+			"allocBytes":      mem.Alloc,
+			"sysBytes":        mem.Sys,
+			"heapAllocBytes":  mem.HeapAlloc,
+			"heapInuseBytes":  mem.HeapInuse,
+			"nextGCBytes":     mem.NextGC,
+			"lastGCTimestamp": time.Unix(0, int64(mem.LastGC)).UTC().Format(time.RFC3339),
+		},
+		"store": store.Health(r.Context()),
+	}
+
+	cmd := exec.CommandContext(ctx, "fastfetch", "--format", "json")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	raw, err := cmd.Output()
+	if err != nil {
+		payload["fastfetch"] = map[string]interface{}{
+			"available": false,
+			"error":     strings.TrimSpace(stderr.String()),
+		}
+		if payload["fastfetch"].(map[string]interface{})["error"] == "" {
+			payload["fastfetch"].(map[string]interface{})["error"] = err.Error()
+		}
+		json.NewEncoder(w).Encode(payload)
+		return
+	}
+
+	var parsed interface{}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		payload["fastfetch"] = map[string]interface{}{
+			"available": false,
+			"error":     "fastfetch returned invalid JSON",
+			"raw":       string(raw),
+		}
+		json.NewEncoder(w).Encode(payload)
+		return
+	}
+	payload["fastfetch"] = map[string]interface{}{
+		"available": true,
+		"modules":   parsed,
+	}
+	json.NewEncoder(w).Encode(payload)
+}
+
 func handleAdminUserUsage(w http.ResponseWriter, r *http.Request) {
 	userID := r.PathValue("id")
 	db := store.ReadDB()
@@ -189,19 +248,58 @@ func handleAdminUserRequestLogsExport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().UTC()
-	filename := fmt.Sprintf("sapi-user-%s-request-logs-%s.json", safeExportSlug(user), now.Format("2006-01-02"))
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	filename := fmt.Sprintf("sapi-user-%s-request-logs-%s.tar.gz", safeExportSlug(user), now.Format("2006-01-02"))
+	writeRequestLogsArchiveResponse(w, filename, exportLogs, map[string]interface{}{
 		"exportedAt":      now.Format(time.RFC3339),
 		"user":            sanitizeUserExportSummary(user),
 		"days":            days,
 		"limit":           limit,
 		"includeContent":  includeContent,
 		"requestLogCount": len(exportLogs),
-		"requestLogs":     exportLogs,
 	})
+}
+
+func handleAdminRequestLogsExport(w http.ResponseWriter, r *http.Request) {
+	db := store.ReadDB()
+	days := queryInt(r, "days", 7, 1, 7)
+	limit := queryInt(r, "limit", 20000, 1, 100000)
+	includeContent := !strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("includeContent")), "false")
+	since := time.Now().UTC().AddDate(0, 0, -days)
+	logs := store.RequestLogsSince(db, since, "", limit)
+	sort.Slice(logs, func(i, j int) bool {
+		return logs[i].Timestamp < logs[j].Timestamp
+	})
+
+	exportLogs := make([]models.RequestLog, 0, len(logs))
+	for _, item := range logs {
+		if includeContent && item.ID != "" {
+			if full, found := store.FindRequestLog(item.ID, ""); found {
+				exportLogs = append(exportLogs, *full)
+				continue
+			}
+		}
+		exportLogs = append(exportLogs, item)
+	}
+
+	now := time.Now().UTC()
+	filename := fmt.Sprintf("sapi-request-logs-%s.tar.gz", now.Format("2006-01-02"))
+	writeRequestLogsArchiveResponse(w, filename, exportLogs, map[string]interface{}{
+		"exportedAt":      now.Format(time.RFC3339),
+		"scope":           "all",
+		"days":            days,
+		"limit":           limit,
+		"includeContent":  includeContent,
+		"requestLogCount": len(exportLogs),
+	})
+}
+
+func writeRequestLogsArchiveResponse(w http.ResponseWriter, filename string, logs []models.RequestLog, meta map[string]interface{}) {
+	w.Header().Set("Content-Type", "application/gzip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if err := store.WriteRequestLogsTarGZ(w, logs, meta); err != nil {
+		http.Error(w, "failed to write request log archive", http.StatusInternalServerError)
+	}
 }
 
 func handleAdminGetSMTP(w http.ResponseWriter, r *http.Request) {

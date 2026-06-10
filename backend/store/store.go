@@ -1,8 +1,10 @@
 package store
 
 import (
+	"archive/tar"
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -80,6 +82,10 @@ func RequestLogFilePath() string {
 		return filePath + ".request-logs.jsonl"
 	}
 	return strings.TrimSuffix(filePath, ext) + ".request-logs.jsonl"
+}
+
+func RequestLogArchiveDir() string {
+	return filepath.Join(filepath.Dir(RequestLogFilePath()), "request-log-archives")
 }
 
 func Now() string {
@@ -419,6 +425,23 @@ func requestLogForList(item models.RequestLog) models.RequestLog {
 	}
 	item.RequestContent = nil
 	return item
+}
+
+func RequestLogForUserView(item models.RequestLog) models.RequestLog {
+	item = requestLogForList(item)
+	item.ClientGeo = nil
+	item.ClientIPInfo = nil
+	item.ClientDevice = nil
+	item.HasRequestContent = false
+	return item
+}
+
+func RequestLogsForUserView(items []models.RequestLog) []models.RequestLog {
+	result := make([]models.RequestLog, len(items))
+	for i := range items {
+		result[i] = RequestLogForUserView(items[i])
+	}
+	return result
 }
 
 func requestLogsForMemory(items []models.RequestLog) []models.RequestLog {
@@ -984,19 +1007,24 @@ func pruneFileRequestLogsLocked(cutoff time.Time) error {
 
 	reader := bufio.NewReaderSize(input, 1024*1024)
 	writer := bufio.NewWriterSize(output, 1024*1024)
+	expired := make([]models.RequestLog, 0)
 	for {
 		line, readErr := reader.ReadBytes('\n')
 		trimmed := bytes.TrimSpace(line)
 		if len(trimmed) > 0 {
 			var item models.RequestLog
-			if jsonErr := json.Unmarshal(trimmed, &item); jsonErr == nil && requestLogAtOrAfter(item, cutoff) {
-				if _, err := writer.Write(trimmed); err != nil {
-					output.Close()
-					return err
-				}
-				if err := writer.WriteByte('\n'); err != nil {
-					output.Close()
-					return err
+			if jsonErr := json.Unmarshal(trimmed, &item); jsonErr == nil {
+				if requestLogAtOrAfter(item, cutoff) {
+					if _, err := writer.Write(trimmed); err != nil {
+						output.Close()
+						return err
+					}
+					if err := writer.WriteByte('\n'); err != nil {
+						output.Close()
+						return err
+					}
+				} else {
+					expired = append(expired, item)
 				}
 			}
 		}
@@ -1015,7 +1043,78 @@ func pruneFileRequestLogsLocked(cutoff time.Time) error {
 	if err := output.Close(); err != nil {
 		return err
 	}
+	if err := input.Close(); err != nil {
+		return err
+	}
+	if len(expired) > 0 {
+		if err := writeRequestLogArchive(expired, "expired"); err != nil {
+			log.Printf("[STORE] archive expired request logs failed: %v", err)
+		}
+	}
 	return os.Rename(tempFile, filePath)
+}
+
+func WriteRequestLogsTarGZ(w io.Writer, logs []models.RequestLog, meta map[string]interface{}) error {
+	gz := gzip.NewWriter(w)
+	defer gz.Close()
+	tw := tar.NewWriter(gz)
+	defer tw.Close()
+
+	if meta == nil {
+		meta = map[string]interface{}{}
+	}
+	meta["requestLogCount"] = len(logs)
+	metaRaw, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := writeTarFile(tw, "metadata.json", metaRaw); err != nil {
+		return err
+	}
+
+	var jsonl bytes.Buffer
+	enc := json.NewEncoder(&jsonl)
+	for _, item := range logs {
+		if err := enc.Encode(item); err != nil {
+			return err
+		}
+	}
+	return writeTarFile(tw, "request-logs.jsonl", jsonl.Bytes())
+}
+
+func writeRequestLogArchive(logs []models.RequestLog, reason string) error {
+	if len(logs) == 0 {
+		return nil
+	}
+	archiveDir := RequestLogArchiveDir()
+	if err := os.MkdirAll(archiveDir, 0755); err != nil {
+		return err
+	}
+	name := fmt.Sprintf("sapi-request-logs-%s-%s.tar.gz", reason, time.Now().UTC().Format("20060102-150405"))
+	path := filepath.Join(archiveDir, name)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return WriteRequestLogsTarGZ(f, logs, map[string]interface{}{
+		"archivedAt": time.Now().UTC().Format(time.RFC3339),
+		"reason":     reason,
+	})
+}
+
+func writeTarFile(tw *tar.Writer, name string, data []byte) error {
+	header := &tar.Header{
+		Name:    name,
+		Mode:    0644,
+		Size:    int64(len(data)),
+		ModTime: time.Now().UTC(),
+	}
+	if err := tw.WriteHeader(header); err != nil {
+		return err
+	}
+	_, err := tw.Write(data)
+	return err
 }
 
 func requestLogAtOrAfter(item models.RequestLog, cutoff time.Time) bool {

@@ -48,14 +48,15 @@ const tableScrollSx = {
   }
 };
 
-export function UsageSection({ usage, onLoadRequestContent }) {
+export function UsageSection({ usage, onLoadRequestContent, privacyMode = false }) {
   if (!usage) return null;
   const hasData = usage.requests > 0;
   const recentRequests = usage.recentRequests || usage.recent || [];
   const showUserColumn = recentRequests.some((request) => request.userName || request.username || request.userId);
   const showKeyColumn = recentRequests.some((request) => request.apiKeyName || request.apiKeyPreview || request.apiKeyId);
-  const showIPInfoColumn = recentRequests.some((request) => request.clientIpInfo?.ip || request.clientIpInfo?.lookupStatus);
-  const showDeviceColumn = recentRequests.some((request) => request.clientDevice?.userAgent || request.clientDevice?.browserName || request.clientDevice?.platform);
+  const showIPInfoColumn = !privacyMode && recentRequests.some((request) => request.clientIpInfo?.ip || request.clientIpInfo?.lookupStatus);
+  const showDeviceColumn = !privacyMode && recentRequests.some((request) => request.clientDevice?.userAgent || request.clientDevice?.browserName || request.clientDevice?.platform);
+  const showRequestContentColumn = !privacyMode;
 
   return (
     <Section title="Token 用量统计（近 30 天）" icon={<BarChartIcon />}>
@@ -200,7 +201,7 @@ export function UsageSection({ usage, onLoadRequestContent }) {
                 最近请求记录
               </Typography>
               <TableContainer sx={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-                <Table size="small" sx={{ minWidth: showUserColumn || showKeyColumn || showIPInfoColumn || showDeviceColumn ? 1480 : 960 }}>
+                <Table size="small" sx={{ minWidth: showUserColumn || showKeyColumn || showIPInfoColumn || showDeviceColumn || showRequestContentColumn ? 1480 : 960 }}>
                   <TableHead>
                     <TableRow>
                       <TableCell>时间</TableCell>
@@ -217,7 +218,7 @@ export function UsageSection({ usage, onLoadRequestContent }) {
                       <TableCell align="right">缓存写入</TableCell>
                       <TableCell align="right">总 Tokens</TableCell>
                       <TableCell align="right">耗时</TableCell>
-                      <TableCell>请求 JSON</TableCell>
+                      {showRequestContentColumn ? <TableCell>请求 JSON</TableCell> : null}
                       </TableRow>
                     </TableHead>
                     <TableBody>
@@ -229,7 +230,8 @@ export function UsageSection({ usage, onLoadRequestContent }) {
                           showKeyColumn={showKeyColumn}
                           showIPInfoColumn={showIPInfoColumn}
                           showDeviceColumn={showDeviceColumn}
-                          onLoadRequestContent={onLoadRequestContent}
+                          showRequestContentColumn={showRequestContentColumn}
+                          onLoadRequestContent={privacyMode ? undefined : onLoadRequestContent}
                         />
                       ))}
                     </TableBody>
@@ -272,7 +274,15 @@ function StatsAccordion({ title, count, children }) {
   );
 }
 
-function RecentRequestRow({ request, showUserColumn, showKeyColumn, showIPInfoColumn, showDeviceColumn, onLoadRequestContent }) {
+function RecentRequestRow({
+  request,
+  showUserColumn,
+  showKeyColumn,
+  showIPInfoColumn,
+  showDeviceColumn,
+  showRequestContentColumn,
+  onLoadRequestContent
+}) {
   const [open, setOpen] = React.useState(false);
   const [requestContent, setRequestContent] = React.useState(request.requestContent || null);
   const [loading, setLoading] = React.useState(false);
@@ -363,21 +373,23 @@ function RecentRequestRow({ request, showUserColumn, showKeyColumn, showIPInfoCo
         <TableCell align="right">{formatNumber(request.cacheCreationTokens)}</TableCell>
         <TableCell align="right">{formatNumber(request.totalTokens)}</TableCell>
         <TableCell align="right">{formatDuration(request.durationMs)}</TableCell>
-        <TableCell>
-          {hasRequestJson || canLoadRequestJson ? (
-            <Button size="small" variant="outlined" onClick={handleToggleRequestJson} disabled={loading}>
-              {open ? "收起" : "查看"}
-            </Button>
-          ) : error ? (
-            <Typography variant="body2" color="error" title={error}>加载失败</Typography>
-          ) : (
-            <Typography variant="body2" color="text.secondary">-</Typography>
-          )}
-        </TableCell>
+        {showRequestContentColumn ? (
+          <TableCell>
+            {hasRequestJson || canLoadRequestJson ? (
+              <Button size="small" variant="outlined" onClick={handleToggleRequestJson} disabled={loading}>
+                {open ? "收起" : "查看"}
+              </Button>
+            ) : error ? (
+              <Typography variant="body2" color="error" title={error}>加载失败</Typography>
+            ) : (
+              <Typography variant="body2" color="text.secondary">-</Typography>
+            )}
+          </TableCell>
+        ) : null}
       </TableRow>
-      {hasRequestJson || error ? (
+      {showRequestContentColumn && (hasRequestJson || error) ? (
         <TableRow>
-          <TableCell colSpan={11 + (showUserColumn ? 1 : 0) + (showKeyColumn ? 1 : 0) + (showIPInfoColumn ? 1 : 0) + (showDeviceColumn ? 1 : 0)} sx={{ p: 0, borderBottom: open ? undefined : 0 }}>
+          <TableCell colSpan={10 + (showRequestContentColumn ? 1 : 0) + (showUserColumn ? 1 : 0) + (showKeyColumn ? 1 : 0) + (showIPInfoColumn ? 1 : 0) + (showDeviceColumn ? 1 : 0)} sx={{ p: 0, borderBottom: open ? undefined : 0 }}>
             <Collapse in={open || Boolean(error)} timeout="auto" unmountOnExit>
               <Box
                 component={error ? "div" : "pre"}

@@ -9,7 +9,7 @@ function makeAbortError() {
   return error;
 }
 
-export function wsProxyRequest({ path, method = "POST", headers = {}, body = null, form = null, signal } = {}) {
+export function wsProxyRequest({ path, url = "", method = "POST", headers = {}, body = null, form = null, signal } = {}) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(makeAbortError());
@@ -56,6 +56,7 @@ export function wsProxyRequest({ path, method = "POST", headers = {}, body = nul
         id,
         method,
         path,
+        url,
         headers,
         body,
         form

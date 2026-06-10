@@ -30,14 +30,14 @@ import DownloadIcon from "@mui/icons-material/Download";
 import HtmlIcon from "@mui/icons-material/Html";
 import ImageIcon from "@mui/icons-material/Image";
 import InsertDriveFileIcon from "@mui/icons-material/InsertDriveFile";
+import RefreshIcon from "@mui/icons-material/Refresh";
 import SendIcon from "@mui/icons-material/Send";
 import StopCircleIcon from "@mui/icons-material/StopCircle";
 import TextSnippetIcon from "@mui/icons-material/TextSnippet";
 import VideocamIcon from "@mui/icons-material/Videocam";
 import { marked } from "marked";
 import { EmptyState } from "../components/EmptyState";
-import { normalizeModelFrontend } from "../utils/helpers";
-import { wsProxyRequest } from "../utils/wsProxy";
+import { openAICompatRequest, useOpenAIModelCatalog } from "../utils/openaiCompat";
 
 const MAX_ATTACHMENTS = 6;
 const MAX_TEXT_BYTES = 2 * 1024 * 1024;
@@ -808,7 +808,10 @@ export function ChatSection({ config, apiKeys = [], selectedKey = "", onToast, o
   const fileInputRef = useRef(null);
   const abortRef = useRef(null);
   const objectUrlsRef = useRef(new Set());
+  const [apiSource, setApiSource] = useState("sapi");
   const [apiKeyValue, setApiKeyValue] = useState("");
+  const [customBaseURL, setCustomBaseURL] = useState("https://api.openai.com");
+  const [customAPIKey, setCustomAPIKey] = useState("");
   const [model, setModel] = useState("");
   const [mode, setMode] = useState("text");
   const [schemaDraft, setSchemaDraft] = useState(DEFAULT_JSON_SCHEMA);
@@ -818,15 +821,20 @@ export function ChatSection({ config, apiKeys = [], selectedKey = "", onToast, o
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  const modelOptions = useMemo(
-    () => (config?.models || []).map(normalizeModelFrontend).filter((item) => item.id),
-    [config?.models]
-  );
   const selectedKeyRecord = useMemo(
     () => apiKeys.find((item) => (item.id || item.key) === apiKeyValue) || null,
     [apiKeys, apiKeyValue]
   );
+  const catalog = useOpenAIModelCatalog({
+    config,
+    sourceType: apiSource === "custom" ? "custom" : "sapi",
+    localKeyRecord: selectedKeyRecord,
+    customBaseURL,
+    customAPIKey
+  });
   const availableModels = useMemo(() => {
+    const modelOptions = catalog.models || [];
+    if (apiSource === "custom") return modelOptions;
     const allowed = selectedKeyRecord?.allowedModels || [];
     if (!allowed.length) return modelOptions;
     const allowedSet = new Set(allowed);
@@ -839,7 +847,7 @@ export function ChatSection({ config, apiKeys = [], selectedKey = "", onToast, o
       return false;
     });
     return filtered.length ? filtered : modelOptions;
-  }, [modelOptions, selectedKeyRecord]);
+  }, [apiSource, catalog.models, selectedKeyRecord]);
 
   useEffect(() => {
     if (!apiKeys.length) {
@@ -855,11 +863,7 @@ export function ChatSection({ config, apiKeys = [], selectedKey = "", onToast, o
   }, [apiKeys, apiKeyValue, selectedKey]);
 
   useEffect(() => {
-    if (!availableModels.length) {
-      setModel("");
-      return;
-    }
-    if (!availableModels.some((item) => item.id === model)) {
+    if (availableModels.length && !availableModels.some((item) => item.id === model)) {
       setModel(availableModels[0].id);
     }
   }, [availableModels, model]);
@@ -965,14 +969,19 @@ export function ChatSection({ config, apiKeys = [], selectedKey = "", onToast, o
   };
 
   const submit = async () => {
-    const key = selectedKeyRecord?.key || "";
+    const sourceType = apiSource === "custom" ? "custom" : "sapi";
+    const key = sourceType === "custom" ? customAPIKey.trim() : selectedKeyRecord?.key || "";
     const trimmed = prompt.trim();
     if (!key) {
-      onToast?.("请先创建或选择 API Key", "warning");
+      onToast?.(sourceType === "custom" ? "请输入自有 API Key" : "请先创建或选择 API Key", "warning");
       return;
     }
-    if (selectedKeyRecord?.enabled === false) {
+    if (sourceType !== "custom" && selectedKeyRecord?.enabled === false) {
       onToast?.("当前 API Key 已停用", "warning");
+      return;
+    }
+    if (sourceType === "custom" && !catalog.baseURL) {
+      onToast?.("请输入自有 API Base URL", "warning");
       return;
     }
     if (!model) {
@@ -1018,12 +1027,14 @@ export function ChatSection({ config, apiKeys = [], selectedKey = "", onToast, o
     abortRef.current = controller;
     try {
       const requestBody = buildResponseRequest({ model, input, mode, schemaDraft, functionDraft });
-      const response = await wsProxyRequest({
+      const response = await openAICompatRequest({
+        sourceType,
+        baseURL: catalog.baseURL,
         path: "/responses",
         method: "POST",
+        apiKey: key,
         signal: controller.signal,
         headers: {
-          "Authorization": `Bearer ${key}`,
           "Accept": "application/json",
           "Cache-Control": "no-store",
           "Pragma": "no-cache"
@@ -1084,7 +1095,10 @@ export function ChatSection({ config, apiKeys = [], selectedKey = "", onToast, o
     }
   };
 
-  const canSubmit = !loading && Boolean(selectedKeyRecord?.key) && selectedKeyRecord?.enabled !== false && Boolean(model);
+  const currentKeyReady = apiSource === "custom"
+    ? Boolean(customBaseURL.trim() && customAPIKey.trim())
+    : Boolean(selectedKeyRecord?.key) && selectedKeyRecord?.enabled !== false;
+  const canSubmit = !loading && currentKeyReady && Boolean(model);
 
   return (
     <Box
@@ -1115,36 +1129,96 @@ export function ChatSection({ config, apiKeys = [], selectedKey = "", onToast, o
           </Stack>
 
           <FormControl size="small" fullWidth>
-            <InputLabel id="chat-key-label">API Key</InputLabel>
+            <InputLabel id="chat-api-source-label">API</InputLabel>
             <Select
-              labelId="chat-key-label"
-              label="API Key"
-              value={apiKeyValue}
-              onChange={(event) => setApiKeyValue(event.target.value)}
+              labelId="chat-api-source-label"
+              label="API"
+              value={apiSource}
+              onChange={(event) => {
+                setApiSource(event.target.value);
+                setModel("");
+              }}
             >
-              {apiKeys.map((key) => (
-                <MenuItem key={key.id || key.key} value={key.id || key.key}>
-                  {key.name || "API Key"} · {key.preview || key.key?.slice(0, 12) || "-"}{key.enabled === false ? " · 停用" : ""}
-                </MenuItem>
-              ))}
+              <MenuItem value="sapi">SAPI Key</MenuItem>
+              <MenuItem value="custom">自有 API</MenuItem>
             </Select>
           </FormControl>
 
-          <FormControl size="small" fullWidth>
-            <InputLabel id="chat-model-label">模型</InputLabel>
-            <Select
-              labelId="chat-model-label"
-              label="模型"
-              value={model}
-              onChange={(event) => setModel(event.target.value)}
-            >
-              {availableModels.map((item) => (
-                <MenuItem key={item.id} value={item.id}>
-                  {item.name || item.id}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
+          {apiSource === "custom" ? (
+            <Stack spacing={1}>
+              <TextField
+                label="Base URL"
+                size="small"
+                value={customBaseURL}
+                onChange={(event) => setCustomBaseURL(event.target.value)}
+                fullWidth
+              />
+              <TextField
+                label="API Key"
+                size="small"
+                type="password"
+                value={customAPIKey}
+                onChange={(event) => setCustomAPIKey(event.target.value)}
+                fullWidth
+                autoComplete="off"
+              />
+            </Stack>
+          ) : (
+            <FormControl size="small" fullWidth>
+              <InputLabel id="chat-key-label">API Key</InputLabel>
+              <Select
+                labelId="chat-key-label"
+                label="API Key"
+                value={apiKeyValue}
+                onChange={(event) => setApiKeyValue(event.target.value)}
+              >
+                {apiKeys.map((key) => (
+                  <MenuItem key={key.id || key.key} value={key.id || key.key}>
+                    {key.name || "API Key"} · {key.preview || key.key?.slice(0, 12) || "-"}{key.enabled === false ? " · 停用" : ""}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          )}
+
+          <Stack direction="row" spacing={1} alignItems="center">
+            {availableModels.length ? (
+              <FormControl size="small" fullWidth>
+                <InputLabel id="chat-model-label">模型</InputLabel>
+                <Select
+                  labelId="chat-model-label"
+                  label="模型"
+                  value={model}
+                  onChange={(event) => setModel(event.target.value)}
+                >
+                  {availableModels.map((item) => (
+                    <MenuItem key={item.id} value={item.id}>
+                      {item.name || item.id}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            ) : (
+              <TextField
+                label="模型"
+                size="small"
+                value={model}
+                onChange={(event) => setModel(event.target.value)}
+                fullWidth
+              />
+            )}
+            <Tooltip title="刷新模型">
+              <span>
+                <IconButton
+                  size="small"
+                  disabled={catalog.loading || !currentKeyReady}
+                  onClick={catalog.refresh}
+                >
+                  {catalog.loading ? <CircularProgress size={18} /> : <RefreshIcon fontSize="small" />}
+                </IconButton>
+              </span>
+            </Tooltip>
+          </Stack>
 
           <FormControl size="small" fullWidth>
             <InputLabel id="chat-mode-label">能力</InputLabel>
@@ -1235,8 +1309,9 @@ export function ChatSection({ config, apiKeys = [], selectedKey = "", onToast, o
             </Tooltip>
           </Stack>
 
-          {!apiKeys.length ? <Alert severity="info">当前账号还没有 API Key。</Alert> : null}
-          {selectedKeyRecord?.enabled === false ? <Alert severity="warning">当前 API Key 已停用。</Alert> : null}
+          {catalog.error ? <Alert severity="warning">{catalog.error}</Alert> : null}
+          {apiSource !== "custom" && !apiKeys.length ? <Alert severity="info">当前账号还没有 API Key。</Alert> : null}
+          {apiSource !== "custom" && selectedKeyRecord?.enabled === false ? <Alert severity="warning">当前 API Key 已停用。</Alert> : null}
 
           {attachments.length ? (
             <Stack spacing={1}>

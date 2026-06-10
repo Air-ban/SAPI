@@ -44,6 +44,7 @@ import { UserSuggestionSection } from "../user/UserSuggestionSection";
 import { TokenUsageChart } from "../user/TokenUsageChart";
 import { ChatSection } from "../user/ChatSection";
 import { ImagePlaygroundSection } from "../user/ImagePlaygroundSection";
+import { BaseUrlLatencySection } from "../user/BaseUrlLatencySection";
 
 const CLI_TOOLS = [
   { id: "codex", name: "Codex" },
@@ -155,6 +156,10 @@ export function PortalView({
         <Metric icon={<ApiIcon />} label="可用模型" value={effectiveConfig.models.length} />
         <Metric icon={<KeyIcon />} label="端点数量" value={effectiveConfig.endpoints.length} />
       </Box>
+      ) : null}
+
+      {currentPage === "overview" ? (
+        <BaseUrlLatencySection baseUrl={effectiveConfig.baseUrl} onCopy={onCopy} />
       ) : null}
 
       {currentPage === "overview" && AnnouncementTimeline && announcements.length > 0 ? (
@@ -360,7 +365,7 @@ export function PortalView({
       ) : null}
 
       {currentPage === "usage" && usage ? (
-        <UsageSection usage={usage} onLoadRequestContent={onLoadRequestContent} />
+        <UsageSection usage={usage} onLoadRequestContent={onLoadRequestContent} privacyMode />
       ) : null}
 
       {currentPage === "chat" ? (

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -478,8 +479,75 @@ func prunePostgresRequestLogs(ctx context.Context, cutoff time.Time) error {
 	if pgPool == nil {
 		return nil
 	}
+	if logs, err := queryPostgresRequestLogsBefore(ctx, cutoff, 50000); err == nil && len(logs) > 0 {
+		if archiveErr := writeRequestLogArchive(logs, "postgres-expired"); archiveErr != nil {
+			log.Printf("[STORE] archive postgres request logs failed: %v", archiveErr)
+		}
+	} else if err != nil {
+		log.Printf("[STORE] query expired postgres request logs failed: %v", err)
+	}
 	_, err := pgPool.Exec(ctx, `DELETE FROM sapi_request_logs WHERE timestamp < $1`, cutoff)
 	return err
+}
+
+func queryPostgresRequestLogsBefore(ctx context.Context, cutoff time.Time, limit int) ([]models.RequestLog, error) {
+	if pgPool == nil {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 50000
+	}
+
+	query := `
+SELECT id, user_id, user_name, username, api_key_id, api_key_name, api_key_preview,
+  provider_id, provider_name, model, upstream_model, endpoint, method, status,
+  ok, stream, duration_ms, prompt_tokens, completion_tokens, total_tokens,
+  cached_tokens, cache_creation_tokens, cache_miss_tokens, reasoning_tokens,
+  error_code, error_message, client_ip_info, client_device, request_content, timestamp
+FROM sapi_request_logs
+WHERE timestamp < $1
+ORDER BY timestamp ASC
+LIMIT `
+	query += fmt.Sprintf("%d", limit)
+
+	rows, err := pgPool.Query(ctx, query, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]models.RequestLog, 0)
+	for rows.Next() {
+		var item models.RequestLog
+		var ts time.Time
+		var clientIPInfoRaw []byte
+		var clientDeviceRaw []byte
+		var requestContentRaw []byte
+		if err := rows.Scan(
+			&item.ID, &item.UserID, &item.UserName, &item.Username, &item.APIKeyID, &item.APIKeyName, &item.APIKeyPreview,
+			&item.ProviderID, &item.ProviderName, &item.Model, &item.UpstreamModel, &item.Endpoint, &item.Method, &item.Status,
+			&item.OK, &item.Stream, &item.DurationMs, &item.PromptTokens, &item.CompletionTokens, &item.TotalTokens,
+			&item.CachedTokens, &item.CacheCreationTokens, &item.CacheMissTokens, &item.ReasoningTokens,
+			&item.ErrorCode, &item.ErrorMessage, &clientIPInfoRaw, &clientDeviceRaw, &requestContentRaw, &ts,
+		); err != nil {
+			return nil, err
+		}
+		if len(requestContentRaw) > 0 {
+			_ = json.Unmarshal(requestContentRaw, &item.RequestContent)
+		}
+		if len(clientIPInfoRaw) > 0 && string(clientIPInfoRaw) != "{}" {
+			_ = json.Unmarshal(clientIPInfoRaw, &item.ClientIPInfo)
+		}
+		if len(clientDeviceRaw) > 0 && string(clientDeviceRaw) != "{}" {
+			_ = json.Unmarshal(clientDeviceRaw, &item.ClientDevice)
+		}
+		if requestLogHasContent(item) {
+			item.HasRequestContent = true
+		}
+		item.Timestamp = ts.UTC().Format(time.RFC3339)
+		result = append(result, item)
+	}
+	return result, rows.Err()
 }
 
 func queryPostgresRequestLogs(ctx context.Context, since time.Time, userID string, limit int) ([]models.RequestLog, error) {
