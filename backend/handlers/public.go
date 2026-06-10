@@ -458,7 +458,7 @@ func availableModelsForKey(db *models.Database, apiKeyRecord *models.APIKeyRecor
 		if !p.Enabled {
 			continue
 		}
-		if db.ShowOnlyAvailableModels && !collapse && (p.HealthStatus != "healthy" || !proxy.IsProviderAvailableForFailover(p)) {
+		if db.ShowOnlyAvailableModels && !collapse && !proxy.IsProviderAvailableForFailover(p) {
 			continue
 		}
 		for _, m := range p.Models {

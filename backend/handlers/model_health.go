@@ -185,17 +185,17 @@ func addProviderAvailability(item *modelAvailabilityItem, provider models.Provid
 	failoverReady := proxy.IsProviderAvailableForFailover(provider)
 	if failoverReady {
 		item.FailoverReadyProviders++
+		item.AvailableProviders++
+		item.AvailableProviderNames = appendUniqueString(item.AvailableProviderNames, provider.Name)
 	}
 
 	if status == "healthy" && failoverReady {
 		item.HealthyProviders++
-		item.AvailableProviders++
-		item.AvailableProviderNames = appendUniqueString(item.AvailableProviderNames, provider.Name)
 	} else if status == "degraded" && failoverReady {
 		item.DegradedProviders++
-		item.AvailableProviders++
 		item.DegradedProviderNames = appendUniqueString(item.DegradedProviderNames, provider.Name)
-	} else {
+	}
+	if !failoverReady {
 		item.UnavailableProviderNames = appendUniqueString(item.UnavailableProviderNames, provider.Name)
 	}
 
@@ -234,7 +234,7 @@ func finalizeModelAvailability(item *modelAvailabilityItem) {
 		item.HealthStatus = "down"
 		return
 	}
-	if item.HealthyProviders > 0 && item.AvailableProviders == item.Providers && item.FailoverReadyProviders == item.Providers {
+	if item.HealthyProviders == item.Providers && item.FailoverReadyProviders == item.Providers {
 		item.HealthStatus = "healthy"
 		return
 	}

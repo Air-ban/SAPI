@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"sapi/models"
+	"sapi/proxy"
 	"sapi/store"
 )
 
@@ -103,12 +104,61 @@ func TestBuildModelAvailabilityPrefixesProviders(t *testing.T) {
 	if healthy.Latency != 100 || healthy.Ping != 80 || healthy.Availability7d != 99 {
 		t.Fatalf("healthy metrics = latency:%d ping:%d availability:%f", healthy.Latency, healthy.Ping, healthy.Availability7d)
 	}
-	down := byID["down/chat-main"]
-	if down.HealthStatus != "down" || down.Providers != 1 || down.AvailableProviders != 0 {
-		t.Fatalf("down item = %#v", down)
+	degraded := byID["down/chat-main"]
+	if degraded.HealthStatus != "degraded" || degraded.Providers != 1 || degraded.AvailableProviders != 1 {
+		t.Fatalf("degraded item = %#v", degraded)
 	}
 	if payload["ttlSeconds"] != 300 {
 		t.Fatalf("ttlSeconds = %#v, want 300", payload["ttlSeconds"])
+	}
+}
+
+func TestAvailableModelsKeepsRoutableProviderWhenHealthProbeIsDown(t *testing.T) {
+	db := &models.Database{
+		ShowOnlyAvailableModels: true,
+		Providers: []models.Provider{{
+			ID:                "prv_probe_down_visible",
+			Name:              "Probe Down Visible",
+			Models:            []models.Model{{ID: "chat-live", Name: "Chat Live"}},
+			ModelMappings:     map[string]string{"public-live": "chat-live"},
+			Enabled:           true,
+			HealthStatus:      "down",
+			FailoverThreshold: 3,
+		}},
+	}
+
+	modelsList := availableModelsForKey(db, nil, nil)
+	ids := map[string]bool{}
+	for _, model := range modelsList {
+		ids[model.ID] = true
+	}
+
+	for _, want := range []string{"probe-down-visible/chat-live", "probe-down-visible/public-live"} {
+		if !ids[want] {
+			t.Fatalf("models = %#v, missing %q", modelsList, want)
+		}
+	}
+}
+
+func TestAvailableModelsHidesProviderAfterFailoverExcludesIt(t *testing.T) {
+	providerID := "prv_failover_excluded_models_test"
+	proxy.RecordProviderFailure(providerID)
+
+	db := &models.Database{
+		ShowOnlyAvailableModels: true,
+		Providers: []models.Provider{{
+			ID:                providerID,
+			Name:              "Failover Excluded",
+			Models:            []models.Model{{ID: "chat-hidden", Name: "Chat Hidden"}},
+			ModelMappings:     map[string]string{},
+			Enabled:           true,
+			HealthStatus:      "healthy",
+			FailoverThreshold: 1,
+		}},
+	}
+
+	if modelsList := availableModelsForKey(db, nil, nil); len(modelsList) != 0 {
+		t.Fatalf("models = %#v, want hidden after failover exclusion", modelsList)
 	}
 }
 

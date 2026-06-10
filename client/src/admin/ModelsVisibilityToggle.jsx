@@ -32,7 +32,7 @@ export function ModelsVisibilityToggle({ showOnlyAvailableModels, afterChange, o
     <Section title="模型可见性" icon={<VisibilityIcon />}>
       <Stack spacing={1.5}>
         <Typography variant="body2" color="text.secondary">
-          开启后，用户的 /v1/models 接口及模型选择列表仅显示健康检查正常的供应商模型。
+          开启后，用户的 /v1/models 接口及模型选择列表仅显示仍会被代理路由尝试的模型；健康探测异常但尚未触发故障转移排除的模型不会被误隐藏。
         </Typography>
         <FormControlLabel
           control={
@@ -42,7 +42,7 @@ export function ModelsVisibilityToggle({ showOnlyAvailableModels, afterChange, o
               disabled={loading}
             />
           }
-          label={checked ? "仅显示可用模型" : "显示所有模型"}
+          label={checked ? "仅显示可路由模型" : "显示所有模型"}
         />
       </Stack>
     </Section>
