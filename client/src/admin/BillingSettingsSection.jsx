@@ -130,9 +130,11 @@ export function BillingSettingsSection({
   useEffect(() => {
     setPaymentForm({
       enabled: Boolean(paymentConfig?.enabled),
-      gatewayUrl: paymentConfig?.gatewayUrl || "https://www.ezfpy.cn/mapi.php",
+      gatewayUrl: paymentConfig?.gatewayUrl || "https://www.ezfpy.cn/submit.php",
+      mapiUrl: paymentConfig?.mapiUrl || "https://www.ezfpy.cn/mapi.php",
       merchantId: paymentConfig?.merchantId || "",
       merchantKey: "",
+      softwareKey: "",
       siteName: paymentConfig?.siteName || "SAPI",
       notifyUrl: paymentConfig?.notifyUrl || "",
       returnUrl: paymentConfig?.returnUrl || "",
@@ -226,7 +228,7 @@ export function BillingSettingsSection({
         body: paymentForm
       });
       await afterChange("易支付配置已保存", { refreshPublicConfig: true });
-      setPaymentForm((current) => ({ ...current, merchantKey: "" }));
+      setPaymentForm((current) => ({ ...current, merchantKey: "", softwareKey: "" }));
     } catch (error) {
       onToast?.(error.message, "error");
     } finally {
@@ -486,7 +488,8 @@ export function BillingSettingsSection({
         <Stack spacing={1.5}>
           <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: "wrap" }}>
             <Chip color={paymentConfig?.enabled ? "success" : "default"} variant="outlined" label={paymentConfig?.enabled ? "已开启" : "未开启"} />
-            <Chip variant="outlined" label={paymentConfig?.hasKey ? "商户 Key 已保存" : "未保存商户 Key"} />
+            <Chip variant="outlined" label={paymentConfig?.hasKey ? "商户密钥已保存" : "未保存商户密钥"} />
+            <Chip variant="outlined" label={paymentConfig?.hasSoftwareKey ? "软件通讯密钥已保存" : "未保存软件通讯密钥"} />
             <Chip variant="outlined" label={`待支付 ${pendingOrders.length}`} />
             <Chip variant="outlined" label={`已支付 ${paidOrders.length}`} />
           </Stack>
@@ -500,14 +503,32 @@ export function BillingSettingsSection({
               <MenuItem value="on">开启</MenuItem>
               <MenuItem value="off">关闭</MenuItem>
             </TextField>
-            <TextField label="网关 URL" value={paymentForm.gatewayUrl || ""} onChange={(event) => setPaymentForm((current) => ({ ...current, gatewayUrl: event.target.value }))} />
+            <TextField
+              label="Submit 提交 URL"
+              value={paymentForm.gatewayUrl || ""}
+              onChange={(event) => setPaymentForm((current) => ({ ...current, gatewayUrl: event.target.value }))}
+              helperText="表单提交并自动跳转，默认 https://www.ezfpy.cn/submit.php"
+            />
+            <TextField
+              label="MAPI 提交 URL"
+              value={paymentForm.mapiUrl || ""}
+              onChange={(event) => setPaymentForm((current) => ({ ...current, mapiUrl: event.target.value }))}
+              helperText="API 调用返回 JSON，默认 https://www.ezfpy.cn/mapi.php"
+            />
             <TextField label="商户 ID" value={paymentForm.merchantId || ""} onChange={(event) => setPaymentForm((current) => ({ ...current, merchantId: event.target.value }))} />
             <TextField
-              label="商户 Key"
+              label="商户密钥"
               type="password"
               value={paymentForm.merchantKey || ""}
               onChange={(event) => setPaymentForm((current) => ({ ...current, merchantKey: event.target.value }))}
-              helperText={paymentConfig?.hasKey ? "留空会保留已保存的 Key" : "首次开启支付时必须填写"}
+              helperText={paymentConfig?.hasKey ? "留空会保留已保存的商户密钥" : "首次开启支付时必须填写"}
+            />
+            <TextField
+              label="软件通讯密钥"
+              type="password"
+              value={paymentForm.softwareKey || ""}
+              onChange={(event) => setPaymentForm((current) => ({ ...current, softwareKey: event.target.value }))}
+              helperText={paymentConfig?.hasSoftwareKey ? "留空会保留已保存的软件通讯密钥" : "如易支付后台提供该项，请一并填写"}
             />
             <TextField label="站点名称" value={paymentForm.siteName || ""} onChange={(event) => setPaymentForm((current) => ({ ...current, siteName: event.target.value }))} />
             <TextField label="Notify URL" value={paymentForm.notifyUrl || ""} onChange={(event) => setPaymentForm((current) => ({ ...current, notifyUrl: event.target.value }))} />

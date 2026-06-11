@@ -248,7 +248,7 @@ curl -X PUT http://localhost:3000/api/admin/model-prices \
 curl -X PUT http://localhost:3000/api/admin/payment-config \
   -H "Authorization: Bearer <admin-jwt>" \
   -H "Content-Type: application/json" \
-  -d '{"enabled":true,"gatewayUrl":"https://www.ezfpy.cn/mapi.php","merchantId":"1000","merchantKey":"secret","siteName":"SAPI","notifyUrl":"https://sapi.example.com/api/payments/ezfpy/notify","returnUrl":"https://sapi.example.com/api/payments/ezfpy/return","allowedTypes":["alipay","wxpay"]}'
+  -d '{"enabled":true,"gatewayUrl":"https://www.ezfpy.cn/submit.php","mapiUrl":"https://www.ezfpy.cn/mapi.php","merchantId":"1000","merchantKey":"merchant-secret","softwareKey":"software-secret","siteName":"SAPI","notifyUrl":"https://sapi.example.com/api/payments/ezfpy/notify","returnUrl":"https://sapi.example.com/api/payments/ezfpy/return","allowedTypes":["alipay","wxpay"]}'
 ```
 
 默认订阅分组:

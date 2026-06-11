@@ -120,9 +120,11 @@ models.dev 同步写入 `modelPrices`，单位是 USD / 1M tokens，字段包括
 | 字段 | 默认值 | 说明 |
 | --- | --- | --- |
 | 在线支付 | 关闭 | 开启后用户可在 `计费套餐` 页面购买付费套餐。 |
-| 网关 URL | `https://www.ezfpy.cn/mapi.php` | 易支付支付网关。 |
+| Submit 提交 URL | `https://www.ezfpy.cn/submit.php` | 表单提交方式，支持自动跳转。 |
+| MAPI 提交 URL | `https://www.ezfpy.cn/mapi.php` | API 调用方式，返回 JSON。 |
 | 商户 ID | 空 | 易支付 PID。 |
-| 商户 Key | 空 | 用于 MD5 签名，前端只显示是否已保存。 |
+| 商户密钥 | 空 | 用于 MD5 签名，前端只显示是否已保存。 |
+| 软件通讯密钥 | 空 | 易支付后台提供的软件通讯密钥，前端只显示是否已保存。 |
 | 站点名称 | `SAPI` | 提交给易支付的 `sitename`。 |
 | Notify URL | 自动推断 | 建议显式填 `https://<domain>/api/payments/ezfpy/notify`。 |
 | Return URL | 自动推断 | 建议显式填 `https://<domain>/api/payments/ezfpy/return`。 |

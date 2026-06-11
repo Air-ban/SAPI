@@ -174,8 +174,10 @@ func handleAdminUpdatePaymentConfig(w http.ResponseWriter, r *http.Request) {
 		Enabled:      toBool(body["enabled"]),
 		Provider:     "ezfpy",
 		GatewayURL:   security.SafeSingleLine(toString(body["gatewayUrl"]), 2048),
+		MAPIURL:      security.SafeSingleLine(toString(body["mapiUrl"]), 2048),
 		MerchantID:   security.SafeSingleLine(toString(body["merchantId"]), 128),
 		MerchantKey:  security.SafeSingleLine(toString(body["merchantKey"]), 512),
+		SoftwareKey:  security.SafeSingleLine(toString(body["softwareKey"]), 512),
 		SiteName:     security.SafeSingleLine(toString(body["siteName"]), 120),
 		NotifyURL:    security.SafeSingleLine(toString(body["notifyUrl"]), 2048),
 		ReturnURL:    security.SafeSingleLine(toString(body["returnUrl"]), 2048),
@@ -184,8 +186,15 @@ func handleAdminUpdatePaymentConfig(w http.ResponseWriter, r *http.Request) {
 	if cfg.MerchantKey == "" {
 		cfg.MerchantKey = existing.MerchantKey
 	}
+	if cfg.SoftwareKey == "" {
+		cfg.SoftwareKey = existing.SoftwareKey
+	}
 	if cfg.GatewayURL != "" && !security.ValidHTTPBaseURL(cfg.GatewayURL) {
 		utils.SendError(w, http.StatusBadRequest, "Payment gateway URL is invalid.", "invalid_payment_gateway")
+		return
+	}
+	if cfg.MAPIURL != "" && !security.ValidHTTPBaseURL(cfg.MAPIURL) {
+		utils.SendError(w, http.StatusBadRequest, "Payment MAPI URL is invalid.", "invalid_payment_mapi")
 		return
 	}
 	if items, ok := body["allowedTypes"].([]interface{}); ok {

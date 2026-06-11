@@ -186,8 +186,8 @@ SELECT version, app_secret, site_email, default_rpm_limit, registration_disabled
   maintenance_mode, maintenance_end_time, show_only_available_models,
   billing_enabled, billing_currency, billing_usd_to_cny_rate, billing_markup_multiplier,
   billing_models_dev_url, billing_last_price_sync_at,
-  payment_enabled, payment_provider, payment_gateway_url, payment_merchant_id,
-  payment_merchant_key, payment_site_name, payment_notify_url, payment_return_url,
+  payment_enabled, payment_provider, payment_gateway_url, payment_mapi_url, payment_merchant_id,
+  payment_merchant_key, payment_software_key, payment_site_name, payment_notify_url, payment_return_url,
   created_at, updated_at
 FROM sapi_app_config
 WHERE id = $1
@@ -209,8 +209,10 @@ WHERE id = $1
 		&db.PaymentConfig.Enabled,
 		&db.PaymentConfig.Provider,
 		&db.PaymentConfig.GatewayURL,
+		&db.PaymentConfig.MAPIURL,
 		&db.PaymentConfig.MerchantID,
 		&db.PaymentConfig.MerchantKey,
+		&db.PaymentConfig.SoftwareKey,
 		&db.PaymentConfig.SiteName,
 		&db.PaymentConfig.NotifyURL,
 		&db.PaymentConfig.ReturnURL,
@@ -977,16 +979,16 @@ INSERT INTO sapi_app_config (
   maintenance_mode, maintenance_end_time, show_only_available_models,
   billing_enabled, billing_currency, billing_usd_to_cny_rate, billing_markup_multiplier,
   billing_models_dev_url, billing_last_price_sync_at,
-  payment_enabled, payment_provider, payment_gateway_url, payment_merchant_id,
-  payment_merchant_key, payment_site_name, payment_notify_url, payment_return_url,
+  payment_enabled, payment_provider, payment_gateway_url, payment_mapi_url, payment_merchant_id,
+  payment_merchant_key, payment_software_key, payment_site_name, payment_notify_url, payment_return_url,
   created_at, updated_at
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
 `, postgresStateAppID, state.Version, state.AppSecret, state.SiteEmail, state.DefaultRPMLimit, state.RegistrationDisabled,
 		state.MaintenanceMode, state.MaintenanceEndTime, state.ShowOnlyAvailableModels,
 		state.BillingConfig.Enabled, state.BillingConfig.Currency, state.BillingConfig.USDToCNYRate, state.BillingConfig.MarkupMultiplier,
 		state.BillingConfig.ModelsDevURL, state.BillingConfig.LastPriceSyncAt,
-		state.PaymentConfig.Enabled, state.PaymentConfig.Provider, state.PaymentConfig.GatewayURL, state.PaymentConfig.MerchantID,
-		state.PaymentConfig.MerchantKey, state.PaymentConfig.SiteName, state.PaymentConfig.NotifyURL, state.PaymentConfig.ReturnURL,
+		state.PaymentConfig.Enabled, state.PaymentConfig.Provider, state.PaymentConfig.GatewayURL, state.PaymentConfig.MAPIURL, state.PaymentConfig.MerchantID,
+		state.PaymentConfig.MerchantKey, state.PaymentConfig.SoftwareKey, state.PaymentConfig.SiteName, state.PaymentConfig.NotifyURL, state.PaymentConfig.ReturnURL,
 		state.CreatedAt, state.UpdatedAt); err != nil {
 		return err
 	}

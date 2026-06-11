@@ -20,7 +20,8 @@ import (
 
 const (
 	DefaultModelsDevURL = "https://models.dev/api.json"
-	DefaultGatewayURL   = "https://www.ezfpy.cn/mapi.php"
+	DefaultGatewayURL   = "https://www.ezfpy.cn/submit.php"
+	DefaultMAPIURL      = "https://www.ezfpy.cn/mapi.php"
 	DefaultCurrency     = "CNY"
 	MicrounitsPerCNY    = int64(1000000)
 )
@@ -47,6 +48,7 @@ func DefaultPaymentConfig() *models.PaymentConfig {
 		Enabled:      false,
 		Provider:     "ezfpy",
 		GatewayURL:   DefaultGatewayURL,
+		MAPIURL:      DefaultMAPIURL,
 		SiteName:     "SAPI",
 		AllowedTypes: []string{"alipay", "wxpay", "qqpay"},
 	}
@@ -90,10 +92,14 @@ func NormalizePaymentConfig(cfg *models.PaymentConfig) *models.PaymentConfig {
 	if strings.TrimSpace(cfg.Provider) == "" {
 		cfg.Provider = "ezfpy"
 	}
-	if strings.TrimSpace(cfg.GatewayURL) == "" {
+	if strings.TrimSpace(cfg.GatewayURL) == "" || sameURL(cfg.GatewayURL, DefaultMAPIURL) {
 		cfg.GatewayURL = DefaultGatewayURL
 	}
 	cfg.GatewayURL = strings.TrimRight(strings.TrimSpace(cfg.GatewayURL), "/")
+	if strings.TrimSpace(cfg.MAPIURL) == "" {
+		cfg.MAPIURL = DefaultMAPIURL
+	}
+	cfg.MAPIURL = strings.TrimRight(strings.TrimSpace(cfg.MAPIURL), "/")
 	if strings.TrimSpace(cfg.SiteName) == "" {
 		cfg.SiteName = "SAPI"
 	}
@@ -187,15 +193,17 @@ func PlanByID(plans []models.SubscriptionPlan, id string) (models.SubscriptionPl
 func PublicPaymentConfig(cfg *models.PaymentConfig) map[string]interface{} {
 	cfg = NormalizePaymentConfig(cfg)
 	return map[string]interface{}{
-		"enabled":      cfg.Enabled,
-		"provider":     cfg.Provider,
-		"gatewayUrl":   cfg.GatewayURL,
-		"merchantId":   cfg.MerchantID,
-		"hasKey":       strings.TrimSpace(cfg.MerchantKey) != "",
-		"siteName":     cfg.SiteName,
-		"notifyUrl":    cfg.NotifyURL,
-		"returnUrl":    cfg.ReturnURL,
-		"allowedTypes": cfg.AllowedTypes,
+		"enabled":        cfg.Enabled,
+		"provider":       cfg.Provider,
+		"gatewayUrl":     cfg.GatewayURL,
+		"mapiUrl":        cfg.MAPIURL,
+		"merchantId":     cfg.MerchantID,
+		"hasKey":         strings.TrimSpace(cfg.MerchantKey) != "",
+		"hasSoftwareKey": strings.TrimSpace(cfg.SoftwareKey) != "",
+		"siteName":       cfg.SiteName,
+		"notifyUrl":      cfg.NotifyURL,
+		"returnUrl":      cfg.ReturnURL,
+		"allowedTypes":   cfg.AllowedTypes,
 	}
 }
 
@@ -458,4 +466,8 @@ func MicrounitsFromCents(cents int) int64 {
 
 func normalizeModelKey(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func sameURL(a, b string) bool {
+	return strings.EqualFold(strings.TrimRight(strings.TrimSpace(a), "/"), strings.TrimRight(strings.TrimSpace(b), "/"))
 }

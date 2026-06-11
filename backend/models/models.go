@@ -344,8 +344,10 @@ type PaymentConfig struct {
 	Enabled      bool     `json:"enabled"`
 	Provider     string   `json:"provider"`
 	GatewayURL   string   `json:"gatewayUrl"`
+	MAPIURL      string   `json:"mapiUrl"`
 	MerchantID   string   `json:"merchantId"`
 	MerchantKey  string   `json:"merchantKey"`
+	SoftwareKey  string   `json:"softwareKey"`
 	SiteName     string   `json:"siteName"`
 	NotifyURL    string   `json:"notifyUrl"`
 	ReturnURL    string   `json:"returnUrl"`

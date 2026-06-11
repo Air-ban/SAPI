@@ -71,9 +71,11 @@ CREATE TABLE IF NOT EXISTS sapi_app_config (
   billing_last_price_sync_at text NOT NULL DEFAULT '',
   payment_enabled boolean NOT NULL DEFAULT false,
   payment_provider text NOT NULL DEFAULT 'ezfpy',
-  payment_gateway_url text NOT NULL DEFAULT 'https://www.ezfpy.cn/mapi.php',
+  payment_gateway_url text NOT NULL DEFAULT 'https://www.ezfpy.cn/submit.php',
+  payment_mapi_url text NOT NULL DEFAULT 'https://www.ezfpy.cn/mapi.php',
   payment_merchant_id text NOT NULL DEFAULT '',
   payment_merchant_key text NOT NULL DEFAULT '',
+  payment_software_key text NOT NULL DEFAULT '',
   payment_site_name text NOT NULL DEFAULT 'SAPI',
   payment_notify_url text NOT NULL DEFAULT '',
   payment_return_url text NOT NULL DEFAULT '',
@@ -415,9 +417,11 @@ ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS billing_models_dev_url text
 ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS billing_last_price_sync_at text NOT NULL DEFAULT '';
 ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS payment_enabled boolean NOT NULL DEFAULT false;
 ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS payment_provider text NOT NULL DEFAULT 'ezfpy';
-ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS payment_gateway_url text NOT NULL DEFAULT 'https://www.ezfpy.cn/mapi.php';
+ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS payment_gateway_url text NOT NULL DEFAULT 'https://www.ezfpy.cn/submit.php';
+ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS payment_mapi_url text NOT NULL DEFAULT 'https://www.ezfpy.cn/mapi.php';
 ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS payment_merchant_id text NOT NULL DEFAULT '';
 ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS payment_merchant_key text NOT NULL DEFAULT '';
+ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS payment_software_key text NOT NULL DEFAULT '';
 ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS payment_site_name text NOT NULL DEFAULT 'SAPI';
 ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS payment_notify_url text NOT NULL DEFAULT '';
 ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS payment_return_url text NOT NULL DEFAULT '';

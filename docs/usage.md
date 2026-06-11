@@ -171,7 +171,7 @@ curl -X PUT http://localhost:3000/api/admin/users/usr_id \
 
 - `订阅套餐`: 修改每个套餐的 RPM、价格、入账额度、有效天数和启用状态。
 - `计费与模型价格`: 从 `https://models.dev/api.json` 同步模型价格，也可手动覆盖单个模型价格。
-- `易支付`: 配置易支付网关、PID、商户 Key、回调 URL 和支付方式。
+- `易支付`: 配置 Submit 提交 URL、MAPI 提交 URL、商户 ID、商户密钥、软件通讯密钥、回调 URL 和支付方式。
 
 额度消耗按请求日志里的 token 用量计算:
 
