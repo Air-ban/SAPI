@@ -242,21 +242,10 @@ func handleAdminUserRequestLogsExport(w http.ResponseWriter, r *http.Request) {
 	limit := queryInt(r, "limit", 5000, 1, 20000)
 	includeContent := !strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("includeContent")), "false")
 	since := time.Now().UTC().AddDate(0, 0, -days)
-	logs := store.RequestLogsSince(db, since, userID, limit)
-	sort.Slice(logs, func(i, j int) bool {
-		return logs[i].Timestamp < logs[j].Timestamp
+	exportLogs := store.RequestLogsSinceForExport(db, since, userID, limit, includeContent)
+	sort.Slice(exportLogs, func(i, j int) bool {
+		return exportLogs[i].Timestamp < exportLogs[j].Timestamp
 	})
-
-	exportLogs := make([]models.RequestLog, 0, len(logs))
-	for _, item := range logs {
-		if includeContent && item.ID != "" {
-			if full, found := store.FindRequestLog(item.ID, userID); found {
-				exportLogs = append(exportLogs, *full)
-				continue
-			}
-		}
-		exportLogs = append(exportLogs, item)
-	}
 
 	now := time.Now().UTC()
 	filename := fmt.Sprintf("sapi-user-%s-request-logs-%s.tar.gz", safeExportSlug(user), now.Format("2006-01-02"))
@@ -276,21 +265,10 @@ func handleAdminRequestLogsExport(w http.ResponseWriter, r *http.Request) {
 	limit := queryInt(r, "limit", 20000, 1, 100000)
 	includeContent := !strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("includeContent")), "false")
 	since := time.Now().UTC().AddDate(0, 0, -days)
-	logs := store.RequestLogsSince(db, since, "", limit)
-	sort.Slice(logs, func(i, j int) bool {
-		return logs[i].Timestamp < logs[j].Timestamp
+	exportLogs := store.RequestLogsSinceForExport(db, since, "", limit, includeContent)
+	sort.Slice(exportLogs, func(i, j int) bool {
+		return exportLogs[i].Timestamp < exportLogs[j].Timestamp
 	})
-
-	exportLogs := make([]models.RequestLog, 0, len(logs))
-	for _, item := range logs {
-		if includeContent && item.ID != "" {
-			if full, found := store.FindRequestLog(item.ID, ""); found {
-				exportLogs = append(exportLogs, *full)
-				continue
-			}
-		}
-		exportLogs = append(exportLogs, item)
-	}
 
 	now := time.Now().UTC()
 	filename := fmt.Sprintf("sapi-request-logs-%s.tar.gz", now.Format("2006-01-02"))

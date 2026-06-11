@@ -17,6 +17,7 @@ import { requestBlob } from "../utils/api";
 
 const DAY_OPTIONS = [1, 3, 7];
 const LIMIT_OPTIONS = [5000, 20000, 50000, 100000];
+const EXPORT_TIMEOUT_MS = 180000;
 
 export function AuditExportSection({ onToast }) {
   const [days, setDays] = useState(7);
@@ -32,7 +33,9 @@ export function AuditExportSection({ onToast }) {
         limit: String(limit),
         includeContent: includeContent ? "true" : "false"
       });
-      const { blob, filename } = await requestBlob(`/api/admin/request-logs/export?${params.toString()}`);
+      const { blob, filename } = await requestBlob(`/api/admin/request-logs/export?${params.toString()}`, {
+        timeoutMs: EXPORT_TIMEOUT_MS
+      });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;

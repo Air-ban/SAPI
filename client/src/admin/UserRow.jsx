@@ -44,6 +44,7 @@ const FALLBACK_TIERS = [
   { id: "ultra", name: "Ultra", rpmLimit: 100 },
   { id: "MAX", name: "MAX", rpmLimit: 0 }
 ];
+const EXPORT_TIMEOUT_MS = 180000;
 
 export function UserRow({ user, usage, subscriptionTiers = FALLBACK_TIERS, afterChange, onConfirm, onCopy, onToast }) {
   const tiers = subscriptionTiers.length ? subscriptionTiers : FALLBACK_TIERS;
@@ -164,7 +165,9 @@ export function UserRow({ user, usage, subscriptionTiers = FALLBACK_TIERS, after
   const downloadExport = async () => {
     setExportLoading(true);
     try {
-      const { blob, filename } = await requestBlob(`/api/admin/users/${user.id}/request-logs/export?days=7&includeContent=true`);
+      const { blob, filename } = await requestBlob(`/api/admin/users/${user.id}/request-logs/export?days=7&includeContent=true`, {
+        timeoutMs: EXPORT_TIMEOUT_MS
+      });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;

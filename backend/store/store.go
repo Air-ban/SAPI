@@ -573,6 +573,45 @@ func RequestLogsSince(db *models.Database, since time.Time, userID string, limit
 	return result
 }
 
+func RequestLogsSinceForExport(db *models.Database, since time.Time, userID string, limit int, includeContent bool) []models.RequestLog {
+	if !includeContent {
+		return RequestLogsSince(db, since, userID, limit)
+	}
+	if postgresEnabled() {
+		items, err := queryPostgresRequestLogsWithContent(context.Background(), since, userID, limit)
+		if err == nil {
+			return items
+		}
+		log.Printf("[STORE] query postgres request logs with content failed: %v", err)
+	}
+
+	if items, err := queryFileRequestLogsForExport(since, userID, limit); err == nil {
+		if len(items) > 0 || db == nil || len(db.RequestLogs) == 0 {
+			return items
+		}
+	} else {
+		log.Printf("[STORE] query file request logs with content failed: %v", err)
+	}
+
+	if db == nil {
+		db = ReadDB()
+	}
+	sinceIso := since.UTC().Format(time.RFC3339)
+	result := make([]models.RequestLog, 0)
+	for _, item := range db.RequestLogs {
+		if userID != "" && item.UserID != userID {
+			continue
+		}
+		if item.Timestamp >= sinceIso {
+			result = append(result, cloneRequestLog(item))
+		}
+	}
+	if limit > 0 && len(result) > limit {
+		result = result[len(result)-limit:]
+	}
+	return result
+}
+
 func FindRequestLog(id, userID string) (*models.RequestLog, bool) {
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -676,10 +715,18 @@ func appendFileRequestLogLocked(item models.RequestLog) error {
 }
 
 func queryFileRequestLogs(since time.Time, userID string, limit int) ([]models.RequestLog, error) {
+	return queryFileRequestLogsFiltered(since, userID, limit, true)
+}
+
+func queryFileRequestLogsForExport(since time.Time, userID string, limit int) ([]models.RequestLog, error) {
+	return queryFileRequestLogsFiltered(since, userID, limit, false)
+}
+
+func queryFileRequestLogsFiltered(since time.Time, userID string, limit int, forList bool) ([]models.RequestLog, error) {
 	requestLogMu.Lock()
 	defer requestLogMu.Unlock()
 	if limit > 0 {
-		return readRecentFileRequestLogsLocked(since, userID, limit)
+		return readRecentFileRequestLogsLocked(since, userID, limit, forList)
 	}
 	items, err := readFileRequestLogsLocked(func(item models.RequestLog) bool {
 		if userID != "" && item.UserID != userID {
@@ -696,7 +743,7 @@ func queryFileRequestLogs(since time.Time, userID string, limit int) ([]models.R
 	return items, nil
 }
 
-func readRecentFileRequestLogsLocked(since time.Time, userID string, limit int) ([]models.RequestLog, error) {
+func readRecentFileRequestLogsLocked(since time.Time, userID string, limit int, forList bool) ([]models.RequestLog, error) {
 	filePath := RequestLogFilePath()
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -763,7 +810,7 @@ func readRecentFileRequestLogsLocked(since time.Time, userID string, limit int) 
 				continue
 			}
 
-			item, jsonErr := unmarshalRequestLogSummaryLine(trimmed)
+			item, jsonErr := unmarshalRequestLogLine(trimmed, forList)
 			if jsonErr != nil {
 				continue
 			}
@@ -774,17 +821,23 @@ func readRecentFileRequestLogsLocked(since time.Time, userID string, limit int) 
 			if userID != "" && item.UserID != userID {
 				continue
 			}
-			result = append(result, requestLogForList(item))
+			if forList {
+				item = requestLogForList(item)
+			}
+			result = append(result, item)
 		}
 	}
 
 	if offset == 0 && len(remainder) > 0 && len(result) < limit && !shouldStop {
 		trimmed := bytes.TrimSpace(remainder)
 		if len(trimmed) > 0 {
-			item, jsonErr := unmarshalRequestLogSummaryLine(trimmed)
+			item, jsonErr := unmarshalRequestLogLine(trimmed, forList)
 			if jsonErr == nil && requestLogAtOrAfter(item, since) {
 				if userID == "" || item.UserID == userID {
-					result = append(result, requestLogForList(item))
+					if forList {
+						item = requestLogForList(item)
+					}
+					result = append(result, item)
 				}
 			}
 		}
@@ -794,6 +847,20 @@ func readRecentFileRequestLogsLocked(since time.Time, userID string, limit int) 
 		result[i], result[j] = result[j], result[i]
 	}
 	return result, nil
+}
+
+func unmarshalRequestLogLine(line []byte, forList bool) (models.RequestLog, error) {
+	if forList {
+		return unmarshalRequestLogSummaryLine(line)
+	}
+	var item models.RequestLog
+	if err := json.Unmarshal(line, &item); err != nil {
+		return models.RequestLog{}, err
+	}
+	if requestLogHasContent(item) {
+		item.HasRequestContent = true
+	}
+	return item, nil
 }
 
 func unmarshalRequestLogSummaryLine(line []byte) (models.RequestLog, error) {
