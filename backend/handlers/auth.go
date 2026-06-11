@@ -583,15 +583,23 @@ func validUsername(username string) bool {
 }
 
 func sanitizeUser(user *models.User) map[string]interface{} {
+	return sanitizeUserWithDB(user, nil)
+}
+
+func sanitizeUserWithDB(user *models.User, db *models.Database) map[string]interface{} {
+	if db == nil {
+		db = store.ReadDB()
+	}
 	apiKeys := getAPIKeys(user)
 	primaryKey := getPrimaryAPIKey(user)
 
 	sanitizedKeys := make([]map[string]interface{}, len(apiKeys))
 	for i, k := range apiKeys {
-		sanitizedKeys[i] = sanitizeUserAPIKeyRecord(user, &k)
+		sanitizedKeys[i] = sanitizeUserAPIKeyRecordWithDB(user, &k, db)
 	}
 	tier := subscription.TierForUser(user)
-	rpmLimit := subscription.RPMLimitForUser(user)
+	rpmLimit := subscription.RPMLimitForUserInDB(user, db)
+	plan, _ := findSubscriptionPlan(db, tier)
 
 	return map[string]interface{}{
 		"id":                       user.ID,
@@ -610,11 +618,28 @@ func sanitizeUser(user *models.User) map[string]interface{} {
 		"githubLinkedAt":           user.GitHubLinkedAt,
 		"subscriptionTier":         tier,
 		"subscriptionRpmLimit":     rpmLimit,
+		"subscriptionExpiresAt":    user.SubscriptionExpiresAt,
+		"subscriptionPlan":         plan,
+		"creditBalanceMicrounits":  user.CreditBalanceMicrounits,
+		"creditUsedMicrounits":     user.CreditUsedMicrounits,
 		"defaultRpmLimit":          rpmLimit,
 		"collapseModelProviders":   user.CollapseModelProviders,
 		"createdAt":                user.CreatedAt,
 		"updatedAt":                user.UpdatedAt,
 	}
+}
+
+func findSubscriptionPlan(db *models.Database, tier string) (models.SubscriptionPlan, bool) {
+	if db == nil {
+		return models.SubscriptionPlan{}, false
+	}
+	normalized := subscription.NormalizeTier(tier)
+	for _, plan := range db.SubscriptionPlans {
+		if subscription.NormalizeTier(plan.ID) == normalized {
+			return plan, true
+		}
+	}
+	return models.SubscriptionPlan{}, false
 }
 
 func userSourceForEmail(email string) string {
@@ -668,7 +693,14 @@ func sanitizeAPIKeyRecord(record *models.APIKeyRecord) map[string]interface{} {
 }
 
 func sanitizeUserAPIKeyRecord(user *models.User, record *models.APIKeyRecord) map[string]interface{} {
-	return sanitizeAPIKeyRecordWithEffective(record, subscription.EffectiveAPIKeyRPMLimit(user, record))
+	return sanitizeUserAPIKeyRecordWithDB(user, record, nil)
+}
+
+func sanitizeUserAPIKeyRecordWithDB(user *models.User, record *models.APIKeyRecord, db *models.Database) map[string]interface{} {
+	if db == nil {
+		db = store.ReadDB()
+	}
+	return sanitizeAPIKeyRecordWithEffective(record, subscription.EffectiveAPIKeyRPMLimitInDB(user, record, db))
 }
 
 func sanitizeAPIKeyRecordWithEffective(record *models.APIKeyRecord, effectiveRpmLimit int) map[string]interface{} {

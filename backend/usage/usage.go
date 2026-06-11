@@ -4,6 +4,7 @@ import (
 	"sort"
 	"time"
 
+	"sapi/billing"
 	"sapi/models"
 	"sapi/store"
 )
@@ -16,6 +17,9 @@ type UsageStats struct {
 	TotalCacheCreationTokens int                 `json:"totalCacheCreationTokens"`
 	TotalCacheMissTokens     int                 `json:"totalCacheMissTokens"`
 	TotalReasoningTokens     int                 `json:"totalReasoningTokens"`
+	TotalCostUSD             float64             `json:"totalCostUsd"`
+	TotalCostCNY             float64             `json:"totalCostCny"`
+	TotalBillableMicrounits  int64               `json:"totalBillableMicrounits"`
 	Requests                 int                 `json:"requests"`
 	FailedRequests           int                 `json:"failedRequests"`
 	ByUser                   []UserUsageStats    `json:"byUser"`
@@ -28,70 +32,84 @@ type UsageStats struct {
 }
 
 type UserUsageStats struct {
-	UserID              string `json:"userId"`
-	UserName            string `json:"userName"`
-	Username            string `json:"username"`
-	PromptTokens        int    `json:"promptTokens"`
-	CompletionTokens    int    `json:"completionTokens"`
-	TotalTokens         int    `json:"totalTokens"`
-	CachedTokens        int    `json:"cachedTokens"`
-	CacheCreationTokens int    `json:"cacheCreationTokens"`
-	CacheMissTokens     int    `json:"cacheMissTokens"`
-	ReasoningTokens     int    `json:"reasoningTokens"`
-	Requests            int    `json:"requests"`
-	FailedRequests      int    `json:"failedRequests"`
+	UserID              string  `json:"userId"`
+	UserName            string  `json:"userName"`
+	Username            string  `json:"username"`
+	PromptTokens        int     `json:"promptTokens"`
+	CompletionTokens    int     `json:"completionTokens"`
+	TotalTokens         int     `json:"totalTokens"`
+	CachedTokens        int     `json:"cachedTokens"`
+	CacheCreationTokens int     `json:"cacheCreationTokens"`
+	CacheMissTokens     int     `json:"cacheMissTokens"`
+	ReasoningTokens     int     `json:"reasoningTokens"`
+	CostUSD             float64 `json:"costUsd"`
+	CostCNY             float64 `json:"costCny"`
+	BillableMicrounits  int64   `json:"billableMicrounits"`
+	Requests            int     `json:"requests"`
+	FailedRequests      int     `json:"failedRequests"`
 }
 
 type APIKeyUsageStats struct {
-	UserID              string `json:"userId"`
-	UserName            string `json:"userName"`
-	Username            string `json:"username"`
-	APIKeyID            string `json:"apiKeyId"`
-	APIKeyName          string `json:"apiKeyName"`
-	APIKeyPreview       string `json:"apiKeyPreview"`
-	PromptTokens        int    `json:"promptTokens"`
-	CompletionTokens    int    `json:"completionTokens"`
-	TotalTokens         int    `json:"totalTokens"`
-	CachedTokens        int    `json:"cachedTokens"`
-	CacheCreationTokens int    `json:"cacheCreationTokens"`
-	CacheMissTokens     int    `json:"cacheMissTokens"`
-	ReasoningTokens     int    `json:"reasoningTokens"`
-	Requests            int    `json:"requests"`
-	FailedRequests      int    `json:"failedRequests"`
+	UserID              string  `json:"userId"`
+	UserName            string  `json:"userName"`
+	Username            string  `json:"username"`
+	APIKeyID            string  `json:"apiKeyId"`
+	APIKeyName          string  `json:"apiKeyName"`
+	APIKeyPreview       string  `json:"apiKeyPreview"`
+	PromptTokens        int     `json:"promptTokens"`
+	CompletionTokens    int     `json:"completionTokens"`
+	TotalTokens         int     `json:"totalTokens"`
+	CachedTokens        int     `json:"cachedTokens"`
+	CacheCreationTokens int     `json:"cacheCreationTokens"`
+	CacheMissTokens     int     `json:"cacheMissTokens"`
+	ReasoningTokens     int     `json:"reasoningTokens"`
+	CostUSD             float64 `json:"costUsd"`
+	CostCNY             float64 `json:"costCny"`
+	BillableMicrounits  int64   `json:"billableMicrounits"`
+	Requests            int     `json:"requests"`
+	FailedRequests      int     `json:"failedRequests"`
 }
 
 type ModelUsageStats struct {
-	Model               string `json:"model"`
-	PromptTokens        int    `json:"promptTokens"`
-	CompletionTokens    int    `json:"completionTokens"`
-	TotalTokens         int    `json:"totalTokens"`
-	CachedTokens        int    `json:"cachedTokens"`
-	CacheCreationTokens int    `json:"cacheCreationTokens"`
-	CacheMissTokens     int    `json:"cacheMissTokens"`
-	ReasoningTokens     int    `json:"reasoningTokens"`
-	Requests            int    `json:"requests"`
-	FailedRequests      int    `json:"failedRequests"`
+	Model               string  `json:"model"`
+	PromptTokens        int     `json:"promptTokens"`
+	CompletionTokens    int     `json:"completionTokens"`
+	TotalTokens         int     `json:"totalTokens"`
+	CachedTokens        int     `json:"cachedTokens"`
+	CacheCreationTokens int     `json:"cacheCreationTokens"`
+	CacheMissTokens     int     `json:"cacheMissTokens"`
+	ReasoningTokens     int     `json:"reasoningTokens"`
+	CostUSD             float64 `json:"costUsd"`
+	CostCNY             float64 `json:"costCny"`
+	BillableMicrounits  int64   `json:"billableMicrounits"`
+	Requests            int     `json:"requests"`
+	FailedRequests      int     `json:"failedRequests"`
 }
 
 type DayUsageStats struct {
-	Day                 string `json:"day"`
-	PromptTokens        int    `json:"promptTokens"`
-	CompletionTokens    int    `json:"completionTokens"`
-	TotalTokens         int    `json:"totalTokens"`
-	CachedTokens        int    `json:"cachedTokens"`
-	CacheCreationTokens int    `json:"cacheCreationTokens"`
-	CacheMissTokens     int    `json:"cacheMissTokens"`
-	ReasoningTokens     int    `json:"reasoningTokens"`
-	Requests            int    `json:"requests"`
-	FailedRequests      int    `json:"failedRequests"`
+	Day                 string  `json:"day"`
+	PromptTokens        int     `json:"promptTokens"`
+	CompletionTokens    int     `json:"completionTokens"`
+	TotalTokens         int     `json:"totalTokens"`
+	CachedTokens        int     `json:"cachedTokens"`
+	CacheCreationTokens int     `json:"cacheCreationTokens"`
+	CacheMissTokens     int     `json:"cacheMissTokens"`
+	ReasoningTokens     int     `json:"reasoningTokens"`
+	CostUSD             float64 `json:"costUsd"`
+	CostCNY             float64 `json:"costCny"`
+	BillableMicrounits  int64   `json:"billableMicrounits"`
+	Requests            int     `json:"requests"`
+	FailedRequests      int     `json:"failedRequests"`
 }
 
 type HourUsageStats struct {
-	Hour             string `json:"hour"`
-	PromptTokens     int    `json:"promptTokens"`
-	CompletionTokens int    `json:"completionTokens"`
-	TotalTokens      int    `json:"totalTokens"`
-	Requests         int    `json:"requests"`
+	Hour               string  `json:"hour"`
+	PromptTokens       int     `json:"promptTokens"`
+	CompletionTokens   int     `json:"completionTokens"`
+	TotalTokens        int     `json:"totalTokens"`
+	CostCNY            float64 `json:"costCny"`
+	BillableMicrounits int64   `json:"billableMicrounits"`
+	Requests           int     `json:"requests"`
 }
 
 func GetUsageStats(db *models.Database, userID string, days int) *UsageStats {
@@ -119,6 +137,7 @@ func GetUsageStats(db *models.Database, userID string, days int) *UsageStats {
 	byHour := make(map[string]*HourUsageStats)
 
 	for _, item := range records {
+		cost := costForItem(db, item)
 		stats.Requests++
 		stats.TotalPromptTokens += item.PromptTokens
 		stats.TotalCompletionTokens += item.CompletionTokens
@@ -127,6 +146,9 @@ func GetUsageStats(db *models.Database, userID string, days int) *UsageStats {
 		stats.TotalCacheCreationTokens += item.CacheCreationTokens
 		stats.TotalCacheMissTokens += item.CacheMissTokens
 		stats.TotalReasoningTokens += item.ReasoningTokens
+		stats.TotalCostUSD += cost.CostUSD
+		stats.TotalCostCNY += cost.CostCNY
+		stats.TotalBillableMicrounits += cost.BillableMicrounits
 		if !item.OK {
 			stats.FailedRequests++
 		}
@@ -151,6 +173,9 @@ func GetUsageStats(db *models.Database, userID string, days int) *UsageStats {
 		uu.CacheCreationTokens += item.CacheCreationTokens
 		uu.CacheMissTokens += item.CacheMissTokens
 		uu.ReasoningTokens += item.ReasoningTokens
+		uu.CostUSD += cost.CostUSD
+		uu.CostCNY += cost.CostCNY
+		uu.BillableMicrounits += cost.BillableMicrounits
 		uu.Requests++
 		if !item.OK {
 			uu.FailedRequests++
@@ -171,6 +196,9 @@ func GetUsageStats(db *models.Database, userID string, days int) *UsageStats {
 		ak.CacheCreationTokens += item.CacheCreationTokens
 		ak.CacheMissTokens += item.CacheMissTokens
 		ak.ReasoningTokens += item.ReasoningTokens
+		ak.CostUSD += cost.CostUSD
+		ak.CostCNY += cost.CostCNY
+		ak.BillableMicrounits += cost.BillableMicrounits
 		ak.Requests++
 		if !item.OK {
 			ak.FailedRequests++
@@ -191,6 +219,9 @@ func GetUsageStats(db *models.Database, userID string, days int) *UsageStats {
 		bm.CacheCreationTokens += item.CacheCreationTokens
 		bm.CacheMissTokens += item.CacheMissTokens
 		bm.ReasoningTokens += item.ReasoningTokens
+		bm.CostUSD += cost.CostUSD
+		bm.CostCNY += cost.CostCNY
+		bm.BillableMicrounits += cost.BillableMicrounits
 		bm.Requests++
 		if !item.OK {
 			bm.FailedRequests++
@@ -211,6 +242,9 @@ func GetUsageStats(db *models.Database, userID string, days int) *UsageStats {
 		bd.CacheCreationTokens += item.CacheCreationTokens
 		bd.CacheMissTokens += item.CacheMissTokens
 		bd.ReasoningTokens += item.ReasoningTokens
+		bd.CostUSD += cost.CostUSD
+		bd.CostCNY += cost.CostCNY
+		bd.BillableMicrounits += cost.BillableMicrounits
 		bd.Requests++
 		if !item.OK {
 			bd.FailedRequests++
@@ -226,6 +260,8 @@ func GetUsageStats(db *models.Database, userID string, days int) *UsageStats {
 			bh.PromptTokens += item.PromptTokens
 			bh.CompletionTokens += item.CompletionTokens
 			bh.TotalTokens += item.TotalTokens
+			bh.CostCNY += cost.CostCNY
+			bh.BillableMicrounits += cost.BillableMicrounits
 			bh.Requests++
 		}
 	}
@@ -275,6 +311,17 @@ func GetUsageStats(db *models.Database, userID string, days int) *UsageStats {
 	stats.RecentRequests = recent
 
 	return stats
+}
+
+func costForItem(db *models.Database, item models.RequestLog) billing.CostBreakdown {
+	if item.BillableMicrounits > 0 || item.CostUSD > 0 || item.CostCNY > 0 {
+		return billing.CostBreakdown{
+			CostUSD:            item.CostUSD,
+			CostCNY:            item.CostCNY,
+			BillableMicrounits: item.BillableMicrounits,
+		}
+	}
+	return billing.CalculateRequestCost(db, item)
 }
 
 func max(a, b int) int {

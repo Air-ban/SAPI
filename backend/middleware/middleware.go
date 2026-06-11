@@ -309,7 +309,7 @@ func CheckRPMLimit(user *models.User, apiKeyRecord *models.APIKeyRecord, db *mod
 		return true, 0, 0
 	}
 
-	limit := subscription.EffectiveAPIKeyRPMLimit(user, apiKeyRecord)
+	limit := subscription.EffectiveAPIKeyRPMLimitInDB(user, apiKeyRecord, db)
 
 	key := ""
 	if apiKeyRecord != nil {
@@ -354,7 +354,7 @@ func CheckRPMLimit(user *models.User, apiKeyRecord *models.APIKeyRecord, db *mod
 }
 
 func defaultRPMLimitForUser(user *models.User, db *models.Database) int {
-	return subscription.RPMLimitForUser(user)
+	return subscription.RPMLimitForUserInDB(user, db)
 }
 
 type failureLimiter struct {

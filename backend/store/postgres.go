@@ -63,6 +63,20 @@ CREATE TABLE IF NOT EXISTS sapi_app_config (
   maintenance_mode boolean NOT NULL DEFAULT false,
   maintenance_end_time text NOT NULL DEFAULT '',
   show_only_available_models boolean NOT NULL DEFAULT false,
+  billing_enabled boolean NOT NULL DEFAULT true,
+  billing_currency text NOT NULL DEFAULT 'CNY',
+  billing_usd_to_cny_rate double precision NOT NULL DEFAULT 7.2,
+  billing_markup_multiplier double precision NOT NULL DEFAULT 1,
+  billing_models_dev_url text NOT NULL DEFAULT 'https://models.dev/api.json',
+  billing_last_price_sync_at text NOT NULL DEFAULT '',
+  payment_enabled boolean NOT NULL DEFAULT false,
+  payment_provider text NOT NULL DEFAULT 'ezfpy',
+  payment_gateway_url text NOT NULL DEFAULT 'https://www.ezfpy.cn/mapi.php',
+  payment_merchant_id text NOT NULL DEFAULT '',
+  payment_merchant_key text NOT NULL DEFAULT '',
+  payment_site_name text NOT NULL DEFAULT 'SAPI',
+  payment_notify_url text NOT NULL DEFAULT '',
+  payment_return_url text NOT NULL DEFAULT '',
   created_at text NOT NULL DEFAULT '',
   updated_at text NOT NULL DEFAULT ''
 );
@@ -89,6 +103,62 @@ CREATE TABLE IF NOT EXISTS sapi_site_banner (
   app_id text PRIMARY KEY REFERENCES sapi_app_config(id) ON DELETE CASCADE,
   content text NOT NULL DEFAULT '',
   updated_at text NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS sapi_payment_allowed_types (
+  app_id text NOT NULL REFERENCES sapi_app_config(id) ON DELETE CASCADE,
+  position integer NOT NULL,
+  pay_type text NOT NULL,
+  PRIMARY KEY (app_id, position)
+);
+
+CREATE TABLE IF NOT EXISTS sapi_subscription_plans (
+  id text PRIMARY KEY,
+  position integer NOT NULL DEFAULT 0,
+  name text NOT NULL DEFAULT '',
+  description text NOT NULL DEFAULT '',
+  rpm_limit integer NOT NULL DEFAULT 0,
+  price_cents integer NOT NULL DEFAULT 0,
+  credit_microunits bigint NOT NULL DEFAULT 0,
+  duration_days integer NOT NULL DEFAULT 30,
+  enabled boolean NOT NULL DEFAULT true,
+  sort_order integer NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS sapi_model_prices (
+  model_id text PRIMARY KEY,
+  display_name text NOT NULL DEFAULT '',
+  provider_id text NOT NULL DEFAULT '',
+  input_usd_per_million_tokens double precision NOT NULL DEFAULT 0,
+  output_usd_per_million_tokens double precision NOT NULL DEFAULT 0,
+  cache_read_usd_per_million_tokens double precision NOT NULL DEFAULT 0,
+  cache_write_usd_per_million_tokens double precision NOT NULL DEFAULT 0,
+  reasoning_usd_per_million_tokens double precision NOT NULL DEFAULT 0,
+  source text NOT NULL DEFAULT '',
+  manual boolean NOT NULL DEFAULT false,
+  updated_at text NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS sapi_payment_orders (
+  id text PRIMARY KEY,
+  position integer NOT NULL DEFAULT 0,
+  user_id text NOT NULL DEFAULT '',
+  username text NOT NULL DEFAULT '',
+  subscription_tier text NOT NULL DEFAULT '',
+  plan_name text NOT NULL DEFAULT '',
+  amount_cents integer NOT NULL DEFAULT 0,
+  credit_microunits bigint NOT NULL DEFAULT 0,
+  currency text NOT NULL DEFAULT 'CNY',
+  provider text NOT NULL DEFAULT 'ezfpy',
+  pay_type text NOT NULL DEFAULT '',
+  out_trade_no text NOT NULL DEFAULT '',
+  trade_no text NOT NULL DEFAULT '',
+  status text NOT NULL DEFAULT '',
+  created_at text NOT NULL DEFAULT '',
+  paid_at text NOT NULL DEFAULT '',
+  expires_at text NOT NULL DEFAULT '',
+  raw_notify jsonb NOT NULL DEFAULT '{}'::jsonb,
+  UNIQUE (out_trade_no)
 );
 
 CREATE TABLE IF NOT EXISTS sapi_providers (
@@ -159,6 +229,9 @@ CREATE TABLE IF NOT EXISTS sapi_users (
   github_avatar_url text NOT NULL DEFAULT '',
   github_linked_at text NOT NULL DEFAULT '',
   subscription_tier text NOT NULL DEFAULT '',
+  subscription_expires_at text NOT NULL DEFAULT '',
+  credit_balance_microunits bigint NOT NULL DEFAULT 0,
+  credit_used_microunits bigint NOT NULL DEFAULT 0,
   created_at text NOT NULL DEFAULT '',
   updated_at text NOT NULL DEFAULT ''
 );
@@ -316,6 +389,9 @@ CREATE TABLE IF NOT EXISTS sapi_request_logs (
   cache_creation_tokens integer NOT NULL DEFAULT 0,
   cache_miss_tokens integer NOT NULL DEFAULT 0,
   reasoning_tokens integer NOT NULL DEFAULT 0,
+  cost_usd double precision NOT NULL DEFAULT 0,
+  cost_cny double precision NOT NULL DEFAULT 0,
+  billable_microunits bigint NOT NULL DEFAULT 0,
   error_code text NOT NULL DEFAULT '',
   error_message text NOT NULL DEFAULT '',
   client_ip_info jsonb NOT NULL DEFAULT '{}'::jsonb,
@@ -327,9 +403,29 @@ CREATE TABLE IF NOT EXISTS sapi_request_logs (
 ALTER TABLE sapi_request_logs ADD COLUMN IF NOT EXISTS client_ip_info jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE sapi_request_logs ADD COLUMN IF NOT EXISTS client_device jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE sapi_request_logs ADD COLUMN IF NOT EXISTS request_content jsonb NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE sapi_request_logs ADD COLUMN IF NOT EXISTS cost_usd double precision NOT NULL DEFAULT 0;
+ALTER TABLE sapi_request_logs ADD COLUMN IF NOT EXISTS cost_cny double precision NOT NULL DEFAULT 0;
+ALTER TABLE sapi_request_logs ADD COLUMN IF NOT EXISTS billable_microunits bigint NOT NULL DEFAULT 0;
 ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS registration_disabled boolean NOT NULL DEFAULT false;
+ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS billing_enabled boolean NOT NULL DEFAULT true;
+ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS billing_currency text NOT NULL DEFAULT 'CNY';
+ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS billing_usd_to_cny_rate double precision NOT NULL DEFAULT 7.2;
+ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS billing_markup_multiplier double precision NOT NULL DEFAULT 1;
+ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS billing_models_dev_url text NOT NULL DEFAULT 'https://models.dev/api.json';
+ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS billing_last_price_sync_at text NOT NULL DEFAULT '';
+ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS payment_enabled boolean NOT NULL DEFAULT false;
+ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS payment_provider text NOT NULL DEFAULT 'ezfpy';
+ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS payment_gateway_url text NOT NULL DEFAULT 'https://www.ezfpy.cn/mapi.php';
+ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS payment_merchant_id text NOT NULL DEFAULT '';
+ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS payment_merchant_key text NOT NULL DEFAULT '';
+ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS payment_site_name text NOT NULL DEFAULT 'SAPI';
+ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS payment_notify_url text NOT NULL DEFAULT '';
+ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS payment_return_url text NOT NULL DEFAULT '';
 ALTER TABLE sapi_providers ADD COLUMN IF NOT EXISTS position integer NOT NULL DEFAULT 0;
 ALTER TABLE sapi_users ADD COLUMN IF NOT EXISTS position integer NOT NULL DEFAULT 0;
+ALTER TABLE sapi_users ADD COLUMN IF NOT EXISTS subscription_expires_at text NOT NULL DEFAULT '';
+ALTER TABLE sapi_users ADD COLUMN IF NOT EXISTS credit_balance_microunits bigint NOT NULL DEFAULT 0;
+ALTER TABLE sapi_users ADD COLUMN IF NOT EXISTS credit_used_microunits bigint NOT NULL DEFAULT 0;
 ALTER TABLE sapi_invitation_codes ADD COLUMN IF NOT EXISTS position integer NOT NULL DEFAULT 0;
 ALTER TABLE sapi_admin_passkeys ADD COLUMN IF NOT EXISTS position integer NOT NULL DEFAULT 0;
 ALTER TABLE sapi_announcements ADD COLUMN IF NOT EXISTS position integer NOT NULL DEFAULT 0;
@@ -448,16 +544,19 @@ INSERT INTO sapi_request_logs (
   provider_id, provider_name, model, upstream_model, endpoint, method, status,
   ok, stream, duration_ms, prompt_tokens, completion_tokens, total_tokens,
   cached_tokens, cache_creation_tokens, cache_miss_tokens, reasoning_tokens,
+  cost_usd, cost_cny, billable_microunits,
   error_code, error_message, client_ip_info, client_device, request_content, timestamp
 ) VALUES (
   $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
-  $15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30
+  $15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,
+  $31,$32,$33
 )
 ON CONFLICT (id) DO NOTHING
 `, item.ID, item.UserID, item.UserName, item.Username, item.APIKeyID, item.APIKeyName, item.APIKeyPreview,
 		item.ProviderID, item.ProviderName, item.Model, item.UpstreamModel, item.Endpoint, item.Method, item.Status,
 		item.OK, item.Stream, item.DurationMs, item.PromptTokens, item.CompletionTokens, item.TotalTokens,
 		item.CachedTokens, item.CacheCreationTokens, item.CacheMissTokens, item.ReasoningTokens,
+		item.CostUSD, item.CostCNY, item.BillableMicrounits,
 		item.ErrorCode, item.ErrorMessage, clientIPInfoRaw, clientDeviceRaw, requestContentRaw, ts)
 	if err != nil {
 		return err
@@ -469,6 +568,17 @@ UPDATE sapi_user_api_keys
 SET last_used_at = $1, updated_at = $1
 WHERE id = $2 AND user_id = $3
 `, tsText, item.APIKeyID, item.UserID); err != nil {
+			return err
+		}
+	}
+	if item.OK && item.UserID != "" && item.UserID != models.AdminVirtualUserID && item.BillableMicrounits > 0 {
+		if _, err := tx.Exec(ctx, `
+UPDATE sapi_users
+SET credit_used_microunits = credit_used_microunits + $1,
+    credit_balance_microunits = GREATEST(0, credit_balance_microunits - $1),
+    updated_at = $2
+WHERE id = $3
+`, item.BillableMicrounits, ts.UTC().Format("2006-01-02T15:04:05.000Z"), item.UserID); err != nil {
 			return err
 		}
 	}
@@ -503,6 +613,7 @@ SELECT id, user_id, user_name, username, api_key_id, api_key_name, api_key_previ
   provider_id, provider_name, model, upstream_model, endpoint, method, status,
   ok, stream, duration_ms, prompt_tokens, completion_tokens, total_tokens,
   cached_tokens, cache_creation_tokens, cache_miss_tokens, reasoning_tokens,
+  cost_usd, cost_cny, billable_microunits,
   error_code, error_message, client_ip_info, client_device, request_content, timestamp
 FROM sapi_request_logs
 WHERE timestamp < $1
@@ -528,6 +639,7 @@ LIMIT `
 			&item.ProviderID, &item.ProviderName, &item.Model, &item.UpstreamModel, &item.Endpoint, &item.Method, &item.Status,
 			&item.OK, &item.Stream, &item.DurationMs, &item.PromptTokens, &item.CompletionTokens, &item.TotalTokens,
 			&item.CachedTokens, &item.CacheCreationTokens, &item.CacheMissTokens, &item.ReasoningTokens,
+			&item.CostUSD, &item.CostCNY, &item.BillableMicrounits,
 			&item.ErrorCode, &item.ErrorMessage, &clientIPInfoRaw, &clientDeviceRaw, &requestContentRaw, &ts,
 		); err != nil {
 			return nil, err
@@ -563,6 +675,7 @@ SELECT id, user_id, user_name, username, api_key_id, api_key_name, api_key_previ
   provider_id, provider_name, model, upstream_model, endpoint, method, status,
   ok, stream, duration_ms, prompt_tokens, completion_tokens, total_tokens,
   cached_tokens, cache_creation_tokens, cache_miss_tokens, reasoning_tokens,
+  cost_usd, cost_cny, billable_microunits,
   error_code, error_message, client_ip_info, client_device, request_content <> '{}'::jsonb AS has_request_content, timestamp
 FROM sapi_request_logs
 WHERE timestamp >= $1`
@@ -591,6 +704,7 @@ WHERE timestamp >= $1`
 			&item.ProviderID, &item.ProviderName, &item.Model, &item.UpstreamModel, &item.Endpoint, &item.Method, &item.Status,
 			&item.OK, &item.Stream, &item.DurationMs, &item.PromptTokens, &item.CompletionTokens, &item.TotalTokens,
 			&item.CachedTokens, &item.CacheCreationTokens, &item.CacheMissTokens, &item.ReasoningTokens,
+			&item.CostUSD, &item.CostCNY, &item.BillableMicrounits,
 			&item.ErrorCode, &item.ErrorMessage, &clientIPInfoRaw, &clientDeviceRaw, &item.HasRequestContent, &ts,
 		); err != nil {
 			return nil, err
@@ -617,6 +731,7 @@ SELECT id, user_id, user_name, username, api_key_id, api_key_name, api_key_previ
   provider_id, provider_name, model, upstream_model, endpoint, method, status,
   ok, stream, duration_ms, prompt_tokens, completion_tokens, total_tokens,
   cached_tokens, cache_creation_tokens, cache_miss_tokens, reasoning_tokens,
+  cost_usd, cost_cny, billable_microunits,
   error_code, error_message, client_ip_info, client_device, request_content, timestamp
 FROM sapi_request_logs
 WHERE id = $1`
@@ -637,6 +752,7 @@ WHERE id = $1`
 		&item.ProviderID, &item.ProviderName, &item.Model, &item.UpstreamModel, &item.Endpoint, &item.Method, &item.Status,
 		&item.OK, &item.Stream, &item.DurationMs, &item.PromptTokens, &item.CompletionTokens, &item.TotalTokens,
 		&item.CachedTokens, &item.CacheCreationTokens, &item.CacheMissTokens, &item.ReasoningTokens,
+		&item.CostUSD, &item.CostCNY, &item.BillableMicrounits,
 		&item.ErrorCode, &item.ErrorMessage, &clientIPInfoRaw, &clientDeviceRaw, &requestContentRaw, &ts,
 	)
 	if err == pgx.ErrNoRows {

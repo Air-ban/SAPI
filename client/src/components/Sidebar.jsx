@@ -10,6 +10,7 @@ import {
   Tooltip
 } from "@mui/material";
 import AnalyticsIcon from "@mui/icons-material/Analytics";
+import AccountBalanceWalletIcon from "@mui/icons-material/AccountBalanceWallet";
 import ChatBubbleOutlineIcon from "@mui/icons-material/ChatBubbleOutline";
 import KeyIcon from "@mui/icons-material/Key";
 import ImageIcon from "@mui/icons-material/Image";
@@ -60,6 +61,7 @@ export function Sidebar({
   const portalPages = [
     { id: "overview", icon: <AnalyticsIcon />, primary: "首页概览", secondary: "账号、Key、模型总览" },
     { id: "key", icon: <KeyIcon />, primary: "我的 Key", secondary: "复制、创建、轮换" },
+    { id: "billing", icon: <AccountBalanceWalletIcon />, primary: "计费套餐", secondary: "余额、消耗、订阅" },
     { id: "chat", icon: <ChatBubbleOutlineIcon />, primary: "站内 Chat", secondary: "Responses 和媒体" },
     { id: "images", icon: <ImageIcon />, primary: "生图工坊", secondary: "生成、编辑、参考图" },
     { id: "usage", icon: <BarChartIcon />, primary: "我的用量", secondary: "请求记录和 Token" },

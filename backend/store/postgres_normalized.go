@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"sapi/billing"
 	"sapi/models"
 )
 
@@ -173,11 +174,21 @@ func loadPostgresNormalizedState(ctx context.Context, q postgresQuerier) (*model
 		SMTPConfig:        &models.SMTPConfig{},
 		SiteEmails:        []string{},
 		SiteBanner:        &models.SiteBanner{},
+		SubscriptionPlans: []models.SubscriptionPlan{},
+		ModelPrices:       []models.ModelPrice{},
+		BillingConfig:     &models.BillingConfig{},
+		PaymentConfig:     &models.PaymentConfig{},
+		PaymentOrders:     []models.PaymentOrder{},
 	}
 
 	err := q.QueryRow(ctx, `
 SELECT version, app_secret, site_email, default_rpm_limit, registration_disabled,
-  maintenance_mode, maintenance_end_time, show_only_available_models, created_at, updated_at
+  maintenance_mode, maintenance_end_time, show_only_available_models,
+  billing_enabled, billing_currency, billing_usd_to_cny_rate, billing_markup_multiplier,
+  billing_models_dev_url, billing_last_price_sync_at,
+  payment_enabled, payment_provider, payment_gateway_url, payment_merchant_id,
+  payment_merchant_key, payment_site_name, payment_notify_url, payment_return_url,
+  created_at, updated_at
 FROM sapi_app_config
 WHERE id = $1
 `, postgresStateAppID).Scan(
@@ -189,6 +200,20 @@ WHERE id = $1
 		&db.MaintenanceMode,
 		&db.MaintenanceEndTime,
 		&db.ShowOnlyAvailableModels,
+		&db.BillingConfig.Enabled,
+		&db.BillingConfig.Currency,
+		&db.BillingConfig.USDToCNYRate,
+		&db.BillingConfig.MarkupMultiplier,
+		&db.BillingConfig.ModelsDevURL,
+		&db.BillingConfig.LastPriceSyncAt,
+		&db.PaymentConfig.Enabled,
+		&db.PaymentConfig.Provider,
+		&db.PaymentConfig.GatewayURL,
+		&db.PaymentConfig.MerchantID,
+		&db.PaymentConfig.MerchantKey,
+		&db.PaymentConfig.SiteName,
+		&db.PaymentConfig.NotifyURL,
+		&db.PaymentConfig.ReturnURL,
 		&db.CreatedAt,
 		&db.UpdatedAt,
 	)
@@ -206,6 +231,18 @@ WHERE id = $1
 		return nil, false, err
 	}
 	if err := loadPostgresSiteBanner(ctx, q, db); err != nil {
+		return nil, false, err
+	}
+	if err := loadPostgresPaymentAllowedTypes(ctx, q, db); err != nil {
+		return nil, false, err
+	}
+	if err := loadPostgresSubscriptionPlans(ctx, q, db); err != nil {
+		return nil, false, err
+	}
+	if err := loadPostgresModelPrices(ctx, q, db); err != nil {
+		return nil, false, err
+	}
+	if err := loadPostgresPaymentOrders(ctx, q, db); err != nil {
 		return nil, false, err
 	}
 	if err := loadPostgresProviders(ctx, q, db); err != nil {
@@ -294,6 +331,105 @@ WHERE app_id = $1
 		return nil
 	}
 	return err
+}
+
+func loadPostgresPaymentAllowedTypes(ctx context.Context, q postgresQuerier, db *models.Database) error {
+	rows, err := q.Query(ctx, `
+SELECT pay_type
+FROM sapi_payment_allowed_types
+WHERE app_id = $1
+ORDER BY position ASC
+`, postgresStateAppID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	db.PaymentConfig.AllowedTypes = []string{}
+	for rows.Next() {
+		var payType string
+		if err := rows.Scan(&payType); err != nil {
+			return err
+		}
+		db.PaymentConfig.AllowedTypes = append(db.PaymentConfig.AllowedTypes, payType)
+	}
+	return rows.Err()
+}
+
+func loadPostgresSubscriptionPlans(ctx context.Context, q postgresQuerier, db *models.Database) error {
+	rows, err := q.Query(ctx, `
+SELECT id, name, description, rpm_limit, price_cents, credit_microunits,
+  duration_days, enabled, sort_order
+FROM sapi_subscription_plans
+ORDER BY position ASC, sort_order ASC, id ASC
+`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var plan models.SubscriptionPlan
+		if err := rows.Scan(&plan.ID, &plan.Name, &plan.Description, &plan.RPMLimit, &plan.PriceCents,
+			&plan.CreditMicrounits, &plan.DurationDays, &plan.Enabled, &plan.SortOrder); err != nil {
+			return err
+		}
+		db.SubscriptionPlans = append(db.SubscriptionPlans, plan)
+	}
+	return rows.Err()
+}
+
+func loadPostgresModelPrices(ctx context.Context, q postgresQuerier, db *models.Database) error {
+	rows, err := q.Query(ctx, `
+SELECT model_id, display_name, provider_id, input_usd_per_million_tokens,
+  output_usd_per_million_tokens, cache_read_usd_per_million_tokens,
+  cache_write_usd_per_million_tokens, reasoning_usd_per_million_tokens,
+  source, manual, updated_at
+FROM sapi_model_prices
+ORDER BY model_id ASC
+`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var price models.ModelPrice
+		if err := rows.Scan(&price.ModelID, &price.DisplayName, &price.ProviderID,
+			&price.InputUSDPerMillionTokens, &price.OutputUSDPerMillionTokens,
+			&price.CacheReadUSDPerMillionTokens, &price.CacheWriteUSDPerMillionTokens,
+			&price.ReasoningUSDPerMillionTokens, &price.Source, &price.Manual, &price.UpdatedAt); err != nil {
+			return err
+		}
+		db.ModelPrices = append(db.ModelPrices, price)
+	}
+	return rows.Err()
+}
+
+func loadPostgresPaymentOrders(ctx context.Context, q postgresQuerier, db *models.Database) error {
+	rows, err := q.Query(ctx, `
+SELECT id, user_id, username, subscription_tier, plan_name, amount_cents,
+  credit_microunits, currency, provider, pay_type, out_trade_no, trade_no,
+  status, created_at, paid_at, expires_at, raw_notify
+FROM sapi_payment_orders
+ORDER BY position ASC, created_at ASC, id ASC
+`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var order models.PaymentOrder
+		var raw []byte
+		if err := rows.Scan(&order.ID, &order.UserID, &order.Username, &order.SubscriptionTier,
+			&order.PlanName, &order.AmountCents, &order.CreditMicrounits, &order.Currency,
+			&order.Provider, &order.PayType, &order.OutTradeNo, &order.TradeNo, &order.Status,
+			&order.CreatedAt, &order.PaidAt, &order.ExpiresAt, &raw); err != nil {
+			return err
+		}
+		if len(raw) > 0 {
+			_ = json.Unmarshal(raw, &order.RawNotify)
+		}
+		db.PaymentOrders = append(db.PaymentOrders, order)
+	}
+	return rows.Err()
 }
 
 func loadPostgresProviders(ctx context.Context, q postgresQuerier, db *models.Database) error {
@@ -469,7 +605,8 @@ func loadPostgresUsers(ctx context.Context, q postgresQuerier, db *models.Databa
 	rows, err := q.Query(ctx, `
 SELECT id, username, email, name, password_hash, enabled, receive_announcement_email,
   source, github_id, github_login, github_avatar_url, github_linked_at,
-  subscription_tier, created_at, updated_at
+  subscription_tier, subscription_expires_at, credit_balance_microunits,
+  credit_used_microunits, created_at, updated_at
 FROM sapi_users
 ORDER BY position ASC, created_at ASC, id ASC
 `)
@@ -495,6 +632,9 @@ ORDER BY position ASC, created_at ASC, id ASC
 			&user.GitHubAvatarURL,
 			&user.GitHubLinkedAt,
 			&user.SubscriptionTier,
+			&user.SubscriptionExpiresAt,
+			&user.CreditBalanceMicrounits,
+			&user.CreditUsedMicrounits,
 			&user.CreatedAt,
 			&user.UpdatedAt,
 		); err != nil {
@@ -834,10 +974,20 @@ func savePostgresNormalizedStateTx(ctx context.Context, tx postgresQuerier, db *
 	if _, err := tx.Exec(ctx, `
 INSERT INTO sapi_app_config (
   id, version, app_secret, site_email, default_rpm_limit, registration_disabled,
-  maintenance_mode, maintenance_end_time, show_only_available_models, created_at, updated_at
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+  maintenance_mode, maintenance_end_time, show_only_available_models,
+  billing_enabled, billing_currency, billing_usd_to_cny_rate, billing_markup_multiplier,
+  billing_models_dev_url, billing_last_price_sync_at,
+  payment_enabled, payment_provider, payment_gateway_url, payment_merchant_id,
+  payment_merchant_key, payment_site_name, payment_notify_url, payment_return_url,
+  created_at, updated_at
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
 `, postgresStateAppID, state.Version, state.AppSecret, state.SiteEmail, state.DefaultRPMLimit, state.RegistrationDisabled,
-		state.MaintenanceMode, state.MaintenanceEndTime, state.ShowOnlyAvailableModels, state.CreatedAt, state.UpdatedAt); err != nil {
+		state.MaintenanceMode, state.MaintenanceEndTime, state.ShowOnlyAvailableModels,
+		state.BillingConfig.Enabled, state.BillingConfig.Currency, state.BillingConfig.USDToCNYRate, state.BillingConfig.MarkupMultiplier,
+		state.BillingConfig.ModelsDevURL, state.BillingConfig.LastPriceSyncAt,
+		state.PaymentConfig.Enabled, state.PaymentConfig.Provider, state.PaymentConfig.GatewayURL, state.PaymentConfig.MerchantID,
+		state.PaymentConfig.MerchantKey, state.PaymentConfig.SiteName, state.PaymentConfig.NotifyURL, state.PaymentConfig.ReturnURL,
+		state.CreatedAt, state.UpdatedAt); err != nil {
 		return err
 	}
 
@@ -848,6 +998,18 @@ INSERT INTO sapi_app_config (
 		return err
 	}
 	if err := savePostgresSiteBanner(ctx, tx, state.SiteBanner); err != nil {
+		return err
+	}
+	if err := savePostgresPaymentAllowedTypes(ctx, tx, state.PaymentConfig); err != nil {
+		return err
+	}
+	if err := savePostgresSubscriptionPlans(ctx, tx, state.SubscriptionPlans); err != nil {
+		return err
+	}
+	if err := savePostgresModelPrices(ctx, tx, state.ModelPrices); err != nil {
+		return err
+	}
+	if err := savePostgresPaymentOrders(ctx, tx, state.PaymentOrders); err != nil {
 		return err
 	}
 	if err := savePostgresProviders(ctx, tx, state.Providers); err != nil {
@@ -898,6 +1060,10 @@ func clearPostgresNormalizedState(ctx context.Context, q postgresQuerier) error 
 		"sapi_suggestions",
 		"sapi_token_usage",
 		"sapi_documents",
+		"sapi_payment_orders",
+		"sapi_model_prices",
+		"sapi_subscription_plans",
+		"sapi_payment_allowed_types",
 		"sapi_site_emails",
 		"sapi_site_banner",
 		"sapi_smtp_config",
@@ -949,6 +1115,78 @@ INSERT INTO sapi_site_banner (app_id, content, updated_at)
 VALUES ($1,$2,$3)
 `, postgresStateAppID, banner.Content, banner.UpdatedAt)
 	return err
+}
+
+func savePostgresPaymentAllowedTypes(ctx context.Context, q postgresQuerier, cfg *models.PaymentConfig) error {
+	cfg = billing.NormalizePaymentConfig(cfg)
+	for i, payType := range cfg.AllowedTypes {
+		if _, err := q.Exec(ctx, `
+INSERT INTO sapi_payment_allowed_types (app_id, position, pay_type)
+VALUES ($1,$2,$3)
+`, postgresStateAppID, i, payType); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func savePostgresSubscriptionPlans(ctx context.Context, q postgresQuerier, plans []models.SubscriptionPlan) error {
+	for i, plan := range billing.NormalizeSubscriptionPlans(plans) {
+		if _, err := q.Exec(ctx, `
+INSERT INTO sapi_subscription_plans (
+  id, position, name, description, rpm_limit, price_cents, credit_microunits,
+  duration_days, enabled, sort_order
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+`, plan.ID, i, plan.Name, plan.Description, plan.RPMLimit, plan.PriceCents, plan.CreditMicrounits,
+			plan.DurationDays, plan.Enabled, plan.SortOrder); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func savePostgresModelPrices(ctx context.Context, q postgresQuerier, prices []models.ModelPrice) error {
+	for _, price := range prices {
+		if price.ModelID == "" {
+			continue
+		}
+		if _, err := q.Exec(ctx, `
+INSERT INTO sapi_model_prices (
+  model_id, display_name, provider_id, input_usd_per_million_tokens,
+  output_usd_per_million_tokens, cache_read_usd_per_million_tokens,
+  cache_write_usd_per_million_tokens, reasoning_usd_per_million_tokens,
+  source, manual, updated_at
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+`, price.ModelID, price.DisplayName, price.ProviderID, price.InputUSDPerMillionTokens,
+			price.OutputUSDPerMillionTokens, price.CacheReadUSDPerMillionTokens,
+			price.CacheWriteUSDPerMillionTokens, price.ReasoningUSDPerMillionTokens,
+			price.Source, price.Manual, price.UpdatedAt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func savePostgresPaymentOrders(ctx context.Context, q postgresQuerier, orders []models.PaymentOrder) error {
+	for i, order := range orders {
+		raw, err := json.Marshal(order.RawNotify)
+		if err != nil || len(raw) == 0 {
+			raw = []byte(`{}`)
+		}
+		if _, err := q.Exec(ctx, `
+INSERT INTO sapi_payment_orders (
+  id, position, user_id, username, subscription_tier, plan_name, amount_cents,
+  credit_microunits, currency, provider, pay_type, out_trade_no, trade_no,
+  status, created_at, paid_at, expires_at, raw_notify
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+`, order.ID, i, order.UserID, order.Username, order.SubscriptionTier, order.PlanName,
+			order.AmountCents, order.CreditMicrounits, order.Currency, order.Provider,
+			order.PayType, order.OutTradeNo, order.TradeNo, order.Status,
+			order.CreatedAt, order.PaidAt, order.ExpiresAt, raw); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func savePostgresProviders(ctx context.Context, q postgresQuerier, providers []models.Provider) error {
@@ -1010,11 +1248,13 @@ func savePostgresUsers(ctx context.Context, q postgresQuerier, users []models.Us
 INSERT INTO sapi_users (
   id, position, username, email, name, password_hash, enabled, receive_announcement_email,
   source, github_id, github_login, github_avatar_url, github_linked_at,
-  subscription_tier, created_at, updated_at
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+  subscription_tier, subscription_expires_at, credit_balance_microunits,
+  credit_used_microunits, created_at, updated_at
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
 `, user.ID, i, user.Username, user.Email, user.Name, user.PasswordHash, user.Enabled, user.ReceiveAnnouncementEmail,
 			user.Source, user.GitHubID, user.GitHubLogin, user.GitHubAvatarURL, user.GitHubLinkedAt,
-			user.SubscriptionTier, user.CreatedAt, user.UpdatedAt); err != nil {
+			user.SubscriptionTier, user.SubscriptionExpiresAt, user.CreditBalanceMicrounits,
+			user.CreditUsedMicrounits, user.CreatedAt, user.UpdatedAt); err != nil {
 			return err
 		}
 		for j, key := range user.APIKeys {

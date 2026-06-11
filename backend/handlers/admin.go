@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"sapi/auth"
+	"sapi/billing"
 	"sapi/config"
 	"sapi/middleware"
 	"sapi/models"
@@ -30,6 +31,12 @@ func MountAdminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/session", middleware.RequireAdmin(handleAdminSession))
 	mux.HandleFunc("GET /api/admin/usage", middleware.RequireAdmin(handleAdminUsage))
 	mux.HandleFunc("GET /api/admin/server-status", middleware.RequireAdmin(handleAdminServerStatus))
+	mux.HandleFunc("PUT /api/admin/subscription-plans", middleware.RequireAdmin(handleAdminUpdateSubscriptionPlans))
+	mux.HandleFunc("PUT /api/admin/billing-config", middleware.RequireAdmin(handleAdminUpdateBillingConfig))
+	mux.HandleFunc("POST /api/admin/model-prices/sync", middleware.RequireAdmin(handleAdminSyncModelPrices))
+	mux.HandleFunc("PUT /api/admin/model-prices", middleware.RequireAdmin(handleAdminUpsertModelPrice))
+	mux.HandleFunc("DELETE /api/admin/model-prices", middleware.RequireAdmin(handleAdminDeleteModelPrice))
+	mux.HandleFunc("PUT /api/admin/payment-config", middleware.RequireAdmin(handleAdminUpdatePaymentConfig))
 	mux.HandleFunc("GET /api/admin/request-logs/{id}", middleware.RequireAdmin(handleAdminRequestLog))
 	mux.HandleFunc("GET /api/admin/request-logs/export", middleware.RequireAdmin(handleAdminRequestLogsExport))
 	mux.HandleFunc("GET /api/admin/smtp-config", middleware.RequireAdmin(handleAdminGetSMTP))
@@ -81,7 +88,7 @@ func writeAdminState(w http.ResponseWriter, r *http.Request, includeSession bool
 
 	payload := map[string]interface{}{
 		"providers":               store.RedactProviders(db.Providers),
-		"users":                   sanitizeUsers(db.Users),
+		"users":                   sanitizeUsers(db.Users, db),
 		"adminApiKeys":            sanitizeAdminAPIKeys(db.AdminAPIKeys),
 		"adminPasskeys":           sanitizeAdminPasskeys(db.AdminPasskeys),
 		"publicConfig":            serviceConfigForRequest(r, nil),
@@ -96,7 +103,11 @@ func writeAdminState(w http.ResponseWriter, r *http.Request, includeSession bool
 		"siteEmail":               firstSiteEmail(siteEmailsFromDB(db)),
 		"siteEmails":              siteEmailsFromDB(db),
 		"defaultRpmLimit":         db.DefaultRPMLimit,
-		"subscriptionTiers":       subscription.Tiers,
+		"subscriptionTiers":       subscription.TiersForDB(db),
+		"modelPrices":             db.ModelPrices,
+		"billingConfig":           db.BillingConfig,
+		"paymentConfig":           billing.PublicPaymentConfig(db.PaymentConfig),
+		"paymentOrders":           sanitizePaymentOrders(db.PaymentOrders, false),
 		"smtpConfig": map[string]interface{}{
 			"host":    smtp.Host,
 			"port":    smtp.Port,
@@ -212,7 +223,7 @@ func handleAdminUserUsage(w http.ResponseWriter, r *http.Request) {
 
 	days := queryInt(r, "days", 365, 1, 365)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"user":  sanitizeUserExportSummary(user),
+		"user":  sanitizeUserExportSummary(user, db),
 		"days":  days,
 		"usage": usage.GetUsageStats(db, userID, days),
 	})
@@ -251,7 +262,7 @@ func handleAdminUserRequestLogsExport(w http.ResponseWriter, r *http.Request) {
 	filename := fmt.Sprintf("sapi-user-%s-request-logs-%s.tar.gz", safeExportSlug(user), now.Format("2006-01-02"))
 	writeRequestLogsArchiveResponse(w, filename, exportLogs, map[string]interface{}{
 		"exportedAt":      now.Format(time.RFC3339),
-		"user":            sanitizeUserExportSummary(user),
+		"user":            sanitizeUserExportSummary(user, db),
 		"days":            days,
 		"limit":           limit,
 		"includeContent":  includeContent,
@@ -1006,7 +1017,7 @@ func handleAdminUpdateUserAPIKey(w http.ResponseWriter, r *http.Request) {
 					if u.APIKeys[j].ID == keyID {
 						k := &u.APIKeys[j]
 						if rpm, ok := body["rpmLimit"].(float64); ok {
-							k.RPMLimit = subscription.ClampAPIKeyRPMLimit(u, int(rpm))
+							k.RPMLimit = subscription.ClampAPIKeyRPMLimitInDB(u, int(rpm), db)
 						}
 						if banned, ok := body["banned"].(bool); ok {
 							middleware.SetAPIKeyBan(k, banned, "manual", time.Now().UTC())
@@ -1338,7 +1349,7 @@ func handleAdminApplyGlobalSubscriptionTier(w http.ResponseWriter, r *http.Reque
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"subscriptionTier":     tier,
-		"subscriptionRpmLimit": subscription.RPMLimitForTier(tier),
+		"subscriptionRpmLimit": subscription.RPMLimitForTierInDB(store.ReadDB(), tier),
 		"changedUsers":         result["changedUsers"],
 		"totalUsers":           result["totalUsers"],
 	})
@@ -1433,10 +1444,10 @@ func handleAdminUpdateModelsVisibility(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func sanitizeUsers(users []models.User) []map[string]interface{} {
+func sanitizeUsers(users []models.User, db *models.Database) []map[string]interface{} {
 	result := make([]map[string]interface{}, len(users))
 	for i, u := range users {
-		result[i] = sanitizeUser(&u)
+		result[i] = sanitizeUserWithDB(&u, db)
 	}
 	return result
 }
@@ -1490,7 +1501,7 @@ func safeExportSlug(user *models.User) string {
 	return "user"
 }
 
-func sanitizeUserExportSummary(user *models.User) map[string]interface{} {
+func sanitizeUserExportSummary(user *models.User, db *models.Database) map[string]interface{} {
 	return map[string]interface{}{
 		"id":                   user.ID,
 		"name":                 user.Name,
@@ -1500,7 +1511,7 @@ func sanitizeUserExportSummary(user *models.User) map[string]interface{} {
 		"source":               user.Source,
 		"githubLogin":          user.GitHubLogin,
 		"subscriptionTier":     subscription.TierForUser(user),
-		"subscriptionRpmLimit": subscription.RPMLimitForUser(user),
+		"subscriptionRpmLimit": subscription.RPMLimitForUserInDB(user, db),
 		"createdAt":            user.CreatedAt,
 		"updatedAt":            user.UpdatedAt,
 	}

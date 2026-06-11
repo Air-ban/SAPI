@@ -9,7 +9,7 @@ SAPI 是一个轻量级 LLM API 中转站。管理员在后台配置上游 LLM A
 - **站内创作**：用户前台提供 Responses Chat 与生图工坊，支持图片生成、参考图编辑和结果下载
 - **用户系统**：注册/登录、GitHub OAuth、邀请码、腾讯云验证码
 - **API Key 管理**：用户自助创建、模型白名单、RPM 限制、自动封禁
-- **订阅分级**：lite/base/pro/ultra/MAX 五档 RPM 订阅
+- **订阅计费**：email/lite/base/pro/ultra/MAX 套餐、models.dev 模型价格、额度消耗展示、易支付接入
 - **管理后台**：Provider 管理、用户管理、用量统计、服务器中控、公告、建议反馈
 - **健康检查**：Provider 健康探测、故障自动切换、模型可用性 Dashboard
 - **运维功能**：站点公告、横幅、维护模式、SMTP 邮件邀请
@@ -112,6 +112,8 @@ npm run client:dev
 | `SAPI_SMTP_FROM` | 空 | 发件人地址 |
 
 完整配置说明见 [docs/configuration.md](docs/configuration.md)。
+
+套餐、模型价格和易支付配置可在管理后台 `总设置` 修改。默认模型价格来源为 [models.dev](https://models.dev/)，易支付回调路径为 `/api/payments/ezfpy/notify` 和 `/api/payments/ezfpy/return`。
 
 ## 数据存储
 

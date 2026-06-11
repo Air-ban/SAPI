@@ -31,6 +31,7 @@ import {
   cacheHitText,
   formatDate,
   formatDuration,
+  formatMoneyFromMicrounits,
   formatNumber,
   formatUserName,
   requestStatusColor
@@ -73,7 +74,7 @@ export function UsageSection({ usage, onLoadRequestContent, privacyMode = false 
           <Box
             sx={{
               display: "grid",
-              gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))", lg: "repeat(4, minmax(0, 1fr))" },
+              gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))", lg: "repeat(5, minmax(0, 1fr))" },
               gap: 2
             }}
           >
@@ -81,6 +82,7 @@ export function UsageSection({ usage, onLoadRequestContent, privacyMode = false 
             <Metric icon={<DnsIcon />} label="Input Tokens" value={formatNumber(usage.totalPromptTokens)} />
             <Metric icon={<RocketLaunchIcon />} label="Output Tokens" value={formatNumber(usage.totalCompletionTokens)} />
             <Metric icon={<CheckCircleIcon />} label="缓存命中 Tokens" value={formatNumber(usage.totalCachedTokens)} />
+            <Metric icon={<BarChartIcon />} label="额度消耗" value={formatMoneyFromMicrounits(usage.totalBillableMicrounits)} />
           </Box>
 
           <Stack spacing={1.25}>
@@ -97,6 +99,7 @@ export function UsageSection({ usage, onLoadRequestContent, privacyMode = false 
                           <TableCell align="right">输入</TableCell>
                           <TableCell align="right">输出</TableCell>
                           <TableCell align="right">Tokens</TableCell>
+                          <TableCell align="right">额度消耗</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
@@ -115,6 +118,7 @@ export function UsageSection({ usage, onLoadRequestContent, privacyMode = false 
                             <TableCell align="right">{formatNumber(row.promptTokens)}</TableCell>
                             <TableCell align="right">{formatNumber(row.completionTokens)}</TableCell>
                             <TableCell align="right">{formatNumber(row.totalTokens)}</TableCell>
+                            <TableCell align="right">{formatMoneyFromMicrounits(row.billableMicrounits)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -137,6 +141,7 @@ export function UsageSection({ usage, onLoadRequestContent, privacyMode = false 
                           <TableCell align="right">输出</TableCell>
                           <TableCell align="right">缓存命中</TableCell>
                           <TableCell align="right">Tokens</TableCell>
+                          <TableCell align="right">额度消耗</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
@@ -152,6 +157,7 @@ export function UsageSection({ usage, onLoadRequestContent, privacyMode = false 
                             <TableCell align="right">{formatNumber(row.completionTokens)}</TableCell>
                             <TableCell align="right">{formatNumber(row.cachedTokens)}</TableCell>
                             <TableCell align="right">{formatNumber(row.totalTokens)}</TableCell>
+                            <TableCell align="right">{formatMoneyFromMicrounits(row.billableMicrounits)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -174,6 +180,7 @@ export function UsageSection({ usage, onLoadRequestContent, privacyMode = false 
                           <TableCell align="right">输出</TableCell>
                           <TableCell align="right">缓存命中</TableCell>
                           <TableCell align="right">Tokens</TableCell>
+                          <TableCell align="right">额度消耗</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
@@ -185,6 +192,7 @@ export function UsageSection({ usage, onLoadRequestContent, privacyMode = false 
                             <TableCell align="right">{formatNumber(row.completionTokens)}</TableCell>
                             <TableCell align="right">{formatNumber(row.cachedTokens)}</TableCell>
                             <TableCell align="right">{formatNumber(row.totalTokens)}</TableCell>
+                            <TableCell align="right">{formatMoneyFromMicrounits(row.billableMicrounits)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -201,7 +209,7 @@ export function UsageSection({ usage, onLoadRequestContent, privacyMode = false 
                 最近请求记录
               </Typography>
               <TableContainer sx={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-                <Table size="small" sx={{ minWidth: showUserColumn || showKeyColumn || showIPInfoColumn || showDeviceColumn || showRequestContentColumn ? 1480 : 960 }}>
+                <Table size="small" sx={{ minWidth: showUserColumn || showKeyColumn || showIPInfoColumn || showDeviceColumn || showRequestContentColumn ? 1580 : 1060 }}>
                   <TableHead>
                     <TableRow>
                       <TableCell>时间</TableCell>
@@ -217,6 +225,7 @@ export function UsageSection({ usage, onLoadRequestContent, privacyMode = false 
                       <TableCell align="right">缓存命中</TableCell>
                       <TableCell align="right">缓存写入</TableCell>
                       <TableCell align="right">总 Tokens</TableCell>
+                      <TableCell align="right">额度消耗</TableCell>
                       <TableCell align="right">耗时</TableCell>
                       {showRequestContentColumn ? <TableCell>请求 JSON</TableCell> : null}
                       </TableRow>
@@ -372,6 +381,7 @@ function RecentRequestRow({
         <TableCell align="right">{cacheHitText(request)}</TableCell>
         <TableCell align="right">{formatNumber(request.cacheCreationTokens)}</TableCell>
         <TableCell align="right">{formatNumber(request.totalTokens)}</TableCell>
+        <TableCell align="right">{formatMoneyFromMicrounits(request.billableMicrounits)}</TableCell>
         <TableCell align="right">{formatDuration(request.durationMs)}</TableCell>
         {showRequestContentColumn ? (
           <TableCell>
@@ -389,7 +399,7 @@ function RecentRequestRow({
       </TableRow>
       {showRequestContentColumn && (hasRequestJson || error) ? (
         <TableRow>
-          <TableCell colSpan={10 + (showRequestContentColumn ? 1 : 0) + (showUserColumn ? 1 : 0) + (showKeyColumn ? 1 : 0) + (showIPInfoColumn ? 1 : 0) + (showDeviceColumn ? 1 : 0)} sx={{ p: 0, borderBottom: open ? undefined : 0 }}>
+          <TableCell colSpan={11 + (showRequestContentColumn ? 1 : 0) + (showUserColumn ? 1 : 0) + (showKeyColumn ? 1 : 0) + (showIPInfoColumn ? 1 : 0) + (showDeviceColumn ? 1 : 0)} sx={{ p: 0, borderBottom: open ? undefined : 0 }}>
             <Collapse in={open || Boolean(error)} timeout="auto" unmountOnExit>
               <Box
                 component={error ? "div" : "pre"}

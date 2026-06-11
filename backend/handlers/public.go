@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"sapi/auth"
+	"sapi/billing"
 	"sapi/config"
 	"sapi/middleware"
 	"sapi/models"
@@ -266,6 +267,10 @@ func publicConfigForRequest(r *http.Request) map[string]interface{} {
 		"adminPasskey": map[string]interface{}{
 			"enabled": store.AdminPasskeyCount() > 0,
 		},
+		"billing": map[string]interface{}{
+			"plans":         publicSubscriptionPlans(db),
+			"paymentConfig": billing.PublicPaymentConfig(db.PaymentConfig),
+		},
 	}
 }
 
@@ -300,6 +305,10 @@ func serviceConfigForRequest(r *http.Request, user *models.User) map[string]inte
 			{"method": "POST", "path": "/v1/messages", "description": "Anthropic 兼容 Messages API"},
 		},
 		"models": modelsList,
+		"billing": map[string]interface{}{
+			"plans":         publicSubscriptionPlans(db),
+			"paymentConfig": billing.PublicPaymentConfig(db.PaymentConfig),
+		},
 	}
 }
 
@@ -308,6 +317,10 @@ func MountPublicRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/ready", handleReady)
 	mux.HandleFunc("GET /api/public/config", handlePublicConfig)
 	mux.HandleFunc("GET /api/public/key", handlePublicKey)
+	mux.HandleFunc("GET /api/payments/ezfpy/notify", handleEpayNotify)
+	mux.HandleFunc("POST /api/payments/ezfpy/notify", handleEpayNotify)
+	mux.HandleFunc("GET /api/payments/ezfpy/return", handleEpayReturn)
+	mux.HandleFunc("POST /api/payments/ezfpy/return", handleEpayReturn)
 	mux.HandleFunc("GET /v1/models", handleModelsList)
 	mux.HandleFunc("GET /models", handleModelsList)
 	mux.HandleFunc("GET /v1/models/{model...}", handleModelRetrieve)

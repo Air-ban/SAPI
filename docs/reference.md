@@ -37,6 +37,10 @@ X-API-Key: sk-sapi-...
 | `POST` | `/api/suggestions` | 提交建议。 |
 | `GET` | `/api/swagger.json` | OpenAPI/Swagger JSON。 |
 | `GET` | `/swagger` | Swagger UI。 |
+| `GET` | `/api/payments/ezfpy/notify` | 易支付异步通知回调，验签成功返回 `success`。 |
+| `POST` | `/api/payments/ezfpy/notify` | 易支付异步通知回调，验签成功返回 `success`。 |
+| `GET` | `/api/payments/ezfpy/return` | 易支付同步跳转回调，处理后跳回用户前台。 |
+| `POST` | `/api/payments/ezfpy/return` | 易支付同步跳转回调，处理后跳回用户前台。 |
 
 示例:
 ```bash
@@ -83,6 +87,9 @@ curl http://localhost:3000/api/auth/register -H "Content-Type: application/json"
 | `DELETE` | `/api/user/api-keys/{id}` | 删除 Key。 |
 | `PUT` | `/api/user/settings` | 更新用户设置。 |
 | `DELETE` | `/api/user/account` | 注销当前用户账号并删除个人 API Key 和请求日志。 |
+| `GET` | `/api/user/billing?days=365` | 用户余额、额度消耗、可购买套餐、支付配置和订单。 |
+| `GET` | `/api/user/payments` | 当前用户支付订单。 |
+| `POST` | `/api/user/payments` | 创建易支付套餐订单。 |
 | `GET` | `/api/user/usage?days=365` | 用户用量统计。 |
 | `GET` | `/api/user/request-logs/{id}` | 查看自己的请求日志摘要，不返回 IP、设备或请求 JSON。 |
 | `GET` | `/api/user/suggestions` | 查看自己的建议和回复。 |
@@ -96,6 +103,16 @@ curl http://localhost:3000/api/user/api-key -H "Authorization: Bearer <user-jwt>
 ```bash
 curl -X PUT http://localhost:3000/api/user/api-keys/key_id -H "Authorization: Bearer <user-jwt>" -H "Content-Type: application/json" -d '{"name":"bot","allowedModels":[]}'
 ```
+
+创建套餐订单:
+```bash
+curl http://localhost:3000/api/user/payments \
+  -H "Authorization: Bearer <user-jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{"subscriptionTier":"pro","payType":"alipay"}'
+```
+
+响应包含 `gatewayUrl` 和已签名的 `params`，前端会用 POST 表单跳转到易支付。
 
 ## 管理员接口
 需要管理员 JWT。
@@ -187,6 +204,12 @@ tar.gz 内容:
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | `PUT` | `/api/admin/subscriptions/global-tier` | 一键切换所有用户订阅。 |
+| `PUT` | `/api/admin/subscription-plans` | 更新套餐 RPM、价格、额度、时长和启用状态。 |
+| `PUT` | `/api/admin/billing-config` | 更新计费开关、汇率、倍率和 models.dev URL。 |
+| `POST` | `/api/admin/model-prices/sync` | 从 models.dev 同步模型价格。 |
+| `PUT` | `/api/admin/model-prices` | 新增或覆盖单个模型价格。 |
+| `DELETE` | `/api/admin/model-prices?modelId=...` | 删除单个模型价格。 |
+| `PUT` | `/api/admin/payment-config` | 更新易支付配置。 |
 | `PUT` | `/api/admin/rpm-limit` | 更新 legacy 默认 RPM。 |
 | `PUT` | `/api/admin/banner` | 更新站点横幅。 |
 | `PUT` | `/api/admin/maintenance` | 更新维护模式。 |
@@ -198,14 +221,45 @@ tar.gz 内容:
 curl -X PUT http://localhost:3000/api/admin/subscriptions/global-tier -H "Authorization: Bearer <admin-jwt>" -H "Content-Type: application/json" -d '{"subscriptionTier":"base"}'
 ```
 
-订阅分组:
-| ID | RPM |
-| --- | --- |
-| `lite` | 10 |
-| `base` | 30 |
-| `pro` | 50 |
-| `ultra` | 100 |
-| `MAX` | 不限速 |
+更新套餐:
+```bash
+curl -X PUT http://localhost:3000/api/admin/subscription-plans \
+  -H "Authorization: Bearer <admin-jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{"subscriptionPlans":[{"id":"pro","name":"Pro","rpmLimit":50,"priceCents":2990,"creditMicrounits":35000000,"durationDays":30,"enabled":true,"sortOrder":40}]}'
+```
+
+同步模型价格:
+```bash
+curl -X POST http://localhost:3000/api/admin/model-prices/sync \
+  -H "Authorization: Bearer <admin-jwt>"
+```
+
+手动模型价格，单位为 USD / 1M tokens:
+```bash
+curl -X PUT http://localhost:3000/api/admin/model-prices \
+  -H "Authorization: Bearer <admin-jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{"modelId":"gpt-4o-mini","inputUsdPerMillionTokens":0.15,"outputUsdPerMillionTokens":0.6}'
+```
+
+易支付配置:
+```bash
+curl -X PUT http://localhost:3000/api/admin/payment-config \
+  -H "Authorization: Bearer <admin-jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled":true,"gatewayUrl":"https://www.ezfpy.cn/mapi.php","merchantId":"1000","merchantKey":"secret","siteName":"SAPI","notifyUrl":"https://sapi.example.com/api/payments/ezfpy/notify","returnUrl":"https://sapi.example.com/api/payments/ezfpy/return","allowedTypes":["alipay","wxpay"]}'
+```
+
+默认订阅分组:
+| ID | RPM | 价格 |
+| --- | --- | --- |
+| `email` | 5 | 免费 |
+| `lite` | 10 | 免费 |
+| `base` | 30 | 9.90 CNY |
+| `pro` | 50 | 29.90 CNY |
+| `ultra` | 100 | 69.90 CNY |
+| `MAX` | 不限速 | 管理员专用 |
 
 ### 邀请码、SMTP、公告、建议
 | 方法 | 路径 | 说明 |

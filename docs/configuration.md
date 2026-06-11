@@ -85,15 +85,50 @@ Redis 保护范围:
 
 订阅分组:
 
-| 分组 | RPM |
-| --- | --- |
-| `lite` | 10 |
-| `base` | 30 |
-| `pro` | 50 |
-| `ultra` | 100 |
-| `MAX` | 不限速 |
+| 分组 | 默认 RPM | 默认价格 |
+| --- | --- | --- |
+| `email` | 5 | 免费 |
+| `lite` | 10 | 免费 |
+| `base` | 30 | 9.90 CNY |
+| `pro` | 50 | 29.90 CNY |
+| `ultra` | 100 | 69.90 CNY |
+| `MAX` | 不限速 | 管理员专用 |
 
-新用户默认 `lite`。教育邮箱和 GitHub 账号来源会被记录，但当前默认 RPM 由订阅分组决定。
+普通邮箱新用户默认 `email`，邀请码、GitHub 和教育邮箱默认 `lite`。GitHub 来源用户保留 52 RPM 特例，`.edu.cn` 用户保留 50 RPM 特例。套餐 RPM、价格、入账额度和启用状态可在管理后台 `总设置 -> 订阅套餐` 修改。
+
+## 计费、模型价格和易支付
+SAPI 会按模型价格表把请求用量折算为 CNY 微元额度，并在请求日志中记录:
+
+- `costUsd`
+- `costCny`
+- `billableMicrounits`
+
+管理后台 `总设置 -> 计费与模型价格` 可配置:
+
+| 字段 | 默认值 | 说明 |
+| --- | --- | --- |
+| 计费开关 | 开启 | 关闭后不再对新请求计算额度消耗。 |
+| 币种 | `CNY` | 当前前端展示币种。 |
+| USD/CNY | `7.2` | 把 models.dev 的 USD 价格折算为 CNY。 |
+| 加价倍率 | `1` | 站点侧倍率，例如 `1.2` 表示按成本 1.2 倍扣费。 |
+| models.dev API | `https://models.dev/api.json` | 同步模型价格的数据源。 |
+
+models.dev 同步写入 `modelPrices`，单位是 USD / 1M tokens，字段包括 input、output、cache read、cache write 和 reasoning。管理员也可以手动新增或覆盖某个模型价格。
+
+易支付配置在管理后台 `总设置 -> 易支付` 完成:
+
+| 字段 | 默认值 | 说明 |
+| --- | --- | --- |
+| 在线支付 | 关闭 | 开启后用户可在 `计费套餐` 页面购买付费套餐。 |
+| 网关 URL | `https://www.ezfpy.cn/mapi.php` | 易支付支付网关。 |
+| 商户 ID | 空 | 易支付 PID。 |
+| 商户 Key | 空 | 用于 MD5 签名，前端只显示是否已保存。 |
+| 站点名称 | `SAPI` | 提交给易支付的 `sitename`。 |
+| Notify URL | 自动推断 | 建议显式填 `https://<domain>/api/payments/ezfpy/notify`。 |
+| Return URL | 自动推断 | 建议显式填 `https://<domain>/api/payments/ezfpy/return`。 |
+| 支付方式 | `alipay,wxpay,qqpay` | 用户前台可选支付方式。 |
+
+易支付异步通知验签成功并返回 `TRADE_SUCCESS` 或 `SUCCESS` 后，SAPI 会把订单置为 `paid`，给用户切换套餐、增加账户余额并设置套餐到期时间。回调成功时服务端返回纯文本 `success`。
 
 ## 请求体限制
 ```bash

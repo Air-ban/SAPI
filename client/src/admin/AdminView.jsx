@@ -44,6 +44,7 @@ import { AnnouncementsSection } from "./AnnouncementsSection";
 import { AdminSuggestionsSection } from "./AdminSuggestionsSection";
 import { AdminPasskeysSection } from "./AdminPasskeysSection";
 import { ServerStatusSection } from "./ServerStatusSection";
+import { BillingSettingsSection } from "./BillingSettingsSection";
 import { requestBlob } from "../utils/api";
 
 export function AdminView({
@@ -378,6 +379,16 @@ export function AdminView({
           />
           <RpmLimitSection
             subscriptionTiers={subscriptionTiers}
+            afterChange={afterChange}
+            onConfirm={onConfirm}
+            onToast={onToast}
+          />
+          <BillingSettingsSection
+            subscriptionTiers={subscriptionTiers}
+            billingConfig={state?.billingConfig || {}}
+            paymentConfig={state?.paymentConfig || {}}
+            modelPrices={state?.modelPrices || []}
+            paymentOrders={state?.paymentOrders || []}
             afterChange={afterChange}
             onConfirm={onConfirm}
             onToast={onToast}

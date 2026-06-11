@@ -126,26 +126,29 @@ http://localhost:3000/#login
 Authorization: Bearer <user-jwt>
 ```
 
-## 订阅和 RPM
-新用户默认订阅分组为 `lite`。教育邮箱和 GitHub 账号来源会被记录，但当前默认 RPM 由订阅分组决定，不再自动按来源设置 `rpm30` 或 `rpm100`。
+## 订阅、RPM 和额度
+普通邮箱新用户默认订阅分组为 `email`，默认 5 RPM。邀请码、GitHub 和教育邮箱注册默认 `lite`；GitHub 来源用户保留 52 RPM，`.edu.cn` 用户保留 50 RPM。
 
 订阅分组:
 
-| 分组 | RPM | 说明 |
-| --- | --- | --- |
-| `lite` | 10 | 默认分组。 |
-| `base` | 30 | 基础分组。 |
-| `pro` | 50 | 专业分组。 |
-| `ultra` | 100 | 高配分组。 |
-| `MAX` | 不限速 | 管理员授予的最高分组。 |
+| 分组 | 默认 RPM | 默认价格 | 说明 |
+| --- | --- | --- | --- |
+| `email` | 5 | 免费 | 普通邮箱默认分组。 |
+| `lite` | 10 | 免费 | 轻量体验分组。 |
+| `base` | 30 | 9.90 CNY | 日常使用。 |
+| `pro` | 50 | 29.90 CNY | 高频调用。 |
+| `ultra` | 100 | 69.90 CNY | 大额度调用。 |
+| `MAX` | 不限速 | 免费 | 管理员授予的最高分组。 |
 
 规则:
 - 管理员 API Key 不限速。
 - 用户 API Key 默认跟随用户订阅。
+- 管理员可修改套餐 RPM、价格、入账额度、时长和启用状态。
 - 管理员可给单个用户切换订阅。
 - 管理员可一键切换所有用户订阅。
 - 单个 API Key 可设置更低 RPM 作为额外限制。
 - API Key 的显式 RPM 不能超过用户订阅 RPM。
+- 用户前台 `计费套餐` 会显示账户余额、近 365 天额度消耗、当前套餐 RPM 和最近订单。
 
 全局切换所有用户到 `base`:
 ```bash
@@ -162,6 +165,28 @@ curl -X PUT http://localhost:3000/api/admin/users/usr_id \
   -H "Content-Type: application/json" \
   -d '{"subscriptionTier":"pro"}'
 ```
+
+## 模型价格和在线支付
+管理后台 `总设置` 包含三块计费设置:
+
+- `订阅套餐`: 修改每个套餐的 RPM、价格、入账额度、有效天数和启用状态。
+- `计费与模型价格`: 从 `https://models.dev/api.json` 同步模型价格，也可手动覆盖单个模型价格。
+- `易支付`: 配置易支付网关、PID、商户 Key、回调 URL 和支付方式。
+
+额度消耗按请求日志里的 token 用量计算:
+
+```text
+成本(CNY) = models.dev USD/1M token 价格 * token 数 / 1_000_000 * USD/CNY 汇率 * 加价倍率
+```
+
+回调 URL:
+
+```text
+https://<domain>/api/payments/ezfpy/notify
+https://<domain>/api/payments/ezfpy/return
+```
+
+用户购买付费套餐后，支付成功回调会把订单置为 `paid`，更新用户订阅分组、套餐到期时间，并把套餐额度加入账户余额。管理员虚拟用户拥有用户端全部功能且不限 RPM，不需要购买套餐。
 
 ## 创建 API Key
 用户控制台创建自己的 API Key，管理端也可以创建和管理 API Key。

@@ -35,6 +35,26 @@ export function formatNumber(value) {
   return Number(value || 0).toLocaleString();
 }
 
+export function formatMoneyFromCents(cents, currency = "CNY") {
+  const amount = Number(cents || 0) / 100;
+  return new Intl.NumberFormat("zh-CN", {
+    style: "currency",
+    currency,
+    minimumFractionDigits: amount >= 100 ? 0 : 2,
+    maximumFractionDigits: 2
+  }).format(amount);
+}
+
+export function formatMoneyFromMicrounits(value, currency = "CNY") {
+  const amount = Number(value || 0) / 1000000;
+  return new Intl.NumberFormat("zh-CN", {
+    style: "currency",
+    currency,
+    minimumFractionDigits: amount >= 100 ? 2 : 4,
+    maximumFractionDigits: 4
+  }).format(amount);
+}
+
 export function formatRpmLimit(value) {
   return Number(value || 0) > 0 ? `${Number(value).toLocaleString()} RPM` : "不限 RPM";
 }

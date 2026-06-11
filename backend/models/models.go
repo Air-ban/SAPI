@@ -9,31 +9,36 @@ import (
 const AdminVirtualUserID = "__admin__"
 
 type Database struct {
-	Version                 int                `json:"version"`
-	AppSecret               string             `json:"appSecret"`
-	Providers               []Provider         `json:"providers"`
-	Users                   []User             `json:"users"`
-	TokenUsage              []interface{}      `json:"tokenUsage"`
-	RequestLogs             []RequestLog       `json:"requestLogs"`
-	AdminAPIKeys            []APIKeyRecord     `json:"adminApiKeys"`
-	InvitationCodes         []InvitationCode   `json:"invitationCodes"`
-	VerificationCodes       []VerificationCode `json:"verificationCodes"`
-	AdminPasskeys           []AdminPasskey     `json:"adminPasskeys"`
-	Announcements           []Announcement     `json:"announcements"`
-	Documents               []interface{}      `json:"documents"`
-	Suggestions             []Suggestion       `json:"suggestions"`
-	SMTPConfig              *SMTPConfig        `json:"smtpConfig"`
-	SiteEmail               string             `json:"siteEmail"`
-	SiteEmails              []string           `json:"siteEmails"`
-	DefaultRPMLimit         int                `json:"defaultRpmLimit"`
-	SiteBanner              *SiteBanner        `json:"siteBanner"`
-	RegistrationDisabled    bool               `json:"registrationDisabled"`
-	MaintenanceMode         bool               `json:"maintenanceMode"`
-	MaintenanceEndTime      string             `json:"maintenanceEndTime"`
-	ShowOnlyAvailableModels bool               `json:"showOnlyAvailableModels"`
-	AdminCollapseModelProviders bool           `json:"adminCollapseModelProviders"`
-	CreatedAt               string             `json:"createdAt"`
-	UpdatedAt               string             `json:"updatedAt"`
+	Version                     int                `json:"version"`
+	AppSecret                   string             `json:"appSecret"`
+	Providers                   []Provider         `json:"providers"`
+	Users                       []User             `json:"users"`
+	TokenUsage                  []interface{}      `json:"tokenUsage"`
+	RequestLogs                 []RequestLog       `json:"requestLogs"`
+	AdminAPIKeys                []APIKeyRecord     `json:"adminApiKeys"`
+	InvitationCodes             []InvitationCode   `json:"invitationCodes"`
+	VerificationCodes           []VerificationCode `json:"verificationCodes"`
+	AdminPasskeys               []AdminPasskey     `json:"adminPasskeys"`
+	Announcements               []Announcement     `json:"announcements"`
+	Documents                   []interface{}      `json:"documents"`
+	Suggestions                 []Suggestion       `json:"suggestions"`
+	SMTPConfig                  *SMTPConfig        `json:"smtpConfig"`
+	SiteEmail                   string             `json:"siteEmail"`
+	SiteEmails                  []string           `json:"siteEmails"`
+	DefaultRPMLimit             int                `json:"defaultRpmLimit"`
+	SiteBanner                  *SiteBanner        `json:"siteBanner"`
+	RegistrationDisabled        bool               `json:"registrationDisabled"`
+	MaintenanceMode             bool               `json:"maintenanceMode"`
+	MaintenanceEndTime          string             `json:"maintenanceEndTime"`
+	ShowOnlyAvailableModels     bool               `json:"showOnlyAvailableModels"`
+	AdminCollapseModelProviders bool               `json:"adminCollapseModelProviders"`
+	SubscriptionPlans           []SubscriptionPlan `json:"subscriptionPlans"`
+	ModelPrices                 []ModelPrice       `json:"modelPrices"`
+	BillingConfig               *BillingConfig     `json:"billingConfig"`
+	PaymentConfig               *PaymentConfig     `json:"paymentConfig"`
+	PaymentOrders               []PaymentOrder     `json:"paymentOrders"`
+	CreatedAt                   string             `json:"createdAt"`
+	UpdatedAt                   string             `json:"updatedAt"`
 }
 
 type Provider struct {
@@ -102,6 +107,9 @@ type User struct {
 	GitHubAvatarURL          string         `json:"githubAvatarUrl"`
 	GitHubLinkedAt           string         `json:"githubLinkedAt"`
 	SubscriptionTier         string         `json:"subscriptionTier"`
+	SubscriptionExpiresAt    string         `json:"subscriptionExpiresAt"`
+	CreditBalanceMicrounits  int64          `json:"creditBalanceMicrounits"`
+	CreditUsedMicrounits     int64          `json:"creditUsedMicrounits"`
 	CollapseModelProviders   bool           `json:"collapseModelProviders"`
 	CreatedAt                string         `json:"createdAt"`
 	UpdatedAt                string         `json:"updatedAt"`
@@ -148,6 +156,9 @@ type RequestLog struct {
 	CacheCreationTokens int                    `json:"cacheCreationTokens"`
 	CacheMissTokens     int                    `json:"cacheMissTokens"`
 	ReasoningTokens     int                    `json:"reasoningTokens"`
+	CostUSD             float64                `json:"costUsd,omitempty"`
+	CostCNY             float64                `json:"costCny,omitempty"`
+	BillableMicrounits  int64                  `json:"billableMicrounits,omitempty"`
 	ErrorCode           string                 `json:"errorCode"`
 	ErrorMessage        string                 `json:"errorMessage"`
 	ClientGeo           *RequestClientGeo      `json:"clientGeo,omitempty"`
@@ -292,4 +303,71 @@ type SMTPConfig struct {
 type SiteBanner struct {
 	Content   string `json:"content"`
 	UpdatedAt string `json:"updatedAt"`
+}
+
+type SubscriptionPlan struct {
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Description      string `json:"description"`
+	RPMLimit         int    `json:"rpmLimit"`
+	PriceCents       int    `json:"priceCents"`
+	CreditMicrounits int64  `json:"creditMicrounits"`
+	DurationDays     int    `json:"durationDays"`
+	Enabled          bool   `json:"enabled"`
+	SortOrder        int    `json:"sortOrder"`
+}
+
+type ModelPrice struct {
+	ModelID                       string  `json:"modelId"`
+	DisplayName                   string  `json:"displayName"`
+	ProviderID                    string  `json:"providerId"`
+	InputUSDPerMillionTokens      float64 `json:"inputUsdPerMillionTokens"`
+	OutputUSDPerMillionTokens     float64 `json:"outputUsdPerMillionTokens"`
+	CacheReadUSDPerMillionTokens  float64 `json:"cacheReadUsdPerMillionTokens"`
+	CacheWriteUSDPerMillionTokens float64 `json:"cacheWriteUsdPerMillionTokens"`
+	ReasoningUSDPerMillionTokens  float64 `json:"reasoningUsdPerMillionTokens"`
+	Source                        string  `json:"source"`
+	Manual                        bool    `json:"manual"`
+	UpdatedAt                     string  `json:"updatedAt"`
+}
+
+type BillingConfig struct {
+	Enabled          bool    `json:"enabled"`
+	Currency         string  `json:"currency"`
+	USDToCNYRate     float64 `json:"usdToCnyRate"`
+	MarkupMultiplier float64 `json:"markupMultiplier"`
+	ModelsDevURL     string  `json:"modelsDevUrl"`
+	LastPriceSyncAt  string  `json:"lastPriceSyncAt"`
+}
+
+type PaymentConfig struct {
+	Enabled      bool     `json:"enabled"`
+	Provider     string   `json:"provider"`
+	GatewayURL   string   `json:"gatewayUrl"`
+	MerchantID   string   `json:"merchantId"`
+	MerchantKey  string   `json:"merchantKey"`
+	SiteName     string   `json:"siteName"`
+	NotifyURL    string   `json:"notifyUrl"`
+	ReturnURL    string   `json:"returnUrl"`
+	AllowedTypes []string `json:"allowedTypes"`
+}
+
+type PaymentOrder struct {
+	ID               string            `json:"id"`
+	UserID           string            `json:"userId"`
+	Username         string            `json:"username"`
+	SubscriptionTier string            `json:"subscriptionTier"`
+	PlanName         string            `json:"planName"`
+	AmountCents      int               `json:"amountCents"`
+	CreditMicrounits int64             `json:"creditMicrounits"`
+	Currency         string            `json:"currency"`
+	Provider         string            `json:"provider"`
+	PayType          string            `json:"payType"`
+	OutTradeNo       string            `json:"outTradeNo"`
+	TradeNo          string            `json:"tradeNo"`
+	Status           string            `json:"status"`
+	CreatedAt        string            `json:"createdAt"`
+	PaidAt           string            `json:"paidAt"`
+	ExpiresAt        string            `json:"expiresAt"`
+	RawNotify        map[string]string `json:"rawNotify,omitempty"`
 }

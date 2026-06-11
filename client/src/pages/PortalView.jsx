@@ -45,6 +45,7 @@ import { TokenUsageChart } from "../user/TokenUsageChart";
 import { ChatSection } from "../user/ChatSection";
 import { ImagePlaygroundSection } from "../user/ImagePlaygroundSection";
 import { BaseUrlLatencySection } from "../user/BaseUrlLatencySection";
+import { BillingSection } from "../user/BillingSection";
 
 const CLI_TOOLS = [
   { id: "codex", name: "Codex" },
@@ -97,12 +98,13 @@ export function PortalView({
     `  -H "Content-Type: application/json" \\`,
     `  -d '{"model":"${model}","messages":[{"role":"user","content":"hello"}]}'`
   ].join("\n");
-  const currentPage = ["overview", "key", "chat", "images", "usage", "models", "example", "settings", "suggestion"].includes(page)
+  const currentPage = ["overview", "key", "billing", "chat", "images", "usage", "models", "example", "settings", "suggestion"].includes(page)
     ? page
     : "overview";
   const pageMeta = {
     overview: { title: "可调用 API", description: "API Key、模型和端点摘要。" },
     key: { title: "API Key", description: "管理你的 HanGuan's SuperAPI 调用密钥。" },
+    billing: { title: "计费套餐", description: "查看余额、额度消耗和订阅套餐。" },
     chat: { title: "站内 Chat", description: "基于 OpenAI Responses 协议测试文本、代码、视觉、音频、工具和结构化输出。" },
     images: { title: "生图工坊", description: "基于 GPT Image Playground 的思路，使用 SAPI Key 调用 Images API 和 Responses 图像工具。" },
     usage: { title: "请求与用量", description: "查看 Token 用量和请求记录。" },
@@ -366,6 +368,15 @@ export function PortalView({
 
       {currentPage === "usage" && usage ? (
         <UsageSection usage={usage} onLoadRequestContent={onLoadRequestContent} privacyMode />
+      ) : null}
+
+      {currentPage === "billing" ? (
+        <BillingSection
+          user={user}
+          usage={usage}
+          billing={effectiveConfig.billing}
+          onToast={onToast}
+        />
       ) : null}
 
       {currentPage === "chat" ? (

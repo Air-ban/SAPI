@@ -29,6 +29,9 @@ func MountUserRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/user/settings", middleware.RequireUserAccount(handleUserSettings))
 	mux.HandleFunc("DELETE /api/user/account", middleware.RequireUserAccount(handleUserDeleteAccount))
 	mux.HandleFunc("GET /api/user/usage", middleware.RequireUserAccount(handleUserUsage))
+	mux.HandleFunc("GET /api/user/billing", middleware.RequireUserAccount(handleUserBilling))
+	mux.HandleFunc("GET /api/user/payments", middleware.RequireUserAccount(handleUserListPaymentOrders))
+	mux.HandleFunc("POST /api/user/payments", middleware.RequireUserAccount(handleUserCreatePaymentOrder))
 	mux.HandleFunc("GET /api/user/request-logs/{id}", middleware.RequireUserAccount(handleUserRequestLog))
 	mux.HandleFunc("GET /api/user/suggestions", middleware.RequireUserAccount(handleUserSuggestions))
 }
@@ -306,7 +309,7 @@ func handleUserUpdateAPIKey(w http.ResponseWriter, r *http.Request) {
 		result := store.MutateDB(func(db *models.Database) interface{} {
 			for i := range db.AdminAPIKeys {
 				if db.AdminAPIKeys[i].ID == keyID {
-					updateUserAPIKeyRecord(&db.AdminAPIKeys[i], user, body)
+					updateUserAPIKeyRecord(&db.AdminAPIKeys[i], user, body, db)
 					db.AdminAPIKeys[i].RPMLimit = 0
 					return adminVirtualUserFromDB(db)
 				}
@@ -330,7 +333,7 @@ func handleUserUpdateAPIKey(w http.ResponseWriter, r *http.Request) {
 				for j := range u.APIKeys {
 					if u.APIKeys[j].ID == keyID {
 						k := &u.APIKeys[j]
-						updateUserAPIKeyRecord(k, u, body)
+						updateUserAPIKeyRecord(k, u, body, db)
 						now := store.Now()
 						k.UpdatedAt = now
 						u.APIKey = primaryAPIKeyFromRecords(getAPIKeys(u))
@@ -544,7 +547,7 @@ func createUserAPIKeyRecord(user *models.User, db *models.Database, name string,
 	if keyName == "" {
 		keyName = "API Key " + toString(len(user.APIKeys)+1)
 	}
-	rpmLimit = subscription.ClampAPIKeyRPMLimit(user, rpmLimit)
+	rpmLimit = subscription.ClampAPIKeyRPMLimitInDB(user, rpmLimit, db)
 
 	record := models.APIKeyRecord{
 		ID:            auth.RandomID("key"),
@@ -619,7 +622,7 @@ func rotateAdminAPIKeyRecord(db *models.Database, keyID string) bool {
 	return true
 }
 
-func updateUserAPIKeyRecord(k *models.APIKeyRecord, user *models.User, body map[string]interface{}) {
+func updateUserAPIKeyRecord(k *models.APIKeyRecord, user *models.User, body map[string]interface{}, db *models.Database) {
 	if k == nil {
 		return
 	}
@@ -639,7 +642,7 @@ func updateUserAPIKeyRecord(k *models.APIKeyRecord, user *models.User, body map[
 		k.AllowedModels = models
 	}
 	if rpm, ok := body["rpmLimit"].(float64); ok {
-		k.RPMLimit = subscription.ClampAPIKeyRPMLimit(user, int(rpm))
+		k.RPMLimit = subscription.ClampAPIKeyRPMLimitInDB(user, int(rpm), db)
 	}
 	k.UpdatedAt = store.Now()
 }
@@ -661,7 +664,7 @@ func isAdminVirtualUser(user *models.User) bool {
 }
 
 func defaultRPMLimitForUser(user *models.User, db *models.Database) int {
-	return subscription.RPMLimitForUser(user)
+	return subscription.RPMLimitForUserInDB(user, db)
 }
 
 func toString(v interface{}) string {

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"sapi/auth"
+	"sapi/billing"
 	"sapi/config"
 	"sapi/models"
 	"sapi/subscription"
@@ -483,6 +484,27 @@ func AppendRequestLog(item models.RequestLog) {
 					}
 				}
 			}
+		}
+	}
+	if item.BillableMicrounits == 0 && (item.PromptTokens > 0 || item.CompletionTokens > 0 || item.CachedTokens > 0) {
+		cost := billing.CalculateRequestCost(cachedDB, item)
+		item.CostUSD = cost.CostUSD
+		item.CostCNY = cost.CostCNY
+		item.BillableMicrounits = cost.BillableMicrounits
+	}
+	if item.OK && item.UserID != "" && item.UserID != models.AdminVirtualUserID && item.BillableMicrounits > 0 {
+		for i := range cachedDB.Users {
+			if cachedDB.Users[i].ID != item.UserID {
+				continue
+			}
+			cachedDB.Users[i].CreditUsedMicrounits += item.BillableMicrounits
+			if cachedDB.Users[i].CreditBalanceMicrounits > 0 {
+				cachedDB.Users[i].CreditBalanceMicrounits -= item.BillableMicrounits
+				if cachedDB.Users[i].CreditBalanceMicrounits < 0 {
+					cachedDB.Users[i].CreditBalanceMicrounits = 0
+				}
+			}
+			break
 		}
 	}
 
@@ -1211,15 +1233,19 @@ func removeUserAccountFromDB(db *models.Database, userID string) bool {
 func newDefaultDB() *models.Database {
 	createdAt := Now()
 	return &models.Database{
-		Version:       1,
-		AppSecret:     auth.RandomSecret(),
-		Providers:     []models.Provider{},
-		Users:         []models.User{},
-		TokenUsage:    []interface{}{},
-		RequestLogs:   []models.RequestLog{},
-		AdminPasskeys: []models.AdminPasskey{},
-		CreatedAt:     createdAt,
-		UpdatedAt:     createdAt,
+		Version:           1,
+		AppSecret:         auth.RandomSecret(),
+		Providers:         []models.Provider{},
+		Users:             []models.User{},
+		TokenUsage:        []interface{}{},
+		RequestLogs:       []models.RequestLog{},
+		AdminPasskeys:     []models.AdminPasskey{},
+		SubscriptionPlans: billing.DefaultSubscriptionPlans(),
+		BillingConfig:     billing.DefaultBillingConfig(),
+		PaymentConfig:     billing.DefaultPaymentConfig(),
+		PaymentOrders:     []models.PaymentOrder{},
+		CreatedAt:         createdAt,
+		UpdatedAt:         createdAt,
 	}
 }
 
@@ -1292,6 +1318,44 @@ func normalizeDB(db *models.Database) bool {
 	}
 	if db.SiteBanner == nil {
 		db.SiteBanner = &models.SiteBanner{}
+		changed = true
+	}
+	if len(db.SubscriptionPlans) == 0 {
+		db.SubscriptionPlans = billing.DefaultSubscriptionPlans()
+		changed = true
+	} else {
+		normalizedPlans := billing.NormalizeSubscriptionPlans(db.SubscriptionPlans)
+		if !sameJSON(db.SubscriptionPlans, normalizedPlans) {
+			db.SubscriptionPlans = normalizedPlans
+			changed = true
+		}
+	}
+	if db.ModelPrices == nil {
+		db.ModelPrices = []models.ModelPrice{}
+		changed = true
+	}
+	if db.BillingConfig == nil {
+		db.BillingConfig = billing.DefaultBillingConfig()
+		changed = true
+	} else {
+		before := cloneJSON(db.BillingConfig)
+		db.BillingConfig = billing.NormalizeBillingConfig(db.BillingConfig)
+		if before != cloneJSON(db.BillingConfig) {
+			changed = true
+		}
+	}
+	if db.PaymentConfig == nil {
+		db.PaymentConfig = billing.DefaultPaymentConfig()
+		changed = true
+	} else {
+		before := cloneJSON(db.PaymentConfig)
+		db.PaymentConfig = billing.NormalizePaymentConfig(db.PaymentConfig)
+		if before != cloneJSON(db.PaymentConfig) {
+			changed = true
+		}
+	}
+	if db.PaymentOrders == nil {
+		db.PaymentOrders = []models.PaymentOrder{}
 		changed = true
 	}
 
@@ -1444,6 +1508,15 @@ func normalizeDB(db *models.Database) bool {
 	}
 
 	return changed
+}
+
+func sameJSON(a, b interface{}) bool {
+	return cloneJSON(a) == cloneJSON(b)
+}
+
+func cloneJSON(v interface{}) string {
+	raw, _ := json.Marshal(v)
+	return string(raw)
 }
 
 func normalizeAPIKeyBanState(k *models.APIKeyRecord) bool {
