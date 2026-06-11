@@ -2,7 +2,6 @@ import React, { useMemo, useState } from "react";
 import {
   Box,
   Button,
-  CircularProgress,
   IconButton,
   InputAdornment,
   Stack,
@@ -15,7 +14,6 @@ import AnalyticsIcon from "@mui/icons-material/Analytics";
 import ApiIcon from "@mui/icons-material/Api";
 import BarChartIcon from "@mui/icons-material/BarChart";
 import ClearIcon from "@mui/icons-material/Clear";
-import DownloadIcon from "@mui/icons-material/Download";
 import DnsIcon from "@mui/icons-material/Dns";
 import KeyIcon from "@mui/icons-material/Key";
 import LogoutIcon from "@mui/icons-material/Logout";
@@ -45,7 +43,7 @@ import { AdminSuggestionsSection } from "./AdminSuggestionsSection";
 import { AdminPasskeysSection } from "./AdminPasskeysSection";
 import { ServerStatusSection } from "./ServerStatusSection";
 import { BillingSettingsSection } from "./BillingSettingsSection";
-import { requestBlob } from "../utils/api";
+import { AuditExportSection } from "./AuditExportSection";
 
 export function AdminView({
   page = "overview",
@@ -68,7 +66,6 @@ export function AdminView({
   const [providerDialogOpen, setProviderDialogOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState(null);
   const [userSearch, setUserSearch] = useState("");
-  const [globalExportLoading, setGlobalExportLoading] = useState(false);
 
   const providers = state?.providers || [];
   const users = state?.users || [];
@@ -101,26 +98,6 @@ export function AdminView({
   }[currentPage] || {
     title: "上游 API 与用户 Key",
     description: "供应商、用户和用量摘要。"
-  };
-
-  const downloadGlobalRequestLogs = async () => {
-    setGlobalExportLoading(true);
-    try {
-      const { blob, filename } = await requestBlob("/api/admin/request-logs/export?days=7&includeContent=true");
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = filename || "sapi-request-logs.tar.gz";
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
-      onToast?.("请求日志已导出", "success");
-    } catch (error) {
-      onToast?.(error.message, "error");
-    } finally {
-      setGlobalExportLoading(false);
-    }
   };
 
   return (
@@ -156,6 +133,8 @@ export function AdminView({
         </Box>
       ) : null}
 
+      {currentPage === "overview" ? <AuditExportSection onToast={onToast} /> : null}
+
       {ModelAvailabilityDashboard && currentPage === "overview" ? (
         <ModelAvailabilityDashboard availability={modelAvailability} />
       ) : null}
@@ -166,18 +145,7 @@ export function AdminView({
 
       {currentPage === "usage" && usage ? (
         <Stack spacing={1.5}>
-          <Stack direction={{ xs: "column", sm: "row" }} justifyContent="flex-end" alignItems={{ xs: "stretch", sm: "center" }}>
-            <Button
-              size="small"
-              variant="outlined"
-              startIcon={globalExportLoading ? <CircularProgress size={16} /> : <DownloadIcon />}
-              onClick={downloadGlobalRequestLogs}
-              disabled={globalExportLoading}
-              sx={{ alignSelf: { xs: "stretch", sm: "flex-end" } }}
-            >
-              导出近 7 天日志
-            </Button>
-          </Stack>
+          <AuditExportSection onToast={onToast} />
           <UsageSection usage={usage} onLoadRequestContent={onLoadRequestContent} />
         </Stack>
       ) : null}

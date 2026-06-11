@@ -202,6 +202,7 @@ Gemini:
 - 用户调用 `/api/user/request-logs/{id}` 只能确认自己的日志摘要，不返回请求 JSON、IP 或设备信息。
 - 管理端可调用 `/api/admin/request-logs/export` 导出全局 tar.gz。
 - 管理端可调用 `/api/admin/users/{id}/request-logs/export` 导出单用户 tar.gz。
+- `AuditExportSection`: 管理首页和请求用量页的全局审计导出入口，`includeContent=true` 导出详细请求体，`includeContent=false` 导出 IP/设备信息。
 - JSONL/PostgreSQL 中 7 天前日志会先归档为 tar.gz 再清理。
 
 `usage.GetUsageStats(db, userID, days)`:

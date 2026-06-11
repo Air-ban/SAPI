@@ -293,6 +293,8 @@ curl "http://localhost:3000/api/admin/request-logs/export?days=7&includeContent=
   -o request-logs.tar.gz
 ```
 
+管理后台首页和 `请求与用量` 页提供 `审计导出` 入口，可分别下载详细请求体或 IP/设备信息。
+
 导出文件是 tar.gz，包含:
 - `metadata.json`
 - `request-logs.jsonl`

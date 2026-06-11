@@ -322,7 +322,7 @@ export function UserRow({ user, usage, subscriptionTiers = FALLBACK_TIERS, after
                   disabled={exportLoading}
                   sx={{ alignSelf: { xs: "stretch", sm: "flex-start" } }}
                 >
-                  导出对话
+                  导出请求日志
                 </Button>
                 <Button
                   size="small"
