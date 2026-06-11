@@ -36,7 +36,7 @@ func TestRegisterRequiresAcceptedTerms(t *testing.T) {
 	}
 }
 
-func TestRegisterAllowsOrdinaryEmailWithFiveRPM(t *testing.T) {
+func TestRegisterAllowsOrdinaryEmailWithOneRPM(t *testing.T) {
 	t.Setenv("SAPI_DATA_FILE", filepath.Join(t.TempDir(), "sapi.json"))
 	t.Setenv("SAPI_POSTGRES_URL", " ")
 	t.Setenv("DATABASE_URL", " ")
@@ -85,8 +85,8 @@ func TestRegisterAllowsOrdinaryEmailWithFiveRPM(t *testing.T) {
 	if got := user["subscriptionTier"]; got != subscription.TierEmail {
 		t.Fatalf("subscriptionTier = %#v, want %q", got, subscription.TierEmail)
 	}
-	if got := int(user["subscriptionRpmLimit"].(float64)); got != 5 {
-		t.Fatalf("subscriptionRpmLimit = %d, want 5", got)
+	if got := int(user["subscriptionRpmLimit"].(float64)); got != 1 {
+		t.Fatalf("subscriptionRpmLimit = %d, want 1", got)
 	}
 
 	db := store.ReadDB()
@@ -96,8 +96,8 @@ func TestRegisterAllowsOrdinaryEmailWithFiveRPM(t *testing.T) {
 	if got := db.Users[0].SubscriptionTier; got != subscription.TierEmail {
 		t.Fatalf("stored subscriptionTier = %q, want %q", got, subscription.TierEmail)
 	}
-	if got := subscription.RPMLimitForUser(&db.Users[0]); got != 5 {
-		t.Fatalf("stored rpm = %d, want 5", got)
+	if got := subscription.RPMLimitForUser(&db.Users[0]); got != 1 {
+		t.Fatalf("stored rpm = %d, want 1", got)
 	}
 }
 
@@ -110,7 +110,7 @@ func TestRegistrationTierSelection(t *testing.T) {
 	}{
 		{name: "ordinary email without invite", email: "user@example.com", want: subscription.TierEmail},
 		{name: "ordinary email with invite", email: "user@example.com", invitationCode: "invite", want: subscription.TierLite},
-		{name: "education email without invite", email: "student@example.edu.cn", want: subscription.TierLite},
+		{name: "education email without invite", email: "student@example.edu.cn", want: subscription.TierBase},
 	}
 
 	for _, tt := range tests {

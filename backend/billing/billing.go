@@ -56,7 +56,7 @@ func DefaultPaymentConfig() *models.PaymentConfig {
 
 func DefaultSubscriptionPlans() []models.SubscriptionPlan {
 	return []models.SubscriptionPlan{
-		{ID: "email", Name: "Email", Description: "普通邮箱注册默认套餐", RPMLimit: 5, PriceCents: 0, CreditMicrounits: 0, DurationDays: 30, Enabled: true, SortOrder: 10},
+		{ID: "email", Name: "Email", Description: "普通邮箱注册默认套餐", RPMLimit: 1, PriceCents: 0, CreditMicrounits: 0, DurationDays: 30, Enabled: true, SortOrder: 10},
 		{ID: "lite", Name: "Lite", Description: "轻量体验套餐", RPMLimit: 10, PriceCents: 0, CreditMicrounits: 0, DurationDays: 30, Enabled: true, SortOrder: 20},
 		{ID: "base", Name: "Base", Description: "日常使用套餐", RPMLimit: 30, PriceCents: 990, CreditMicrounits: 10 * MicrounitsPerCNY, DurationDays: 30, Enabled: true, SortOrder: 30},
 		{ID: "pro", Name: "Pro", Description: "高频调用套餐", RPMLimit: 50, PriceCents: 2990, CreditMicrounits: 35 * MicrounitsPerCNY, DurationDays: 30, Enabled: true, SortOrder: 40},
@@ -141,7 +141,9 @@ func NormalizeSubscriptionPlans(plans []models.SubscriptionPlan) []models.Subscr
 		if strings.TrimSpace(plan.Description) != "" {
 			base.Description = strings.TrimSpace(plan.Description)
 		}
-		if plan.RPMLimit >= 0 {
+		if id == "email" && plan.RPMLimit == 5 {
+			base.RPMLimit = 1
+		} else if plan.RPMLimit >= 0 {
 			base.RPMLimit = plan.RPMLimit
 		}
 		if plan.PriceCents >= 0 {

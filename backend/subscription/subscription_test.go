@@ -11,7 +11,7 @@ func TestRPMLimitForTier(t *testing.T) {
 		tier string
 		want int
 	}{
-		{tier: TierEmail, want: 5},
+		{tier: TierEmail, want: 1},
 		{tier: TierLite, want: 10},
 		{tier: TierBase, want: 30},
 		{tier: TierPro, want: 50},
@@ -53,6 +53,9 @@ func TestEffectiveAPIKeyRPMLimit(t *testing.T) {
 }
 
 func TestGitHubUserRPMLimit(t *testing.T) {
+	if GitHubUserRPMLimit != 10 {
+		t.Fatalf("GitHubUserRPMLimit = %d, want 10", GitHubUserRPMLimit)
+	}
 	user := &models.User{SubscriptionTier: TierLite, GitHubID: "42", GitHubLogin: "octo"}
 
 	if got := RPMLimitForUser(user); got != GitHubUserRPMLimit {
@@ -65,7 +68,7 @@ func TestGitHubUserRPMLimit(t *testing.T) {
 		want   int
 	}{
 		{name: "empty follows github cap", keyRPM: 0, want: GitHubUserRPMLimit},
-		{name: "lower key override still uses github cap", keyRPM: 20, want: GitHubUserRPMLimit},
+		{name: "explicit key override still uses github cap", keyRPM: 20, want: GitHubUserRPMLimit},
 		{name: "higher key override still uses github cap", keyRPM: 100, want: GitHubUserRPMLimit},
 	}
 
@@ -80,9 +83,12 @@ func TestGitHubUserRPMLimit(t *testing.T) {
 }
 
 func TestEduUserRPMLimit(t *testing.T) {
+	if EduUserRPMLimit != 30 {
+		t.Fatalf("EduUserRPMLimit = %d, want 30", EduUserRPMLimit)
+	}
 	users := []*models.User{
-		{SubscriptionTier: TierLite, Source: "edu"},
-		{SubscriptionTier: TierLite, Email: "student@example.edu.cn"},
+		{SubscriptionTier: TierBase, Source: "edu"},
+		{SubscriptionTier: TierBase, Email: "student@example.edu.cn"},
 	}
 
 	for _, user := range users {
@@ -131,7 +137,7 @@ func TestClampAPIKeyRPMLimit(t *testing.T) {
 	pro := &models.User{SubscriptionTier: TierPro}
 	maxUser := &models.User{SubscriptionTier: TierMax}
 	githubUser := &models.User{SubscriptionTier: TierLite, GitHubLogin: "octo"}
-	eduUser := &models.User{SubscriptionTier: TierLite, Source: "edu"}
+	eduUser := &models.User{SubscriptionTier: TierBase, Source: "edu"}
 
 	tests := []struct {
 		name   string
@@ -143,7 +149,7 @@ func TestClampAPIKeyRPMLimit(t *testing.T) {
 		{name: "pro clamps above tier", user: pro, keyRPM: 100, want: 50},
 		{name: "pro keeps lower override", user: pro, keyRPM: 20, want: 20},
 		{name: "github clamps above cap", user: githubUser, keyRPM: 100, want: GitHubUserRPMLimit},
-		{name: "github raises lower override to cap", user: githubUser, keyRPM: 20, want: GitHubUserRPMLimit},
+		{name: "github uses fixed cap", user: githubUser, keyRPM: 20, want: GitHubUserRPMLimit},
 		{name: "edu clamps above cap", user: eduUser, keyRPM: 100, want: EduUserRPMLimit},
 		{name: "edu raises lower override to cap", user: eduUser, keyRPM: 20, want: EduUserRPMLimit},
 		{name: "max accepts explicit key cap", user: maxUser, keyRPM: 200, want: 200},

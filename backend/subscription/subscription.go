@@ -14,8 +14,8 @@ const (
 	TierUltra = "ultra"
 	TierMax   = "MAX"
 
-	GitHubUserRPMLimit = 52
-	EduUserRPMLimit    = 50
+	GitHubUserRPMLimit = 10
+	EduUserRPMLimit    = 30
 )
 
 type TierInfo struct {
@@ -31,7 +31,7 @@ type TierInfo struct {
 }
 
 var Tiers = []TierInfo{
-	{ID: TierEmail, Name: "Email", RPMLimit: 5, DurationDays: 30, Enabled: true, SortOrder: 10},
+	{ID: TierEmail, Name: "Email", RPMLimit: 1, DurationDays: 30, Enabled: true, SortOrder: 10},
 	{ID: TierLite, Name: "Lite", RPMLimit: 10, DurationDays: 30, Enabled: true, SortOrder: 20},
 	{ID: TierBase, Name: "Base", RPMLimit: 30, PriceCents: 990, CreditMicrounits: 10000000, DurationDays: 30, Enabled: true, SortOrder: 30},
 	{ID: TierPro, Name: "Pro", RPMLimit: 50, PriceCents: 2990, CreditMicrounits: 35000000, DurationDays: 30, Enabled: true, SortOrder: 40},

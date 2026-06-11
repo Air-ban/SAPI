@@ -650,7 +650,11 @@ func userSourceForEmail(email string) string {
 }
 
 func subscriptionTierForRegistration(email, invitationCode string) string {
-	if userSourceForEmail(email) == "email" && strings.TrimSpace(invitationCode) == "" {
+	source := userSourceForEmail(email)
+	if source == "edu" {
+		return subscription.TierBase
+	}
+	if source == "email" && strings.TrimSpace(invitationCode) == "" {
 		return subscription.TierEmail
 	}
 	return subscription.TierLite

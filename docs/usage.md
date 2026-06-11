@@ -127,13 +127,13 @@ Authorization: Bearer <user-jwt>
 ```
 
 ## 订阅、RPM 和额度
-普通邮箱新用户默认订阅分组为 `email`，默认 5 RPM。邀请码和教育邮箱注册默认 `lite`；GitHub 注册默认 `base`。GitHub 来源用户保留 52 RPM，`.edu.cn` 用户保留 50 RPM。
+普通邮箱新用户默认订阅分组为 `email`，默认 1 RPM。邀请码和 GitHub 注册默认 `lite`，实际 10 RPM；教育邮箱注册默认 `base`，实际 30 RPM。
 
 订阅分组:
 
 | 分组 | 默认 RPM | 默认价格 | 说明 |
 | --- | --- | --- | --- |
-| `email` | 5 | 免费 | 普通邮箱默认分组。 |
+| `email` | 1 | 免费 | 普通邮箱默认分组。 |
 | `lite` | 10 | 免费 | 轻量体验分组。 |
 | `base` | 30 | 9.90 CNY | 日常使用。 |
 | `pro` | 50 | 29.90 CNY | 高频调用。 |

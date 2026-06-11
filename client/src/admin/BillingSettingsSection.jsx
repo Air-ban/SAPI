@@ -314,7 +314,7 @@ export function BillingSettingsSection({
       >
         <Stack spacing={1.5}>
           <Alert severity="info" variant="outlined">
-            套餐 RPM 会作为用户默认限速；价格和入账额度用于在线支付。GitHub 用户仍保留 52 RPM、edu.cn 用户保留 50 RPM 的来源规则。
+            套餐 RPM 会作为用户默认限速；价格和入账额度用于在线支付。GitHub 用户为 10 RPM，edu.cn 用户为 30 RPM。
           </Alert>
           <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", lg: "repeat(2, minmax(0, 1fr))" }, gap: 1.25 }}>
             {plans.map((plan, index) => (

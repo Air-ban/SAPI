@@ -453,7 +453,7 @@ export function AuthPage({
                       </Typography>
                     ) : (
                       <Typography variant="body2" color="text.secondary">
-                        普通邮箱可直接注册，默认限速 5 RPM。
+                        普通邮箱可直接注册，默认限速 1 RPM。
                       </Typography>
                     )}
                   </>

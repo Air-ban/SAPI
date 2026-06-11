@@ -254,7 +254,7 @@ curl -X PUT http://localhost:3000/api/admin/payment-config \
 默认订阅分组:
 | ID | RPM | 价格 |
 | --- | --- | --- |
-| `email` | 5 | 免费 |
+| `email` | 1 | 免费 |
 | `lite` | 10 | 免费 |
 | `base` | 30 | 9.90 CNY |
 | `pro` | 50 | 29.90 CNY |

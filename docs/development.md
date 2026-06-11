@@ -187,7 +187,7 @@ store.AppendRequestLog(item)
 | `MAX` | 不限速 |
 
 规则:
-- 普通邮箱新用户默认 `email`，教育邮箱和邀请码注册默认 `lite`，GitHub 注册默认 `base`。
+- 普通邮箱新用户默认 `email`，邀请码和 GitHub 注册默认 `lite`，教育邮箱注册默认 `base`。
 - API Key 的 `rpmLimit=0` 表示跟随订阅分组。
 - API Key 显式 RPM 只能收紧，不能超过订阅分组。
 - `MAX` 用户不受订阅分组限制，但 Key 可单独设置上限。

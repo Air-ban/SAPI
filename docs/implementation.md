@@ -74,7 +74,7 @@ Passkey:
 `normalizeDB()` 在 store 内部执行:
 - 补齐默认字段。
 - 迁移 legacy `user.apiKey` 到 `user.apiKeys`。
-- 空订阅字段在规范化时补为 `lite`；普通邮箱注册默认 `email`，教育邮箱和邀请码注册默认 `lite`，GitHub 注册默认 `base`。
+- 空订阅字段在规范化时补为 `lite`；普通邮箱注册默认 `email`，邀请码和 GitHub 注册默认 `lite`，教育邮箱注册默认 `base`。
 - 规范 Provider 模型、上游格式、故障阈值、优先级。
 - 清理过期验证码和旧请求日志。
 

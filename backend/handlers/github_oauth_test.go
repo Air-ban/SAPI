@@ -656,8 +656,8 @@ func TestGitHubRegistrationRequiresConfiguredFollowTarget(t *testing.T) {
 	if user.Source != "github" || user.GitHubLogin != "candidate" {
 		t.Fatalf("created user = %#v", user)
 	}
-	if user.SubscriptionTier != subscription.TierBase {
-		t.Fatalf("subscriptionTier = %q, want %q", user.SubscriptionTier, subscription.TierBase)
+	if user.SubscriptionTier != subscription.TierLite {
+		t.Fatalf("subscriptionTier = %q, want %q", user.SubscriptionTier, subscription.TierLite)
 	}
 }
 
