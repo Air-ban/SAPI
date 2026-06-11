@@ -467,7 +467,7 @@ func upsertGitHubUser(profile *githubUserProfile, emails []githubEmailRecord, cf
 			GitHubLogin:              login,
 			GitHubAvatarURL:          avatar,
 			GitHubLinkedAt:           now,
-			SubscriptionTier:         subscription.TierLite,
+			SubscriptionTier:         subscription.TierBase,
 			CreatedAt:                now,
 			UpdatedAt:                now,
 		}

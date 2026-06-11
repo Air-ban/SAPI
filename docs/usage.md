@@ -127,7 +127,7 @@ Authorization: Bearer <user-jwt>
 ```
 
 ## 订阅、RPM 和额度
-普通邮箱新用户默认订阅分组为 `email`，默认 5 RPM。邀请码、GitHub 和教育邮箱注册默认 `lite`；GitHub 来源用户保留 52 RPM，`.edu.cn` 用户保留 50 RPM。
+普通邮箱新用户默认订阅分组为 `email`，默认 5 RPM。邀请码和教育邮箱注册默认 `lite`；GitHub 注册默认 `base`。GitHub 来源用户保留 52 RPM，`.edu.cn` 用户保留 50 RPM。
 
 订阅分组:
 
