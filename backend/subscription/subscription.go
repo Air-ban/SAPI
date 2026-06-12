@@ -70,6 +70,19 @@ func TierForUser(user *models.User) string {
 	return NormalizeTier(user.SubscriptionTier)
 }
 
+func DefaultTierForUser(user *models.User) string {
+	if IsGitHubUser(user) {
+		return TierLite
+	}
+	if IsEduUser(user) {
+		return TierBase
+	}
+	if user != nil && strings.EqualFold(strings.TrimSpace(user.Source), "email") {
+		return TierEmail
+	}
+	return TierLite
+}
+
 func RPMLimitForTier(tier string) int {
 	normalized := NormalizeTier(tier)
 	for _, item := range Tiers {

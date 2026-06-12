@@ -146,6 +146,7 @@ Authorization: Bearer <user-jwt>
 - 管理员可修改套餐 RPM、价格、入账额度、时长和启用状态。
 - 管理员可给单个用户切换订阅。
 - 管理员可一键切换所有用户订阅。
+- 管理员可一键恢复默认订阅: 普通邮箱回 `email`，`.edu.cn` 回 `base`，GitHub 绑定用户回 `lite`。
 - 单个 API Key 可设置更低 RPM 作为额外限制。
 - API Key 的显式 RPM 不能超过用户订阅 RPM。
 - 用户前台 `计费套餐` 会显示账户余额、近 365 天额度消耗、当前套餐 RPM 和最近订单。
@@ -156,6 +157,14 @@ curl -X PUT http://localhost:3000/api/admin/subscriptions/global-tier \
   -H "Authorization: Bearer <admin-jwt>" \
   -H "Content-Type: application/json" \
   -d '{"subscriptionTier":"base"}'
+```
+
+恢复所有用户默认订阅:
+```bash
+curl -X PUT http://localhost:3000/api/admin/subscriptions/global-tier \
+  -H "Authorization: Bearer <admin-jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{"restoreDefaults":true}'
 ```
 
 切换单个用户到 `pro`:

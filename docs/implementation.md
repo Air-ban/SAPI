@@ -85,6 +85,7 @@ Passkey:
 - `pro`: 50 RPM。
 - `ultra`: 100 RPM。
 - `MAX`: 0，表示不限速。
+- `DefaultTierForUser()`: 普通邮箱为 `email`，`.edu.cn` 为 `base`，GitHub 绑定用户为 `lite`。
 
 有效 RPM:
 ```text

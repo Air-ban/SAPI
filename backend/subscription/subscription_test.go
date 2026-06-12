@@ -133,6 +133,29 @@ func TestGitHubUserRPMLimitWinsOverEdu(t *testing.T) {
 	}
 }
 
+func TestDefaultTierForUser(t *testing.T) {
+	tests := []struct {
+		name string
+		user *models.User
+		want string
+	}{
+		{name: "ordinary email", user: &models.User{Source: "email", Email: "user@example.com"}, want: TierEmail},
+		{name: "education email", user: &models.User{Source: "email", Email: "student@example.edu.cn"}, want: TierBase},
+		{name: "education source", user: &models.User{Source: "edu", Email: "student@example.com"}, want: TierBase},
+		{name: "github source", user: &models.User{Source: "github", Email: "octo@example.edu.cn"}, want: TierLite},
+		{name: "github linked", user: &models.User{GitHubLogin: "octo", Email: "octo@example.edu.cn"}, want: TierLite},
+		{name: "unknown", user: &models.User{}, want: TierLite},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := DefaultTierForUser(tt.user); got != tt.want {
+				t.Fatalf("DefaultTierForUser() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestClampAPIKeyRPMLimit(t *testing.T) {
 	pro := &models.User{SubscriptionTier: TierPro}
 	maxUser := &models.User{SubscriptionTier: TierMax}

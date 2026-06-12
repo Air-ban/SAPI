@@ -721,6 +721,9 @@ func TestGitHubEmailAccountLinkRequiresTerms(t *testing.T) {
 	if user.ID != "usr_email" || user.GitHubID != "42" {
 		t.Fatalf("linked user = %#v", user)
 	}
+	if user.SubscriptionTier != subscription.TierLite {
+		t.Fatalf("subscriptionTier = %q, want %q", user.SubscriptionTier, subscription.TierLite)
+	}
 }
 
 func TestGitHubFollowRequirementSkipsExistingLinkedUser(t *testing.T) {

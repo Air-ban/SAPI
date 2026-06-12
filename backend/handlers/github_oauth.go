@@ -435,6 +435,9 @@ func upsertGitHubUser(profile *githubUserProfile, emails []githubEmailRecord, cf
 			if u.Email == "" && email != "" {
 				u.Email = email
 			}
+			if u.PasswordHash == "" || subscription.TierForUser(u) == subscription.TierEmail {
+				u.SubscriptionTier = subscription.DefaultTierForUser(u)
+			}
 			u.UpdatedAt = now
 			return u
 		}

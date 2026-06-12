@@ -7,6 +7,7 @@ import {
   Typography
 } from "@mui/material";
 import BoltIcon from "@mui/icons-material/Bolt";
+import RestoreIcon from "@mui/icons-material/Restore";
 import SpeedIcon from "@mui/icons-material/Speed";
 import { Section } from "../components/Section";
 import { formatRpmLimit } from "../utils/helpers";
@@ -38,11 +39,47 @@ export function RpmLimitSection({ subscriptionTiers = [], afterChange, onConfirm
     });
   };
 
+  const restoreDefaults = () => {
+    onConfirm({
+      title: "恢复默认订阅",
+      message: "确认按用户来源恢复默认订阅？普通邮箱为 Email，edu.cn 为 Base，GitHub 为 Lite。",
+      confirmText: "恢复",
+      action: async () => {
+        setLoadingTier("restore-defaults");
+        try {
+          const result = await request("/api/admin/subscriptions/global-tier", {
+            method: "PUT",
+            body: { restoreDefaults: true }
+          });
+          await afterChange(`已恢复 ${result.changedUsers || 0}/${result.totalUsers || 0} 个用户`);
+        } catch (error) {
+          onToast(error.message, "error");
+        } finally {
+          setLoadingTier("");
+        }
+      }
+    });
+  };
+
   return (
-    <Section title="订阅 RPM 档位" icon={<SpeedIcon />}>
+    <Section
+      title="订阅 RPM 档位"
+      icon={<SpeedIcon />}
+      action={
+        <Button
+          size="small"
+          variant="outlined"
+          startIcon={loadingTier === "restore-defaults" ? <CircularProgress size={14} /> : <RestoreIcon />}
+          onClick={restoreDefaults}
+          disabled={Boolean(loadingTier)}
+        >
+          恢复默认订阅
+        </Button>
+      }
+    >
       <Stack spacing={2}>
         <Typography variant="body2" color="text.secondary">
-          普通邮箱默认 Email，教育邮箱、邀请码和 GitHub 注册默认 Lite。API Key 留空时跟随订阅分组，填写数值时只会作为更低的单 Key 限制。
+          普通邮箱默认 Email，edu.cn 默认 Base，GitHub 默认 Lite。API Key 留空时跟随订阅分组，填写数值时只会作为更低的单 Key 限制。
         </Typography>
         <Stack
           sx={{

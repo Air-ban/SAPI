@@ -203,7 +203,7 @@ tar.gz 内容:
 ### 订阅和站点配置
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| `PUT` | `/api/admin/subscriptions/global-tier` | 一键切换所有用户订阅。 |
+| `PUT` | `/api/admin/subscriptions/global-tier` | 一键切换所有用户订阅，或恢复来源默认订阅。 |
 | `PUT` | `/api/admin/subscription-plans` | 更新套餐 RPM、价格、额度、时长和启用状态。 |
 | `PUT` | `/api/admin/billing-config` | 更新计费开关、汇率、倍率和 models.dev URL。 |
 | `POST` | `/api/admin/model-prices/sync` | 从 models.dev 同步模型价格。 |
@@ -219,6 +219,11 @@ tar.gz 内容:
 全局切换订阅:
 ```bash
 curl -X PUT http://localhost:3000/api/admin/subscriptions/global-tier -H "Authorization: Bearer <admin-jwt>" -H "Content-Type: application/json" -d '{"subscriptionTier":"base"}'
+```
+
+恢复默认订阅:
+```bash
+curl -X PUT http://localhost:3000/api/admin/subscriptions/global-tier -H "Authorization: Bearer <admin-jwt>" -H "Content-Type: application/json" -d '{"restoreDefaults":true}'
 ```
 
 更新套餐:

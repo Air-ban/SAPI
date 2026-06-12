@@ -889,8 +889,12 @@ func handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 		}
 		if emailSet {
 			u.Email = email
-			if u.Source == "" {
-				u.Source = userSourceForEmail(email)
+			emailSource := userSourceForEmail(email)
+			if u.Source == "" || u.Source == "email" || u.Source == "edu" {
+				u.Source = emailSource
+			}
+			if !subscriptionTierSet && (emailSource == "edu" || subscription.TierForUser(u) == subscription.TierEmail) {
+				u.SubscriptionTier = subscription.DefaultTierForUser(u)
 			}
 		}
 		if enabled, ok := body["enabled"].(bool); ok {
@@ -1302,20 +1306,27 @@ func handleAdminApplyGlobalSubscriptionTier(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	restoreDefaults := toBool(body["restoreDefaults"])
 	tier := security.SafeSingleLine(toString(body["subscriptionTier"]), 32)
-	if !subscription.IsValidTier(tier) {
-		utils.SendError(w, http.StatusBadRequest, "Subscription tier is invalid.", "invalid_subscription_tier")
-		return
+	if !restoreDefaults {
+		if !subscription.IsValidTier(tier) {
+			utils.SendError(w, http.StatusBadRequest, "Subscription tier is invalid.", "invalid_subscription_tier")
+			return
+		}
+		tier = subscription.NormalizeTier(tier)
 	}
-	tier = subscription.NormalizeTier(tier)
 
 	result := store.MutateDB(func(db *models.Database) interface{} {
 		changed := 0
 		for i := range db.Users {
-			if subscription.TierForUser(&db.Users[i]) == tier {
+			nextTier := tier
+			if restoreDefaults {
+				nextTier = subscription.DefaultTierForUser(&db.Users[i])
+			}
+			if subscription.TierForUser(&db.Users[i]) == nextTier {
 				continue
 			}
-			db.Users[i].SubscriptionTier = tier
+			db.Users[i].SubscriptionTier = nextTier
 			db.Users[i].UpdatedAt = store.Now()
 			changed++
 		}
@@ -1325,12 +1336,16 @@ func handleAdminApplyGlobalSubscriptionTier(w http.ResponseWriter, r *http.Reque
 		}
 	}).(map[string]int)
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"subscriptionTier":     tier,
-		"subscriptionRpmLimit": subscription.RPMLimitForTierInDB(store.ReadDB(), tier),
-		"changedUsers":         result["changedUsers"],
-		"totalUsers":           result["totalUsers"],
-	})
+	payload := map[string]interface{}{
+		"restoreDefaults": restoreDefaults,
+		"changedUsers":    result["changedUsers"],
+		"totalUsers":      result["totalUsers"],
+	}
+	if !restoreDefaults {
+		payload["subscriptionTier"] = tier
+		payload["subscriptionRpmLimit"] = subscription.RPMLimitForTierInDB(store.ReadDB(), tier)
+	}
+	json.NewEncoder(w).Encode(payload)
 }
 
 func handleAdminUpdateBanner(w http.ResponseWriter, r *http.Request) {
