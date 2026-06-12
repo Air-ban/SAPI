@@ -50,7 +50,7 @@ func handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !verifyTurnstileRequest(w, r, body) {
+	if !cfg.AdminTurnstileDisabled && !verifyTurnstileRequest(w, r, body) {
 		return
 	}
 

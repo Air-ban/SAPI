@@ -206,6 +206,7 @@ SAPI_TENCENT_SECRET_KEY=
 | --- | --- |
 | `SAPI_TENCENT_CAPTCHA_APP_ID` | 前端公开的 Captcha App ID。 |
 | `SAPI_TENCENT_CAPTCHA_APP_SECRET_KEY` | Captcha 应用密钥。 |
+| `SAPI_ADMIN_TURNSTILE_DISABLED` | 设为 `true` 时仅管理后台账号密码登录跳过 Turnstile；普通用户登录、注册、验证码仍保持 Turnstile。 |
 | `SAPI_TENCENT_SECRET_ID` | 腾讯云 API 3.0 签名 Secret ID。 |
 | `SAPI_TENCENT_SECRET_KEY` | 腾讯云 API 3.0 签名 Secret Key。 |
 

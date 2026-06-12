@@ -69,6 +69,7 @@ export function AuthPage({
   const turnstileErrTimerRef = useRef(null);
   const captchaEnabled = publicConfig?.captcha?.provider === "turnstile" && Boolean(publicConfig?.captcha?.enabled);
   const captchaSiteKey = publicConfig?.captcha?.siteKey || "";
+  const captchaRequired = captchaEnabled && !(isAdminLogin && Boolean(publicConfig?.captcha?.adminDisabled));
 
   const doTurnstileReset = (delay) => {
     turnstileTokenRef.current = "";
@@ -110,7 +111,7 @@ export function AuthPage({
   };
 
   const renderTurnstile = () => {
-    if (!captchaEnabled || !captchaSiteKey || !turnstileRef.current) return;
+    if (!captchaRequired || !captchaSiteKey || !turnstileRef.current) return;
     if (window.turnstile) {
       if (turnstileWidgetIdRef.current != null) {
         window.turnstile.remove(turnstileWidgetIdRef.current);
@@ -129,7 +130,7 @@ export function AuthPage({
   };
 
   useEffect(() => {
-    if (!captchaEnabled || !captchaSiteKey) return;
+    if (!captchaRequired || !captchaSiteKey) return;
     if (window.turnstile) {
       renderTurnstile();
       return;
@@ -147,7 +148,7 @@ export function AuthPage({
     script.onload = renderTurnstile;
     document.head.appendChild(script);
     return () => { /* keep script, just cleanup widget */ };
-  }, [captchaEnabled, captchaSiteKey, mode]);
+  }, [captchaRequired, captchaSiteKey, mode]);
 
   const update = (field) => (event) => {
     setForm((current) => ({ ...current, [field]: event.target.value }));
@@ -172,7 +173,7 @@ export function AuthPage({
       onToast("请输入有效的邮箱地址", "warning");
       return;
     }
-    if (captchaEnabled && !turnstileTokenRef.current) {
+    if (captchaRequired && !turnstileTokenRef.current) {
       onToast("请先完成人机验证", "warning");
       return;
     }
@@ -219,7 +220,7 @@ export function AuthPage({
   const submit = async (event) => {
     event.preventDefault();
 
-    if (captchaEnabled && !turnstileTokenRef.current) {
+    if (captchaRequired && !turnstileTokenRef.current) {
       onToast("请先完成人机验证", "warning");
       return;
     }
@@ -477,7 +478,7 @@ export function AuthPage({
                     }
                   />
                 ) : null}
-                {captchaEnabled ? (
+                {captchaRequired ? (
                   <Box ref={turnstileRef} sx={{ display: "flex", justifyContent: "center", minHeight: 65 }} />
                 ) : null}
                 <Button
@@ -550,7 +551,7 @@ export function AuthPage({
         open={forgotOpen}
         onClose={() => setForgotOpen(false)}
         onSendCode={async (email) => {
-          if (captchaEnabled && !turnstileTokenRef.current) {
+          if (captchaRequired && !turnstileTokenRef.current) {
             onToast("请先完成人机验证", "warning");
             throw new Error("captcha");
           }
