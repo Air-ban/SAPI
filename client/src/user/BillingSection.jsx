@@ -22,11 +22,30 @@ import { Section } from "../components/Section";
 import { request } from "../utils/api";
 import { formatDate, formatMoneyFromCents, formatMoneyFromMicrounits, formatRpmLimit } from "../utils/helpers";
 
-function submitPaymentForm(gatewayUrl, params) {
+function openPaymentWindow() {
+  try {
+    const popup = window.open("", "_blank");
+    if (popup) {
+      popup.document.write("<!doctype html><title>SAPI Pay</title><body style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:24px;color:#111827;\">正在创建支付订单...</body>");
+      popup.document.close();
+    }
+    return popup;
+  } catch {
+    return null;
+  }
+}
+
+function submitPaymentForm(gatewayUrl, params, popup) {
   const form = document.createElement("form");
   form.method = "POST";
   form.action = gatewayUrl;
-  form.target = "_blank";
+  if (popup && !popup.closed) {
+    const targetName = `sapi_pay_${Date.now()}`;
+    popup.name = targetName;
+    form.target = targetName;
+  } else {
+    form.target = "_self";
+  }
   Object.entries(params || {}).forEach(([key, value]) => {
     const input = document.createElement("input");
     input.type = "hidden";
@@ -50,6 +69,7 @@ export function BillingSection({ user, usage, billing, onToast }) {
   const plans = billingSummary?.plans || billing?.plans || [];
   const paymentConfig = billingSummary?.paymentConfig || billing?.paymentConfig || {};
   const isAdminVirtual = displayUser?.id === "__admin__";
+  const paymentReady = Boolean(paymentConfig.enabled && paymentConfig.merchantId && paymentConfig.hasKey);
 
   useEffect(() => {
     if (!token) return;
@@ -62,6 +82,7 @@ export function BillingSection({ user, usage, billing, onToast }) {
   }, [token]);
 
   const buyPlan = async (plan) => {
+    const popup = openPaymentWindow();
     setLoadingTier(plan.id);
     try {
       const data = await request("/api/user/payments", {
@@ -71,11 +92,12 @@ export function BillingSection({ user, usage, billing, onToast }) {
         body: { subscriptionTier: plan.id, payType }
       });
       if (data?.gatewayUrl && data?.params) {
-        submitPaymentForm(data.gatewayUrl, data.params);
+        submitPaymentForm(data.gatewayUrl, data.params, popup);
       }
       setOrders((items) => [data.order, ...items.filter((item) => item.id !== data.order?.id)].filter(Boolean));
       onToast?.("已创建支付订单，支付完成后会自动入账", "success");
     } catch (error) {
+      if (popup && !popup.closed) popup.close();
       onToast?.(error.message, "error");
     } finally {
       setLoadingTier("");
@@ -105,8 +127,8 @@ export function BillingSection({ user, usage, billing, onToast }) {
         <Stack spacing={1.5}>
           {isAdminVirtual ? (
             <Alert severity="success">管理员用户拥有前台全部功能且不限 RPM，无需购买套餐。</Alert>
-          ) : !paymentConfig.enabled ? (
-            <Alert severity="info">站长暂未开启在线支付，套餐信息仍可作为当前限速参考。</Alert>
+          ) : !paymentReady ? (
+            <Alert severity="info">在线支付尚未完成配置，套餐信息仍可作为当前限速参考。</Alert>
           ) : null}
           <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "stretch", sm: "center" }}>
             <TextField
@@ -156,7 +178,7 @@ export function BillingSection({ user, usage, billing, onToast }) {
                     ) : null}
                     <Button
                       variant={active ? "outlined" : "contained"}
-                      disabled={isAdminVirtual || !paymentConfig.enabled || !paid || Boolean(loadingTier)}
+                      disabled={isAdminVirtual || !paymentReady || !paid || Boolean(loadingTier)}
                       startIcon={loadingTier === plan.id ? <CircularProgress size={16} /> : <CreditCardIcon />}
                       onClick={() => buyPlan(plan)}
                       sx={{ mt: "auto" }}

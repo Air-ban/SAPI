@@ -36,6 +36,20 @@ func TestNormalizeSubscriptionPlansKeepsCustomEmailRPM(t *testing.T) {
 	}
 }
 
+func TestNormalizePaymentConfigCanonicalizesEpayRootEndpoints(t *testing.T) {
+	cfg := NormalizePaymentConfig(&models.PaymentConfig{
+		GatewayURL: "https://www.ezfpy.cn/",
+		MAPIURL:    DefaultGatewayURL,
+	})
+
+	if cfg.GatewayURL != DefaultGatewayURL {
+		t.Fatalf("GatewayURL = %q, want %q", cfg.GatewayURL, DefaultGatewayURL)
+	}
+	if cfg.MAPIURL != DefaultMAPIURL {
+		t.Fatalf("MAPIURL = %q, want %q", cfg.MAPIURL, DefaultMAPIURL)
+	}
+}
+
 func mustPlanByID(t *testing.T, plans []models.SubscriptionPlan, id string) models.SubscriptionPlan {
 	t.Helper()
 	for _, plan := range plans {

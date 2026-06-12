@@ -95,11 +95,11 @@ func NormalizePaymentConfig(cfg *models.PaymentConfig) *models.PaymentConfig {
 	if strings.TrimSpace(cfg.GatewayURL) == "" || sameURL(cfg.GatewayURL, DefaultMAPIURL) {
 		cfg.GatewayURL = DefaultGatewayURL
 	}
-	cfg.GatewayURL = strings.TrimRight(strings.TrimSpace(cfg.GatewayURL), "/")
-	if strings.TrimSpace(cfg.MAPIURL) == "" {
+	cfg.GatewayURL = normalizePaymentEndpoint(cfg.GatewayURL, DefaultGatewayURL, "submit.php")
+	if strings.TrimSpace(cfg.MAPIURL) == "" || sameURL(cfg.MAPIURL, DefaultGatewayURL) {
 		cfg.MAPIURL = DefaultMAPIURL
 	}
-	cfg.MAPIURL = strings.TrimRight(strings.TrimSpace(cfg.MAPIURL), "/")
+	cfg.MAPIURL = normalizePaymentEndpoint(cfg.MAPIURL, DefaultMAPIURL, "mapi.php")
 	if strings.TrimSpace(cfg.SiteName) == "" {
 		cfg.SiteName = "SAPI"
 	}
@@ -472,4 +472,21 @@ func normalizeModelKey(value string) string {
 
 func sameURL(a, b string) bool {
 	return strings.EqualFold(strings.TrimRight(strings.TrimSpace(a), "/"), strings.TrimRight(strings.TrimSpace(b), "/"))
+}
+
+func normalizePaymentEndpoint(raw, fallback, endpoint string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		value = fallback
+	}
+	parsed, err := url.Parse(value)
+	if err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		if parsed.Path == "" || parsed.Path == "/" {
+			parsed.Path = "/" + strings.TrimPrefix(endpoint, "/")
+			parsed.RawQuery = ""
+			parsed.Fragment = ""
+			return strings.TrimRight(parsed.String(), "/")
+		}
+	}
+	return strings.TrimRight(value, "/")
 }
