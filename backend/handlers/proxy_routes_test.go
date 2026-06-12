@@ -660,6 +660,69 @@ func TestWebSocketProxyFetchesExternalModels(t *testing.T) {
 	}
 }
 
+func TestWebSocketProxyForwardsNovelAIImageStreamRequest(t *testing.T) {
+	oldLookup := websocketProxyLookupIP
+	oldDoExternal := websocketProxyDoExternal
+	t.Cleanup(func() {
+		websocketProxyLookupIP = oldLookup
+		websocketProxyDoExternal = oldDoExternal
+	})
+
+	websocketProxyLookupIP = func(host string) ([]net.IP, error) {
+		if host != "image.novelai.net" {
+			t.Fatalf("lookup host = %q, want image.novelai.net", host)
+		}
+		return []net.IP{net.ParseIP("104.18.1.1")}, nil
+	}
+	websocketProxyDoExternal = func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodPost {
+			t.Fatalf("method = %q, want POST", req.Method)
+		}
+		if req.URL.String() != "https://image.novelai.net/ai/generate-image-stream" {
+			t.Fatalf("url = %q", req.URL.String())
+		}
+		if got := req.Header.Get("Authorization"); got != "Bearer nai-token" {
+			t.Fatalf("authorization = %q", got)
+		}
+		if got := req.Header.Get("Accept"); got != "text/event-stream" {
+			t.Fatalf("accept = %q", got)
+		}
+		if got := req.Header.Get("X-Correlation-Id"); got != "abc123" {
+			t.Fatalf("x-correlation-id = %q", got)
+		}
+		raw, _ := io.ReadAll(req.Body)
+		if !strings.Contains(string(raw), `"model":"nai-diffusion-3"`) || !strings.Contains(string(raw), `"stream":"sse"`) {
+			t.Fatalf("body = %s, want NovelAI image stream payload", raw)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader("data: {\"image\":\"aW1hZ2U=\",\"final\":true}\n\n")),
+		}, nil
+	}
+
+	source := httptest.NewRequest(http.MethodGet, "/api/ws/proxy", nil)
+	resp := executeWebSocketProxyRequest(source, websocketProxyRequest{
+		ID:     "novelai",
+		Method: http.MethodPost,
+		URL:    "https://image.novelai.net/ai/generate-image-stream",
+		Headers: map[string]string{
+			"Authorization":    "Bearer nai-token",
+			"Accept":           "text/event-stream",
+			"X-Correlation-Id": "abc123",
+			"Cookie":           "should-not-forward",
+		},
+		Body: json.RawMessage(`{"action":"generate","input":"cat","model":"nai-diffusion-3","parameters":{"prompt":"cat","width":1024,"height":1024,"stream":"sse"}}`),
+	})
+
+	if resp.Type != "response" || resp.Status != http.StatusOK {
+		t.Fatalf("ws response = %#v", resp)
+	}
+	if !strings.Contains(resp.Body, `"final":true`) {
+		t.Fatalf("body = %s, want NovelAI SSE response", resp.Body)
+	}
+}
+
 func TestWebSocketProxyRejectsUnsafeExternalTargets(t *testing.T) {
 	tests := []struct {
 		name   string

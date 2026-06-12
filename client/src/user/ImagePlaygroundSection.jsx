@@ -32,12 +32,48 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import StopCircleIcon from "@mui/icons-material/StopCircle";
 import { EmptyState } from "../components/EmptyState";
 import { openAICompatRequest, useOpenAIModelCatalog } from "../utils/openaiCompat";
+import { wsProxyRequest } from "../utils/wsProxy";
 
 const REFERENCE_PROJECT_URL = "https://github.com/CookSleep/gpt_image_playground";
 const MAX_REFERENCE_IMAGES = 8;
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const RESULT_LIMIT = 30;
 const PROMPT_REWRITE_GUARD_PREFIX = "Use the following text as the complete prompt. Do not rewrite it:";
+const NOVELAI_IMAGE_BASE_URL = "https://image.novelai.net";
+const NOVELAI_DEFAULT_NEGATIVE_PROMPT = "lowres, bad anatomy, bad hands, text, error, missing fingers, cropped, worst quality, low quality";
+
+const NOVELAI_MODELS = [
+  { id: "nai-diffusion-4-5-curated", name: "NovelAI Diffusion V4.5 Curated" },
+  { id: "nai-diffusion-4-5-full", name: "NovelAI Diffusion V4.5 Full" },
+  { id: "nai-diffusion-4-curated-preview", name: "NovelAI Diffusion V4 Curated Preview" },
+  { id: "nai-diffusion-4-full", name: "NovelAI Diffusion V4 Full" },
+  { id: "nai-diffusion-3", name: "NovelAI Diffusion Anime V3" },
+  { id: "nai-diffusion-2", name: "NovelAI Diffusion Anime V2" },
+  { id: "nai-diffusion", name: "NovelAI Diffusion Anime V1" },
+  { id: "safe-diffusion", name: "NovelAI Diffusion Safe" },
+  { id: "nai-diffusion-furry-3", name: "NovelAI Diffusion Furry V3" },
+  { id: "nai-diffusion-furry", name: "NovelAI Diffusion Furry" },
+  { id: "nai-diffusion-4-5-curated-inpainting", name: "NovelAI V4.5 Curated Inpainting" },
+  { id: "nai-diffusion-4-5-full-inpainting", name: "NovelAI V4.5 Full Inpainting" },
+  { id: "nai-diffusion-4-curated-preview-inpainting", name: "NovelAI V4 Curated Inpainting" },
+  { id: "nai-diffusion-4-full-inpainting", name: "NovelAI V4 Full Inpainting" },
+  { id: "nai-diffusion-3-inpainting", name: "NovelAI Anime V3 Inpainting" },
+  { id: "nai-diffusion-inpainting", name: "NovelAI Anime V1 Inpainting" },
+  { id: "safe-diffusion-inpainting", name: "NovelAI Safe Inpainting" },
+  { id: "furry-diffusion-inpainting", name: "NovelAI Furry Inpainting" },
+  { id: "kandinsky-vanilla", name: "Kandinsky Vanilla" }
+];
+
+const NOVELAI_SAMPLERS = [
+  { id: "k_euler_ancestral", name: "Euler Ancestral" },
+  { id: "k_euler", name: "Euler" },
+  { id: "k_dpmpp_2m", name: "DPM++ 2M" },
+  { id: "k_dpmpp_2s_ancestral", name: "DPM++ 2S Ancestral" },
+  { id: "k_dpmpp_sde", name: "DPM++ SDE" },
+  { id: "ddim_v3", name: "DDIM V3" }
+];
+
+const NOVELAI_SIZE_CAP = 1536;
 
 const glassPanelSx = {
   position: "relative",
@@ -145,6 +181,11 @@ function dataURLToBlob(dataUrl) {
   return new Blob([bytes], { type: mime });
 }
 
+function dataURLToBase64(dataUrl) {
+  const [, payload = ""] = String(dataUrl || "").split(",");
+  return payload.trim();
+}
+
 function normalizeImageValue(value, fallbackMime = "image/png") {
   const text = String(value || "").trim();
   if (!text) return "";
@@ -181,6 +222,33 @@ function requestSize(tier, ratio, customSize) {
   if (tier === "auto") return "auto";
   if (tier === "custom") return customSize.trim() || "1024x1024";
   return SIZE_PRESETS[tier]?.[ratio] || "1024x1024";
+}
+
+function parseSizeValue(value, fallback = "1024x1024") {
+  const match = String(value || "").match(/(\d{2,5})\s*[xX*]\s*(\d{2,5})/);
+  if (!match) return parseSizeValue(fallback, "1024x1024");
+  return {
+    width: Number(match[1]) || 1024,
+    height: Number(match[2]) || 1024
+  };
+}
+
+function novelAISize(sizeValue) {
+  const parsed = parseSizeValue(sizeValue === "auto" ? "1024x1024" : sizeValue);
+  const scale = Math.min(1, NOVELAI_SIZE_CAP / Math.max(parsed.width, parsed.height));
+  const round64 = (value) => Math.max(64, Math.round((value * scale) / 64) * 64);
+  return {
+    width: round64(parsed.width),
+    height: round64(parsed.height)
+  };
+}
+
+function novelAICorrelationID() {
+  return Math.random().toString(36).replace(/[^a-z0-9]/gi, "").slice(2, 8).padEnd(6, "0");
+}
+
+function novelAIUsesV4Prompt(model) {
+  return /^nai-diffusion-4/i.test(String(model || ""));
 }
 
 function resultKey(result) {
@@ -369,6 +437,100 @@ function buildImageEditWSForm({ model, prompt, params, returnBase64, referenceIm
   return form;
 }
 
+function buildNovelAIImageBody({ model, prompt, params, referenceImages, maskImage, negativePrompt, sampler, steps, scale, seed }) {
+  const imageSize = novelAISize(params.size);
+  const hasImage = referenceImages.length > 0;
+  const action = maskImage ? "infill" : hasImage ? "img2img" : "generate";
+  const cleanNegativePrompt = negativePrompt.trim() || NOVELAI_DEFAULT_NEGATIVE_PROMPT;
+  const parameters = {
+    ...imageSize,
+    prompt,
+    negative_prompt: cleanNegativePrompt,
+    sampler,
+    steps,
+    scale,
+    n_samples: Math.max(1, Math.min(4, Number(params.n || 1))),
+    image_format: params.outputFormat === "webp" ? "webp" : "png",
+    qualityToggle: true,
+    ucPreset: 0,
+    seed: seed > 0 ? seed : Math.floor(Math.random() * 4294967295),
+    stream: "sse"
+  };
+
+  if (novelAIUsesV4Prompt(model)) {
+    parameters.v4_prompt = {
+      caption: { base_caption: prompt, char_captions: [] },
+      use_coords: false,
+      use_order: true,
+      legacy_uc: false
+    };
+    parameters.v4_negative_prompt = {
+      caption: { base_caption: cleanNegativePrompt, char_captions: [] },
+      use_coords: false,
+      use_order: true,
+      legacy_uc: false
+    };
+  }
+
+  if (hasImage) {
+    parameters.image = dataURLToBase64(referenceImages[0].dataUrl);
+    parameters.strength = 0.7;
+    parameters.noise = 0.1;
+  }
+  if (maskImage?.dataUrl) {
+    parameters.mask = dataURLToBase64(maskImage.dataUrl);
+  }
+
+  return {
+    action,
+    input: prompt,
+    model,
+    parameters
+  };
+}
+
+function parseSSEDataEvents(raw) {
+  const events = [];
+  let dataLines = [];
+  const flush = () => {
+    if (!dataLines.length) return;
+    const data = dataLines.join("\n").trim();
+    dataLines = [];
+    if (data) events.push(data);
+  };
+
+  String(raw || "").replace(/\r\n/g, "\n").split("\n").forEach((line) => {
+    if (!line.trim()) {
+      flush();
+      return;
+    }
+    if (line.startsWith("data:")) {
+      dataLines.push(line.slice(5).trimStart());
+    }
+  });
+  flush();
+  return events;
+}
+
+function parseNovelAIStream(raw, fallbackMime = "image/png") {
+  const payloads = [];
+  let error = "";
+  for (const eventText of parseSSEDataEvents(raw)) {
+    if (eventText === "[DONE]") continue;
+    try {
+      const event = JSON.parse(eventText);
+      payloads.push(event);
+      if (event?.error) {
+        error = typeof event.error === "string" ? event.error : event.error.message || JSON.stringify(event.error);
+      }
+    } catch {
+      payloads.push({ raw: eventText });
+    }
+  }
+  const images = collectImagesFromPayload(payloads, fallbackMime);
+  return { payloads, images, error };
+}
+
 function ImageTile({ result, index, outputFormat, onCopy, onUseAsReference }) {
   const filename = `sapi-image-${index + 1}.${imageExtension(result.url, outputFormat)}`;
   return (
@@ -520,6 +682,12 @@ export function ImagePlaygroundSection({ config, apiKeys = [], selectedKey = "",
   const [apiKeyValue, setApiKeyValue] = useState("");
   const [customBaseURL, setCustomBaseURL] = useState("https://api.openai.com");
   const [customAPIKey, setCustomAPIKey] = useState("");
+  const [novelAIKey, setNovelAIKey] = useState("");
+  const [novelAINegativePrompt, setNovelAINegativePrompt] = useState(NOVELAI_DEFAULT_NEGATIVE_PROMPT);
+  const [novelAISampler, setNovelAISampler] = useState("k_euler_ancestral");
+  const [novelAISteps, setNovelAISteps] = useState(28);
+  const [novelAIScale, setNovelAIScale] = useState(5);
+  const [novelAISeed, setNovelAISeed] = useState("");
   const [apiMode, setApiMode] = useState("images");
   const [model, setModel] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -545,11 +713,12 @@ export function ImagePlaygroundSection({ config, apiKeys = [], selectedKey = "",
   const catalog = useOpenAIModelCatalog({
     config,
     sourceType: apiSource === "custom" ? "custom" : "sapi",
-    localKeyRecord: selectedKeyRecord,
+    localKeyRecord: apiSource === "novelai" ? null : selectedKeyRecord,
     customBaseURL,
     customAPIKey
   });
   const availableModels = useMemo(() => {
+    if (apiSource === "novelai") return NOVELAI_MODELS;
     const modelOptions = catalog.models || [];
     if (apiSource === "custom") return modelOptions;
     const allowed = selectedKeyRecord?.allowedModels || [];
@@ -591,10 +760,20 @@ export function ImagePlaygroundSection({ config, apiKeys = [], selectedKey = "",
 
   useEffect(() => {
     if (!model) {
+      if (apiSource === "novelai") {
+        setModel(NOVELAI_MODELS[0].id);
+        return;
+      }
       const imageModel = availableModels.find((item) => /image|gpt-image|flux|dall/i.test(`${item.id} ${item.name}`));
       setModel(imageModel?.id || availableModels[0]?.id || "gpt-image-2");
     }
-  }, [availableModels, model]);
+  }, [apiSource, availableModels, model]);
+
+  useEffect(() => {
+    if (apiSource !== "novelai") return;
+    if (outputFormat === "jpeg") setOutputFormat("png");
+    if (apiMode !== "images") setApiMode("images");
+  }, [apiMode, apiSource, outputFormat]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -632,18 +811,19 @@ export function ImagePlaygroundSection({ config, apiKeys = [], selectedKey = "",
   };
 
   const submit = async () => {
+    const isNovelAI = apiSource === "novelai";
     const sourceType = apiSource === "custom" ? "custom" : "sapi";
-    const key = sourceType === "custom" ? customAPIKey.trim() : selectedKeyRecord?.key || "";
+    const key = isNovelAI ? novelAIKey.trim() : sourceType === "custom" ? customAPIKey.trim() : selectedKeyRecord?.key || "";
     const cleanPrompt = prompt.trim();
     if (!key) {
-      onToast?.(sourceType === "custom" ? "请输入自有 API Key" : "请先创建或选择 API Key", "warning");
+      onToast?.(isNovelAI ? "请输入 NovelAI Persistent API Token" : sourceType === "custom" ? "请输入自有 API Key" : "请先创建或选择 API Key", "warning");
       return;
     }
-    if (sourceType !== "custom" && selectedKeyRecord?.enabled === false) {
+    if (!isNovelAI && sourceType !== "custom" && selectedKeyRecord?.enabled === false) {
       onToast?.("当前 API Key 已停用", "warning");
       return;
     }
-    if (sourceType === "custom" && !catalog.baseURL) {
+    if (!isNovelAI && sourceType === "custom" && !catalog.baseURL) {
       onToast?.("请输入自有 API Base URL", "warning");
       return;
     }
@@ -669,8 +849,51 @@ export function ImagePlaygroundSection({ config, apiKeys = [], selectedKey = "",
       const startedAt = Date.now();
       const mime = MIME_BY_FORMAT[outputFormat] || "image/png";
       let response;
+      let raw;
+      let images;
+      let rawRecordMode = apiMode;
 
-      if (apiMode === "responses") {
+      if (isNovelAI) {
+        const body = buildNovelAIImageBody({
+          model: model.trim(),
+          prompt: cleanPrompt,
+          params,
+          referenceImages,
+          maskImage,
+          negativePrompt: novelAINegativePrompt,
+          sampler: novelAISampler,
+          steps: novelAISteps,
+          scale: novelAIScale,
+          seed: Number(novelAISeed || 0)
+        });
+        response = await wsProxyRequest({
+          url: `${NOVELAI_IMAGE_BASE_URL}/ai/generate-image-stream`,
+          method: "POST",
+          signal: controller.signal,
+          headers: {
+            Authorization: `Bearer ${key}`,
+            Accept: "text/event-stream",
+            "Cache-Control": "no-store",
+            Pragma: "no-cache",
+            "X-Correlation-Id": novelAICorrelationID()
+          },
+          body
+        });
+        raw = await response.text();
+        if (!response.ok) {
+          let payload = null;
+          try {
+            payload = JSON.parse(raw);
+          } catch {
+            payload = null;
+          }
+          throw new Error(payload?.message || payload?.error?.message || raw.slice(0, 240) || `HTTP ${response.status}`);
+        }
+        const parsed = parseNovelAIStream(raw, body.parameters.image_format === "webp" ? "image/webp" : "image/png");
+        if (parsed.error) throw new Error(parsed.error);
+        images = parsed.images;
+        rawRecordMode = "novelai";
+      } else if (apiMode === "responses") {
         response = await openAICompatRequest({
           sourceType,
           baseURL: catalog.baseURL,
@@ -726,19 +949,21 @@ export function ImagePlaygroundSection({ config, apiKeys = [], selectedKey = "",
         });
       }
 
-      const raw = await response.text();
-      let payload = null;
-      if (raw.trim()) {
-        try {
-          payload = JSON.parse(raw);
-        } catch {
-          payload = null;
+      if (!isNovelAI) {
+        raw = await response.text();
+        let payload = null;
+        if (raw.trim()) {
+          try {
+            payload = JSON.parse(raw);
+          } catch {
+            payload = null;
+          }
         }
+        if (!response.ok) {
+          throw new Error(payload?.error?.message || raw.slice(0, 240) || `HTTP ${response.status}`);
+        }
+        images = collectImagesFromPayload(payload, mime);
       }
-      if (!response.ok) {
-        throw new Error(payload?.error?.message || raw.slice(0, 240) || `HTTP ${response.status}`);
-      }
-      const images = collectImagesFromPayload(payload, mime);
       if (!images.length) {
         setRawResponse(raw);
         throw new Error("接口没有返回可识别的图片数据");
@@ -746,7 +971,7 @@ export function ImagePlaygroundSection({ config, apiKeys = [], selectedKey = "",
       const record = {
         id: makeID("run"),
         prompt: cleanPrompt,
-        apiMode,
+        apiMode: rawRecordMode,
         model: model.trim(),
         params: { ...params },
         createdAt: new Date().toISOString(),
@@ -792,7 +1017,9 @@ export function ImagePlaygroundSection({ config, apiKeys = [], selectedKey = "",
     });
   };
 
-  const currentKeyReady = apiSource === "custom"
+  const currentKeyReady = apiSource === "novelai"
+    ? Boolean(novelAIKey.trim())
+    : apiSource === "custom"
     ? Boolean(customBaseURL.trim() && customAPIKey.trim())
     : Boolean(selectedKeyRecord?.key) && selectedKeyRecord?.enabled !== false;
   const canSubmit = !loading && currentKeyReady;
@@ -850,6 +1077,7 @@ export function ImagePlaygroundSection({ config, apiKeys = [], selectedKey = "",
             >
               <MenuItem value="sapi">SAPI Key</MenuItem>
               <MenuItem value="custom">自有 API</MenuItem>
+              <MenuItem value="novelai">NovelAI</MenuItem>
             </Select>
           </FormControl>
 
@@ -872,6 +1100,21 @@ export function ImagePlaygroundSection({ config, apiKeys = [], selectedKey = "",
                 autoComplete="off"
               />
             </Stack>
+          ) : apiSource === "novelai" ? (
+            <Stack spacing={1}>
+              <TextField
+                label="Persistent API Token"
+                size="small"
+                type="password"
+                value={novelAIKey}
+                onChange={(event) => setNovelAIKey(event.target.value)}
+                fullWidth
+                autoComplete="off"
+              />
+              <Alert severity="info">
+                NovelAI 使用官方图像生成接口，Token 只通过本页 WebSocket 代理转发到 image.novelai.net。
+              </Alert>
+            </Stack>
           ) : (
             <FormControl size="small" fullWidth>
               <InputLabel id="image-key-label">API Key</InputLabel>
@@ -890,13 +1133,15 @@ export function ImagePlaygroundSection({ config, apiKeys = [], selectedKey = "",
             </FormControl>
           )}
 
-          <FormControl size="small" fullWidth>
-            <InputLabel id="image-mode-label">接口</InputLabel>
-            <Select labelId="image-mode-label" label="接口" value={apiMode} onChange={(event) => setApiMode(event.target.value)}>
-              <MenuItem value="images">Images API</MenuItem>
-              <MenuItem value="responses">Responses 工具</MenuItem>
-            </Select>
-          </FormControl>
+          {apiSource !== "novelai" ? (
+            <FormControl size="small" fullWidth>
+              <InputLabel id="image-mode-label">接口</InputLabel>
+              <Select labelId="image-mode-label" label="接口" value={apiMode} onChange={(event) => setApiMode(event.target.value)}>
+                <MenuItem value="images">Images API</MenuItem>
+                <MenuItem value="responses">Responses 工具</MenuItem>
+              </Select>
+            </FormControl>
+          ) : null}
 
           <Stack direction="row" spacing={1} alignItems="center">
             {availableModels.length ? (
@@ -928,7 +1173,7 @@ export function ImagePlaygroundSection({ config, apiKeys = [], selectedKey = "",
               <span>
                 <IconButton
                   size="small"
-                  disabled={catalog.loading || !currentKeyReady}
+                  disabled={apiSource === "novelai" || catalog.loading || !currentKeyReady}
                   onClick={catalog.refresh}
                 >
                   {catalog.loading ? <CircularProgress size={18} /> : <RefreshIcon fontSize="small" />}
@@ -951,6 +1196,65 @@ export function ImagePlaygroundSection({ config, apiKeys = [], selectedKey = "",
               }
             }}
           />
+
+          {apiSource === "novelai" ? (
+            <Stack spacing={1}>
+              <TextField
+                label="负面提示词"
+                value={novelAINegativePrompt}
+                onChange={(event) => setNovelAINegativePrompt(event.target.value)}
+                minRows={2}
+                multiline
+                fullWidth
+              />
+              <FormControl size="small" fullWidth>
+                <InputLabel id="novelai-sampler-label">采样器</InputLabel>
+                <Select
+                  labelId="novelai-sampler-label"
+                  label="采样器"
+                  value={novelAISampler}
+                  onChange={(event) => setNovelAISampler(event.target.value)}
+                >
+                  {NOVELAI_SAMPLERS.map((item) => (
+                    <MenuItem key={item.id} value={item.id}>{item.name}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <Box>
+                <Typography variant="caption" color="text.secondary">
+                  步数 {novelAISteps}
+                </Typography>
+                <Slider
+                  size="small"
+                  min={1}
+                  max={50}
+                  value={novelAISteps}
+                  onChange={(_, value) => setNovelAISteps(Number(value))}
+                />
+              </Box>
+              <Box>
+                <Typography variant="caption" color="text.secondary">
+                  CFG {novelAIScale}
+                </Typography>
+                <Slider
+                  size="small"
+                  min={1}
+                  max={12}
+                  step={0.5}
+                  value={novelAIScale}
+                  onChange={(_, value) => setNovelAIScale(Number(value))}
+                />
+              </Box>
+              <TextField
+                label="Seed"
+                size="small"
+                type="number"
+                value={novelAISeed}
+                onChange={(event) => setNovelAISeed(event.target.value)}
+                fullWidth
+              />
+            </Stack>
+          ) : null}
 
           <Stack direction="row" spacing={1}>
             <FormControl size="small" fullWidth>
@@ -984,26 +1288,28 @@ export function ImagePlaygroundSection({ config, apiKeys = [], selectedKey = "",
           )}
 
           <Stack direction="row" spacing={1}>
-            <FormControl size="small" fullWidth>
-              <InputLabel id="image-quality-label">质量</InputLabel>
-              <Select labelId="image-quality-label" label="质量" value={quality} onChange={(event) => setQuality(event.target.value)}>
-                <MenuItem value="auto">auto</MenuItem>
-                <MenuItem value="low">low</MenuItem>
-                <MenuItem value="medium">medium</MenuItem>
-                <MenuItem value="high">high</MenuItem>
-              </Select>
-            </FormControl>
+            {apiSource !== "novelai" ? (
+              <FormControl size="small" fullWidth>
+                <InputLabel id="image-quality-label">质量</InputLabel>
+                <Select labelId="image-quality-label" label="质量" value={quality} onChange={(event) => setQuality(event.target.value)}>
+                  <MenuItem value="auto">auto</MenuItem>
+                  <MenuItem value="low">low</MenuItem>
+                  <MenuItem value="medium">medium</MenuItem>
+                  <MenuItem value="high">high</MenuItem>
+                </Select>
+              </FormControl>
+            ) : null}
             <FormControl size="small" fullWidth>
               <InputLabel id="image-format-label">格式</InputLabel>
               <Select labelId="image-format-label" label="格式" value={outputFormat} onChange={(event) => setOutputFormat(event.target.value)}>
                 <MenuItem value="png">PNG</MenuItem>
-                <MenuItem value="jpeg">JPEG</MenuItem>
+                {apiSource !== "novelai" ? <MenuItem value="jpeg">JPEG</MenuItem> : null}
                 <MenuItem value="webp">WebP</MenuItem>
               </Select>
             </FormControl>
           </Stack>
 
-          {outputFormat !== "png" ? (
+          {apiSource !== "novelai" && outputFormat !== "png" ? (
             <Box>
               <Typography variant="caption" color="text.secondary">
                 压缩 {outputCompression}
@@ -1019,13 +1325,15 @@ export function ImagePlaygroundSection({ config, apiKeys = [], selectedKey = "",
           ) : null}
 
           <Stack direction="row" spacing={1}>
-            <FormControl size="small" fullWidth>
-              <InputLabel id="image-moderation-label">审核</InputLabel>
-              <Select labelId="image-moderation-label" label="审核" value={moderation} onChange={(event) => setModeration(event.target.value)}>
-                <MenuItem value="auto">auto</MenuItem>
-                <MenuItem value="low">low</MenuItem>
-              </Select>
-            </FormControl>
+            {apiSource !== "novelai" ? (
+              <FormControl size="small" fullWidth>
+                <InputLabel id="image-moderation-label">审核</InputLabel>
+                <Select labelId="image-moderation-label" label="审核" value={moderation} onChange={(event) => setModeration(event.target.value)}>
+                  <MenuItem value="auto">auto</MenuItem>
+                  <MenuItem value="low">low</MenuItem>
+                </Select>
+              </FormControl>
+            ) : null}
             <FormControl size="small" fullWidth>
               <InputLabel id="image-count-label">数量</InputLabel>
               <Select labelId="image-count-label" label="数量" value={count} onChange={(event) => setCount(Number(event.target.value))}>
@@ -1034,7 +1342,7 @@ export function ImagePlaygroundSection({ config, apiKeys = [], selectedKey = "",
             </FormControl>
           </Stack>
 
-          {apiMode === "images" ? (
+          {apiMode === "images" && apiSource !== "novelai" ? (
             <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
               <Typography variant="body2">返回 Base64</Typography>
               <Switch checked={returnBase64} onChange={(event) => setReturnBase64(event.target.checked)} />
@@ -1102,9 +1410,9 @@ export function ImagePlaygroundSection({ config, apiKeys = [], selectedKey = "",
             </Tooltip>
           </Stack>
 
-          {catalog.error ? <Alert severity="warning">{catalog.error}</Alert> : null}
-          {apiSource !== "custom" && !apiKeys.length ? <Alert severity="info">当前账号还没有 API Key。</Alert> : null}
-          {apiSource !== "custom" && selectedKeyRecord?.enabled === false ? <Alert severity="warning">当前 API Key 已停用。</Alert> : null}
+          {apiSource !== "novelai" && catalog.error ? <Alert severity="warning">{catalog.error}</Alert> : null}
+          {apiSource === "sapi" && !apiKeys.length ? <Alert severity="info">当前账号还没有 API Key。</Alert> : null}
+          {apiSource === "sapi" && selectedKeyRecord?.enabled === false ? <Alert severity="warning">当前 API Key 已停用。</Alert> : null}
 
           <ReferenceImageStrip
             images={referenceImages}
@@ -1165,7 +1473,7 @@ export function ImagePlaygroundSection({ config, apiKeys = [], selectedKey = "",
               {results.map((run) => (
                 <Box key={run.id} sx={{ display: "grid", gap: 1.25 }}>
                   <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap">
-                    <Chip size="small" label={run.apiMode === "responses" ? "Responses" : "Images"} />
+                    <Chip size="small" label={run.apiMode === "novelai" ? "NovelAI" : run.apiMode === "responses" ? "Responses" : "Images"} />
                     <Chip size="small" variant="outlined" label={run.model} />
                     <Chip size="small" variant="outlined" label={run.params.size} />
                     <Chip size="small" variant="outlined" label={`${Math.max(1, Math.round(run.elapsedMs / 100) / 10)}s`} />

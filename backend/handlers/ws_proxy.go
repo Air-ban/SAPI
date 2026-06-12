@@ -205,13 +205,13 @@ func webSocketProxyPathAllowed(method, path string) bool {
 	cleaned := strings.TrimRight(path, "/")
 	switch method {
 	case http.MethodGet:
-		return cleaned == "/v1/models" || cleaned == "/models"
+		return cleaned == "/v1/models" || cleaned == "/models" || cleaned == "/ai/generate-image/suggest-tags"
 	case http.MethodPost:
 	default:
 		return false
 	}
 	switch cleaned {
-	case "/responses", "/v1/responses", "/v1/chat/completions", "/chat/completions", "/v1/images/generations", "/v1/images/edits":
+	case "/responses", "/v1/responses", "/v1/chat/completions", "/chat/completions", "/v1/images/generations", "/v1/images/edits", "/ai/generate-image", "/ai/generate-image-stream":
 		return true
 	default:
 		return false
@@ -308,6 +308,7 @@ func webSocketProxyRequestHeaderAllowed(key string) bool {
 	switch http.CanonicalHeaderKey(key) {
 	case "Authorization",
 		"X-Api-Key",
+		"X-Correlation-Id",
 		"Accept",
 		"Cache-Control",
 		"Pragma",
