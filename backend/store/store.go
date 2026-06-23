@@ -1439,6 +1439,11 @@ func normalizeDB(db *models.Database) bool {
 			p.UpstreamFormat = normalizedFormat
 			changed = true
 		}
+		normalizedUserAgent := models.NormalizeProviderUserAgent(p.UserAgent)
+		if p.UserAgent != normalizedUserAgent {
+			p.UserAgent = normalizedUserAgent
+			changed = true
+		}
 		if p.HealthStatus == "" {
 			p.HealthStatus = "unknown"
 			changed = true
@@ -1468,7 +1473,7 @@ func normalizeDB(db *models.Database) bool {
 	for i := range db.Users {
 		u := &db.Users[i]
 		hadStoredSubscriptionTier := subscription.IsValidTier(u.SubscriptionTier)
-		normalizedTier := subscription.NormalizeTier(u.SubscriptionTier)
+		normalizedTier := normalizeUserSubscriptionTierInDB(u.SubscriptionTier, db)
 		if u.SubscriptionTier != normalizedTier {
 			u.SubscriptionTier = normalizedTier
 			changed = true
@@ -1624,6 +1629,21 @@ func parseStoredTime(value string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
+func normalizeUserSubscriptionTierInDB(value string, db *models.Database) string {
+	normalized := subscription.NormalizeTier(value)
+	if db != nil {
+		for _, plan := range db.SubscriptionPlans {
+			if strings.EqualFold(subscription.NormalizeTier(plan.ID), normalized) {
+				return subscription.NormalizeTier(plan.ID)
+			}
+		}
+	}
+	if subscription.IsValidTier(normalized) {
+		return normalized
+	}
+	return subscription.TierLite
+}
+
 func isLegacyDefaultKeyRPMForUser(value int, user *models.User) bool {
 	if value == 30 {
 		return true
@@ -1643,6 +1663,7 @@ func RedactProvider(p models.Provider) map[string]interface{} {
 		"name":              p.Name,
 		"baseUrl":           p.BaseURL,
 		"upstreamFormat":    models.NormalizeUpstreamFormat(p.UpstreamFormat),
+		"userAgent":         p.UserAgent,
 		"models":            p.Models,
 		"modelMappings":     p.ModelMappings,
 		"enabled":           p.Enabled,

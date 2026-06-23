@@ -9,6 +9,8 @@ import (
 const (
 	TierEmail = "email"
 	TierLite  = "lite"
+	TierDay   = "day"
+	TierWeek  = "week"
 	TierBase  = "base"
 	TierPro   = "pro"
 	TierUltra = "ultra"
@@ -19,48 +21,55 @@ const (
 )
 
 type TierInfo struct {
-	ID               string `json:"id"`
-	Name             string `json:"name"`
-	Description      string `json:"description,omitempty"`
-	RPMLimit         int    `json:"rpmLimit"`
-	PriceCents       int    `json:"priceCents"`
-	CreditMicrounits int64  `json:"creditMicrounits"`
-	DurationDays     int    `json:"durationDays"`
-	Enabled          bool   `json:"enabled"`
-	SortOrder        int    `json:"sortOrder"`
+	ID                  string            `json:"id"`
+	Name                string            `json:"name"`
+	Description         string            `json:"description,omitempty"`
+	RPMLimit            int               `json:"rpmLimit"`
+	PriceCents          int               `json:"priceCents"`
+	CreditMicrounits    int64             `json:"creditMicrounits"`
+	DurationDays        int               `json:"durationDays"`
+	ModelProviderRoutes map[string]string `json:"modelProviderRoutes"`
+	Enabled             bool              `json:"enabled"`
+	SortOrder           int               `json:"sortOrder"`
 }
 
 var Tiers = []TierInfo{
 	{ID: TierEmail, Name: "Email", RPMLimit: 1, DurationDays: 30, Enabled: true, SortOrder: 10},
 	{ID: TierLite, Name: "Lite", RPMLimit: 10, DurationDays: 30, Enabled: true, SortOrder: 20},
-	{ID: TierBase, Name: "Base", RPMLimit: 30, PriceCents: 990, CreditMicrounits: 10000000, DurationDays: 30, Enabled: true, SortOrder: 30},
-	{ID: TierPro, Name: "Pro", RPMLimit: 50, PriceCents: 2990, CreditMicrounits: 35000000, DurationDays: 30, Enabled: true, SortOrder: 40},
-	{ID: TierUltra, Name: "Ultra", RPMLimit: 100, PriceCents: 6990, CreditMicrounits: 90000000, DurationDays: 30, Enabled: true, SortOrder: 50},
-	{ID: TierMax, Name: "MAX", RPMLimit: 0, DurationDays: 3650, Enabled: true, SortOrder: 60},
+	{ID: TierDay, Name: "日卡", RPMLimit: 30, PriceCents: 199, CreditMicrounits: 2000000, DurationDays: 1, Enabled: true, SortOrder: 30},
+	{ID: TierWeek, Name: "周卡", RPMLimit: 50, PriceCents: 999, CreditMicrounits: 12000000, DurationDays: 7, Enabled: true, SortOrder: 40},
+	{ID: TierBase, Name: "Base", RPMLimit: 30, PriceCents: 990, CreditMicrounits: 10000000, DurationDays: 30, Enabled: true, SortOrder: 50},
+	{ID: TierPro, Name: "Pro", RPMLimit: 50, PriceCents: 2990, CreditMicrounits: 35000000, DurationDays: 30, Enabled: true, SortOrder: 60},
+	{ID: TierUltra, Name: "Ultra", RPMLimit: 100, PriceCents: 6990, CreditMicrounits: 90000000, DurationDays: 30, Enabled: true, SortOrder: 70},
+	{ID: TierMax, Name: "MAX", RPMLimit: 0, DurationDays: 3650, Enabled: true, SortOrder: 80},
 }
 
 func NormalizeTier(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case TierEmail:
-		return TierEmail
-	case TierLite:
-		return TierLite
-	case TierBase:
-		return TierBase
-	case TierPro:
-		return TierPro
-	case TierUltra:
-		return TierUltra
-	case strings.ToLower(TierMax):
+	trimmed := strings.TrimSpace(value)
+	if strings.EqualFold(trimmed, TierMax) {
 		return TierMax
-	default:
+	}
+	if trimmed == "" {
 		return TierLite
 	}
+	return strings.ToLower(trimmed)
 }
 
 func IsValidTier(value string) bool {
-	trimmed := strings.TrimSpace(value)
-	return trimmed != "" && strings.EqualFold(NormalizeTier(trimmed), trimmed)
+	normalized := NormalizeTier(value)
+	if normalized == "" || len(normalized) > 64 {
+		return false
+	}
+	if normalized == TierMax {
+		return true
+	}
+	for _, r := range normalized {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func TierForUser(user *models.User) string {
@@ -100,15 +109,16 @@ func TiersForDB(db *models.Database) []TierInfo {
 	result := make([]TierInfo, 0, len(db.SubscriptionPlans))
 	for _, plan := range db.SubscriptionPlans {
 		result = append(result, TierInfo{
-			ID:               NormalizeTier(plan.ID),
-			Name:             plan.Name,
-			Description:      plan.Description,
-			RPMLimit:         plan.RPMLimit,
-			PriceCents:       plan.PriceCents,
-			CreditMicrounits: plan.CreditMicrounits,
-			DurationDays:     plan.DurationDays,
-			Enabled:          plan.Enabled,
-			SortOrder:        plan.SortOrder,
+			ID:                  NormalizeTier(plan.ID),
+			Name:                plan.Name,
+			Description:         plan.Description,
+			RPMLimit:            plan.RPMLimit,
+			PriceCents:          plan.PriceCents,
+			CreditMicrounits:    plan.CreditMicrounits,
+			DurationDays:        plan.DurationDays,
+			ModelProviderRoutes: plan.ModelProviderRoutes,
+			Enabled:             plan.Enabled,
+			SortOrder:           plan.SortOrder,
 		})
 	}
 	return result

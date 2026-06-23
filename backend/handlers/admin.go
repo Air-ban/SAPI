@@ -87,9 +87,9 @@ func writeAdminState(w http.ResponseWriter, r *http.Request, includeSession bool
 	smtp := getSMTPConfig(db)
 
 	payload := map[string]interface{}{
-		"providers":               store.RedactProviders(db.Providers),
-		"users":                   sanitizeUsers(db.Users, db),
-		"adminApiKeys":            sanitizeAdminAPIKeys(db.AdminAPIKeys),
+		"providers":               adminProvidersPayload(db.Providers),
+		"users":                   adminUsersPayload(db.Users, db),
+		"adminApiKeys":            adminAPIKeysPayload(db.AdminAPIKeys),
 		"adminPasskeys":           sanitizeAdminPasskeys(db.AdminPasskeys),
 		"publicConfig":            serviceConfigForRequest(r, nil),
 		"invitationCodes":         db.InvitationCodes,
@@ -498,7 +498,7 @@ func handleAdminListAPIKeys(w http.ResponseWriter, r *http.Request) {
 	}
 	sanitized := make([]map[string]interface{}, len(rawKeys))
 	for i, k := range rawKeys {
-		sanitized[i] = sanitizeAPIKeyRecord(&k)
+		sanitized[i] = adminAPIKeyRecordPayload(&k)
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"apiKeys": sanitized})
 }
@@ -534,7 +534,7 @@ func handleAdminCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(201)
 	rk := record.(*models.APIKeyRecord)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"apiKey": sanitizeAPIKeyRecord(rk),
+		"apiKey": adminAPIKeyRecordPayload(rk),
 	})
 }
 
@@ -560,7 +560,7 @@ func handleAdminRotateAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"apiKey": sanitizeAPIKeyRecord(result.(*models.APIKeyRecord)),
+		"apiKey": adminAPIKeyRecordPayload(result.(*models.APIKeyRecord)),
 	})
 }
 
@@ -600,7 +600,7 @@ func handleAdminUpdateAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"apiKey": sanitizeAPIKeyRecord(result.(*models.APIKeyRecord)),
+		"apiKey": adminAPIKeyRecordPayload(result.(*models.APIKeyRecord)),
 	})
 }
 
@@ -636,6 +636,7 @@ func handleAdminCreateProvider(w http.ResponseWriter, r *http.Request) {
 	baseURL := security.SafeSingleLine(toString(body["baseUrl"]), 2048)
 	apiKey := security.SafeSingleLine(toString(body["apiKey"]), 2048)
 	upstreamFormat := models.NormalizeUpstreamFormat(security.SafeSingleLine(toString(body["upstreamFormat"]), 32))
+	userAgent := models.NormalizeProviderUserAgent(security.SafeSingleLine(toString(body["userAgent"]), 512))
 
 	if name == "" || baseURL == "" || apiKey == "" || !security.ValidHTTPBaseURL(baseURL) {
 		utils.SendError(w, 400, "Provider name, base URL and API key are required.", "invalid_provider")
@@ -652,6 +653,7 @@ func handleAdminCreateProvider(w http.ResponseWriter, r *http.Request) {
 			BaseURL:           baseURL,
 			APIKey:            apiKey,
 			UpstreamFormat:    upstreamFormat,
+			UserAgent:         userAgent,
 			Models:            normalizeModelList(body["models"]),
 			ModelMappings:     normalizeModelMappings(body["modelMappings"]),
 			Enabled:           true,
@@ -666,7 +668,7 @@ func handleAdminCreateProvider(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.WriteHeader(201)
-	json.NewEncoder(w).Encode(store.RedactProvider(*result.(*models.Provider)))
+	json.NewEncoder(w).Encode(adminProviderPayload(*result.(*models.Provider)))
 }
 
 func handleAdminUpdateProvider(w http.ResponseWriter, r *http.Request) {
@@ -701,6 +703,9 @@ func handleAdminUpdateProvider(w http.ResponseWriter, r *http.Request) {
 				if upstreamFormat, ok := body["upstreamFormat"].(string); ok {
 					p.UpstreamFormat = models.NormalizeUpstreamFormat(security.SafeSingleLine(upstreamFormat, 32))
 				}
+				if userAgent, ok := body["userAgent"].(string); ok {
+					p.UserAgent = models.NormalizeProviderUserAgent(security.SafeSingleLine(userAgent, 512))
+				}
 				if models, ok := body["models"]; ok {
 					p.Models = normalizeModelList(models)
 				}
@@ -728,7 +733,7 @@ func handleAdminUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	json.NewEncoder(w).Encode(store.RedactProvider(*result.(*models.Provider)))
+	json.NewEncoder(w).Encode(adminProviderPayload(*result.(*models.Provider)))
 }
 
 func handleAdminDeleteProvider(w http.ResponseWriter, r *http.Request) {
@@ -761,6 +766,7 @@ func handleAdminFetchProviderModels(w http.ResponseWriter, r *http.Request) {
 
 	baseURL := security.SafeSingleLine(toString(body["baseUrl"]), 2048)
 	apiKey := security.SafeSingleLine(toString(body["apiKey"]), 2048)
+	userAgent := models.NormalizeProviderUserAgent(security.SafeSingleLine(toString(body["userAgent"]), 512))
 
 	if baseURL == "" || apiKey == "" || !security.ValidHTTPBaseURL(baseURL) {
 		utils.SendError(w, 400, "Provider base URL and API key are required.", "invalid_provider")
@@ -778,6 +784,9 @@ func handleAdminFetchProviderModels(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Accept", "application/json")
+	if userAgent != "" {
+		req.Header.Set("User-Agent", userAgent)
+	}
 
 	resp, err := proxy.DoUpstream(req)
 	if err != nil {
@@ -836,15 +845,17 @@ func handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 	subscriptionTier, subscriptionTierSet := "", false
 	if raw, ok := body["subscriptionTier"].(string); ok {
 		subscriptionTierSet = true
-		subscriptionTier = security.SafeSingleLine(raw, 32)
+		subscriptionTier = subscription.NormalizeTier(security.SafeSingleLine(raw, 64))
 		if !subscription.IsValidTier(subscriptionTier) {
 			utils.SendError(w, 400, "Subscription tier is invalid.", "invalid_subscription_tier")
 			return
 		}
-		subscriptionTier = subscription.NormalizeTier(subscriptionTier)
 	}
 
 	result := store.MutateDB(func(db *models.Database) interface{} {
+		if subscriptionTierSet && !subscriptionPlanExists(db, subscriptionTier) {
+			return "invalid_subscription_tier"
+		}
 		targetIdx := -1
 		for i := range db.Users {
 			if db.Users[i].ID == id {
@@ -920,13 +931,16 @@ func handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 			utils.SendError(w, 409, "Username is already registered.", errCode)
 		case "email_exists":
 			utils.SendError(w, 409, "Email is already registered.", errCode)
+		case "invalid_subscription_tier":
+			utils.SendError(w, 400, "Subscription tier is invalid.", errCode)
 		default:
 			utils.SendError(w, 400, "User could not be updated.", errCode)
 		}
 		return
 	}
 
-	json.NewEncoder(w).Encode(sanitizeUser(result.(*models.User)))
+	db := store.ReadDB()
+	json.NewEncoder(w).Encode(adminUserPayload(result.(*models.User), db))
 }
 
 func handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
@@ -980,7 +994,8 @@ func handleAdminResetUserPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	json.NewEncoder(w).Encode(sanitizeUser(result.(*models.User)))
+	db := store.ReadDB()
+	json.NewEncoder(w).Encode(adminUserPayload(result.(*models.User), db))
 }
 
 func handleAdminUpdateUserAPIKey(w http.ResponseWriter, r *http.Request) {
@@ -1028,7 +1043,8 @@ func handleAdminUpdateUserAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	json.NewEncoder(w).Encode(sanitizeUser(result.(*models.User)))
+	db := store.ReadDB()
+	json.NewEncoder(w).Encode(adminUserPayload(result.(*models.User), db))
 }
 
 func handleAdminListAnnouncements(w http.ResponseWriter, r *http.Request) {
@@ -1307,13 +1323,16 @@ func handleAdminApplyGlobalSubscriptionTier(w http.ResponseWriter, r *http.Reque
 	}
 
 	restoreDefaults := toBool(body["restoreDefaults"])
-	tier := security.SafeSingleLine(toString(body["subscriptionTier"]), 32)
+	tier := subscription.NormalizeTier(security.SafeSingleLine(toString(body["subscriptionTier"]), 64))
 	if !restoreDefaults {
 		if !subscription.IsValidTier(tier) {
 			utils.SendError(w, http.StatusBadRequest, "Subscription tier is invalid.", "invalid_subscription_tier")
 			return
 		}
-		tier = subscription.NormalizeTier(tier)
+		if !subscriptionPlanExists(store.ReadDB(), tier) {
+			utils.SendError(w, http.StatusBadRequest, "Subscription tier is invalid.", "invalid_subscription_tier")
+			return
+		}
 	}
 
 	result := store.MutateDB(func(db *models.Database) interface{} {
@@ -1346,6 +1365,19 @@ func handleAdminApplyGlobalSubscriptionTier(w http.ResponseWriter, r *http.Reque
 		payload["subscriptionRpmLimit"] = subscription.RPMLimitForTierInDB(store.ReadDB(), tier)
 	}
 	json.NewEncoder(w).Encode(payload)
+}
+
+func subscriptionPlanExists(db *models.Database, tier string) bool {
+	if db == nil {
+		return false
+	}
+	tier = subscription.NormalizeTier(tier)
+	for _, plan := range db.SubscriptionPlans {
+		if strings.EqualFold(subscription.NormalizeTier(plan.ID), tier) {
+			return true
+		}
+	}
+	return false
 }
 
 func handleAdminUpdateBanner(w http.ResponseWriter, r *http.Request) {
@@ -1445,6 +1477,33 @@ func sanitizeUsers(users []models.User, db *models.Database) []map[string]interf
 	return result
 }
 
+func adminProviderPayload(p models.Provider) map[string]interface{} {
+	payload := store.RedactProvider(p)
+	payload["apiKey"] = p.APIKey
+	payload["hasApiKey"] = p.APIKey != ""
+	return payload
+}
+
+func adminProvidersPayload(providers []models.Provider) []map[string]interface{} {
+	result := make([]map[string]interface{}, len(providers))
+	for i, p := range providers {
+		result[i] = adminProviderPayload(p)
+	}
+	return result
+}
+
+func adminUserPayload(user *models.User, db *models.Database) map[string]interface{} {
+	return sanitizeUserWithDB(user, db)
+}
+
+func adminUsersPayload(users []models.User, db *models.Database) []map[string]interface{} {
+	result := make([]map[string]interface{}, len(users))
+	for i, u := range users {
+		result[i] = adminUserPayload(&u, db)
+	}
+	return result
+}
+
 func findUserByID(db *models.Database, id string) (*models.User, bool) {
 	if db == nil {
 		return nil, false
@@ -1517,6 +1576,21 @@ func sanitizeAdminAPIKeys(keys []models.APIKeyRecord) []map[string]interface{} {
 	result := make([]map[string]interface{}, len(keys))
 	for i, k := range keys {
 		result[i] = sanitizeAPIKeyRecord(&k)
+	}
+	return result
+}
+
+func adminAPIKeyRecordPayload(record *models.APIKeyRecord) map[string]interface{} {
+	return sanitizeAPIKeyRecord(record)
+}
+
+func adminAPIKeysPayload(keys []models.APIKeyRecord) []map[string]interface{} {
+	if keys == nil {
+		return []map[string]interface{}{}
+	}
+	result := make([]map[string]interface{}, len(keys))
+	for i, k := range keys {
+		result[i] = adminAPIKeyRecordPayload(&k)
 	}
 	return result
 }

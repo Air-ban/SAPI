@@ -36,6 +36,38 @@ func TestNormalizeSubscriptionPlansKeepsCustomEmailRPM(t *testing.T) {
 	}
 }
 
+func TestDefaultSubscriptionPlansIncludeDayAndWeekCards(t *testing.T) {
+	plans := DefaultSubscriptionPlans()
+	day := mustPlanByID(t, plans, "day")
+	if day.DurationDays != 1 {
+		t.Fatalf("day DurationDays = %d, want 1", day.DurationDays)
+	}
+	week := mustPlanByID(t, plans, "week")
+	if week.DurationDays != 7 {
+		t.Fatalf("week DurationDays = %d, want 7", week.DurationDays)
+	}
+}
+
+func TestNormalizeSubscriptionPlansKeepsCustomPlanAndRoutes(t *testing.T) {
+	plans := NormalizeSubscriptionPlans([]models.SubscriptionPlan{{
+		ID:                  "trial-2d",
+		Name:                "Two Day Trial",
+		RPMLimit:            12,
+		DurationDays:        2,
+		ModelProviderRoutes: map[string]string{"gpt-4o-mini": "prv_fast"},
+		Enabled:             true,
+		SortOrder:           15,
+	}})
+
+	plan := mustPlanByID(t, plans, "trial-2d")
+	if plan.RPMLimit != 12 || plan.DurationDays != 2 {
+		t.Fatalf("plan = %#v, want custom rpm/duration", plan)
+	}
+	if got := plan.ModelProviderRoutes["gpt-4o-mini"]; got != "prv_fast" {
+		t.Fatalf("route = %q, want prv_fast", got)
+	}
+}
+
 func TestNormalizePaymentConfigCanonicalizesEpayRootEndpoints(t *testing.T) {
 	cfg := NormalizePaymentConfig(&models.PaymentConfig{
 		GatewayURL: "https://www.ezfpy.cn/",

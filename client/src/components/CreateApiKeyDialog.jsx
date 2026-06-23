@@ -18,6 +18,7 @@ import {
   Stack,
   TextField
 } from "@mui/material";
+import { modelDisplayParts } from "../utils/helpers";
 
 export function CreateApiKeyDialog({ open, models, onClose, onCreate }) {
   const [name, setName] = useState("");
@@ -47,8 +48,8 @@ export function CreateApiKeyDialog({ open, models, onClose, onCreate }) {
   };
 
   const modelOptions = models.map((item) => {
-    const id = item?.id || item;
-    return { id, label: item?.name || id };
+    const parts = modelDisplayParts(item);
+    return { id: parts.id, label: parts.displayName, secondary: parts.secondary };
   });
 
   return (
@@ -83,7 +84,7 @@ export function CreateApiKeyDialog({ open, models, onClose, onCreate }) {
               {modelOptions.map((option) => (
                 <MenuItem key={option.id} value={option.id}>
                   <Checkbox checked={selectedModels.includes(option.id)} />
-                  <ListItemText primary={option.label} />
+                  <ListItemText primary={option.label} secondary={option.secondary || null} />
                 </MenuItem>
               ))}
             </Select>

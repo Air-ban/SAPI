@@ -80,7 +80,7 @@ npm run client:dev
 
 ## 致谢
 
-用户前台的生图工坊参考了 MIT 许可项目 [CookSleep/gpt_image_playground](https://github.com/CookSleep/gpt_image_playground) 的 Images API / Responses API 生图工作流设计。
+用户前台的生图工坊嵌入了 MIT 许可项目 [CookSleep/gpt_image_playground](https://github.com/CookSleep/gpt_image_playground) 的静态构建，并通过 SAPI Base URL 与用户 API Key 调用 Images API / Responses API。
 
 ## 环境变量
 

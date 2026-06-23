@@ -49,6 +49,53 @@ func TestBuildAnthropicChatCompletionsUpstreamRequest(t *testing.T) {
 	}
 }
 
+func TestProviderUserAgentIsAppliedToAllUpstreamFormats(t *testing.T) {
+	const ua = "Claude-User (claude-code/2.1.87; +https://support.anthropic.com/)"
+
+	t.Run("openai", func(t *testing.T) {
+		req, err := BuildChatCompletionsUpstreamRequestDetailed(models.Provider{
+			Name:      "OpenAI",
+			BaseURL:   "https://api.openai.com/v1",
+			APIKey:    "sk-upstream",
+			UserAgent: ua,
+		}, "/v1/chat/completions", "", map[string]interface{}{"model": "gpt-4o-mini"}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if req.Headers.Get("User-Agent") != ua {
+			t.Fatalf("User-Agent = %q", req.Headers.Get("User-Agent"))
+		}
+	})
+
+	t.Run("anthropic", func(t *testing.T) {
+		req, err := BuildAnthropicMessagesUpstreamRequestDetailed(models.Provider{
+			BaseURL:   "https://api.anthropic.com",
+			APIKey:    "sk-ant",
+			UserAgent: ua,
+		}, map[string]interface{}{"model": "claude", "messages": []interface{}{}}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if req.Headers.Get("User-Agent") != ua {
+			t.Fatalf("User-Agent = %q", req.Headers.Get("User-Agent"))
+		}
+	})
+
+	t.Run("compatible raw", func(t *testing.T) {
+		req, err := BuildOpenAICompatibleUpstreamRequestDetailed(models.Provider{
+			BaseURL:   "https://gateway.example.com/v1",
+			APIKey:    "sk-upstream",
+			UserAgent: ua,
+		}, "/v1/audio/transcriptions", "", []byte(""), "", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if req.Headers.Get("User-Agent") != ua {
+			t.Fatalf("User-Agent = %q", req.Headers.Get("User-Agent"))
+		}
+	})
+}
+
 func TestBuildGeminiChatCompletionsUpstreamRequest(t *testing.T) {
 	body := map[string]interface{}{
 		"model":    "gemini-2.5-flash",

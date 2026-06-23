@@ -32,23 +32,36 @@ func handleAdminUpdateSubscriptionPlans(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	plans := make([]models.SubscriptionPlan, 0, len(rawPlans))
+	providerIDs := store.ReadDB().Providers
+	seenIDs := map[string]bool{}
 	for _, raw := range rawPlans {
 		item, _ := raw.(map[string]interface{})
-		id := subscription.NormalizeTier(security.SafeSingleLine(toString(item["id"]), 32))
+		id := subscription.NormalizeTier(security.SafeSingleLine(toString(item["id"]), 64))
 		if !subscription.IsValidTier(id) {
 			utils.SendError(w, http.StatusBadRequest, "Subscription tier is invalid.", "invalid_subscription_tier")
 			return
 		}
+		if seenIDs[id] {
+			utils.SendError(w, http.StatusBadRequest, "Subscription tier is duplicated.", "duplicate_subscription_tier")
+			return
+		}
+		seenIDs[id] = true
+		routes, routesOK := subscriptionModelProviderRoutesFromBody(item["modelProviderRoutes"], providerIDs)
+		if !routesOK {
+			utils.SendError(w, http.StatusBadRequest, "Subscription model route provider is invalid.", "invalid_model_route_provider")
+			return
+		}
 		plans = append(plans, models.SubscriptionPlan{
-			ID:               id,
-			Name:             security.SafeSingleLine(toString(item["name"]), 80),
-			Description:      security.SafeText(toString(item["description"]), 500),
-			RPMLimit:         maxInt(0, int(toFloat(item["rpmLimit"]))),
-			PriceCents:       maxInt(0, int(toFloat(item["priceCents"]))),
-			CreditMicrounits: maxInt64(0, int64(toFloat(item["creditMicrounits"]))),
-			DurationDays:     maxInt(1, int(toFloat(item["durationDays"]))),
-			Enabled:          toBool(item["enabled"]),
-			SortOrder:        int(toFloat(item["sortOrder"])),
+			ID:                  id,
+			Name:                security.SafeSingleLine(toString(item["name"]), 80),
+			Description:         security.SafeText(toString(item["description"]), 500),
+			RPMLimit:            maxInt(0, int(toFloat(item["rpmLimit"]))),
+			PriceCents:          maxInt(0, int(toFloat(item["priceCents"]))),
+			CreditMicrounits:    maxInt64(0, int64(toFloat(item["creditMicrounits"]))),
+			DurationDays:        maxInt(1, int(toFloat(item["durationDays"]))),
+			ModelProviderRoutes: routes,
+			Enabled:             toBool(item["enabled"]),
+			SortOrder:           int(toFloat(item["sortOrder"])),
 		})
 	}
 	updated := billing.NormalizeSubscriptionPlans(plans)
@@ -57,6 +70,35 @@ func handleAdminUpdateSubscriptionPlans(w http.ResponseWriter, r *http.Request) 
 		return nil
 	})
 	json.NewEncoder(w).Encode(map[string]interface{}{"subscriptionTiers": subscription.TiersForDB(store.ReadDB())})
+}
+
+func subscriptionModelProviderRoutesFromBody(value interface{}, providers []models.Provider) (map[string]string, bool) {
+	result := map[string]string{}
+	raw, ok := value.(map[string]interface{})
+	if !ok || raw == nil {
+		return result, true
+	}
+	for rawModel, rawProviderID := range raw {
+		modelID := security.SafeSingleLine(rawModel, 200)
+		providerID := security.SafeSingleLine(toString(rawProviderID), 128)
+		if modelID == "" || providerID == "" {
+			continue
+		}
+		if !providerIDExists(providers, providerID) {
+			return nil, false
+		}
+		result[modelID] = providerID
+	}
+	return result, true
+}
+
+func providerIDExists(providers []models.Provider, providerID string) bool {
+	for _, provider := range providers {
+		if strings.EqualFold(provider.ID, providerID) {
+			return true
+		}
+	}
+	return false
 }
 
 func handleAdminUpdateBillingConfig(w http.ResponseWriter, r *http.Request) {
@@ -244,7 +286,7 @@ func handleUserCreatePaymentOrder(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tierID := subscription.NormalizeTier(security.SafeSingleLine(toString(body["subscriptionTier"]), 32))
+	tierID := subscription.NormalizeTier(security.SafeSingleLine(toString(body["subscriptionTier"]), 64))
 	payType := strings.ToLower(security.SafeSingleLine(toString(body["payType"]), 32))
 	baseURL := publicBaseURLForRequest(r, config.Load())
 	if baseURL == "" {

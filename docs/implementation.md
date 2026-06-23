@@ -136,6 +136,7 @@ Provider 字段:
 - `baseUrl`: 上游 `/v1` base URL。
 - `apiKey`: 上游密钥。
 - `upstreamFormat`: `auto`、`openai`、`gemini`、`anthropic`。
+- `userAgent`: 可选上游 `User-Agent` 覆盖值，用于兼容 code agent 上游。
 - `models`: 对外模型列表。
 - `modelMappings`: 对外模型 ID 到上游模型 ID 映射。
 - `priority`: 候选排序，越大越优先。
@@ -160,6 +161,7 @@ Provider 字段:
   - Anthropic: `OpenAIChatToAnthropic()` 转为 `/v1/messages`。
   - Gemini: `OpenAIChatToGemini()` 转为 `generateContent` 或 `streamGenerateContent`。
 - OpenAI 流式请求自动补 `stream_options.include_usage=true`。
+- Provider `userAgent` 非空时会写入构建出的上游请求 Header。
 
 Responses:
 - `backend/proxy/responses.go`

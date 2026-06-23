@@ -2,6 +2,10 @@ node_modules/
 data/
 .env
 npm-debug.log*
+bin/
+*.tar.gz
+*.tgz
+*.zip
 # Go
 backend/*.exe
 backend/sapi

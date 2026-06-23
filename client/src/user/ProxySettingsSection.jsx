@@ -131,6 +131,7 @@ export function ProxySettingsSection({
                 afterChange={onEditProvider.afterChange}
                 onConfirm={onEditProvider.onConfirm}
                 onToast={onEditProvider.onToast}
+                onCopy={onCopy}
                 onEdit={() => onEditProvider.open(provider)}
               />
             ))}

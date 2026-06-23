@@ -142,6 +142,7 @@ Provider body:
   "baseUrl": "https://api.openai.com/v1",
   "apiKey": "sk-...",
   "upstreamFormat": "auto",
+  "userAgent": "Claude-User (claude-code/2.1.87; +https://support.anthropic.com/)",
   "enabled": true,
   "models": [{"id":"gpt-4o-mini","name":"gpt-4o-mini","description":"","cliSupport":[]}],
   "modelMappings": {"gpt-4o-mini":"gpt-4o-mini"},

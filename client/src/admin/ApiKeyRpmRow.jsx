@@ -2,16 +2,19 @@ import React, { useState } from "react";
 import {
   Button,
   CircularProgress,
+  IconButton,
   Paper,
   Stack,
   TextField,
+  Tooltip,
   Typography
 } from "@mui/material";
 import BlockIcon from "@mui/icons-material/Block";
+import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import { request } from "../utils/api";
 import { formatDate, formatRpmLimit } from "../utils/helpers";
 
-export function ApiKeyRpmRow({ apiKey, userId, afterChange, onToast }) {
+export function ApiKeyRpmRow({ apiKey, userId, afterChange, onToast, onCopy }) {
   const [rpm, setRpm] = useState(apiKey.rpmLimit > 0 ? String(apiKey.rpmLimit) : "");
   const [loading, setLoading] = useState(false);
   const [banLoading, setBanLoading] = useState(false);
@@ -45,13 +48,14 @@ export function ApiKeyRpmRow({ apiKey, userId, afterChange, onToast }) {
       setBanLoading(false);
     }
   };
+  const displayKey = apiKey.key || apiKey.preview || "-";
 
   return (
     <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "app.paperAlt" }}>
       <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems="center">
         <Stack spacing={0.25} sx={{ minWidth: 0, flex: 1 }}>
-          <Typography variant="body2" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            <strong>{apiKey.name}</strong> <code>{apiKey.preview || apiKey.key?.slice(0, 12) + "..."}</code>
+          <Typography variant="body2" sx={{ overflowWrap: "anywhere" }}>
+            <strong>{apiKey.name}</strong> <code>{displayKey}</code>
           </Typography>
           <Typography variant="caption" color="text.secondary">
             有效限制：{formatRpmLimit(apiKey.effectiveRpmLimit)}
@@ -69,6 +73,11 @@ export function ApiKeyRpmRow({ apiKey, userId, afterChange, onToast }) {
           inputProps={{ min: 1 }}
           sx={{ width: 140, flexShrink: 0 }}
         />
+        <Tooltip title="复制 Key">
+          <IconButton onClick={() => onCopy?.(apiKey.key)} disabled={!apiKey.key} sx={{ flexShrink: 0 }}>
+            <ContentCopyIcon />
+          </IconButton>
+        </Tooltip>
         <Button
           size="small"
           variant="contained"

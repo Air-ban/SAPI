@@ -61,6 +61,8 @@ const emptyPrice = {
   reasoningUsdPerMillionTokens: 0
 };
 
+const BUILTIN_PLAN_IDS = new Set(["email", "lite", "day", "week", "base", "pro", "ultra", "MAX"]);
+
 function centsToYuan(cents) {
   return (Number(cents || 0) / 100).toFixed(2);
 }
@@ -86,13 +88,41 @@ function normalizePlans(plans = []) {
     priceYuan: centsToYuan(plan.priceCents),
     creditYuan: microunitsToYuan(plan.creditMicrounits),
     durationDays: Number(plan.durationDays || 30),
+    modelProviderRoutes: Object.entries(plan.modelProviderRoutes || {}).map(([modelId, providerId]) => ({
+      modelId,
+      providerId
+    })),
     enabled: Boolean(plan.enabled),
     sortOrder: Number(plan.sortOrder || (index + 1) * 10)
   }));
 }
 
+function planRoutesToMap(routes = []) {
+  const result = {};
+  for (const route of routes) {
+    const modelId = String(route.modelId || "").trim();
+    const providerId = String(route.providerId || "").trim();
+    if (modelId && providerId) result[modelId] = providerId;
+  }
+  return result;
+}
+
+function normalizePlanId(value = "") {
+  const trimmed = String(value || "").trim();
+  if (trimmed.toLowerCase() === "max") return "MAX";
+  return trimmed
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function isBuiltinPlan(plan) {
+  return BUILTIN_PLAN_IDS.has(normalizePlanId(plan?.id || ""));
+}
+
 export function BillingSettingsSection({
   subscriptionTiers = [],
+  providers = [],
   billingConfig = {},
   paymentConfig = {},
   modelPrices = [],
@@ -159,6 +189,15 @@ export function BillingSettingsSection({
     }).slice(0, 80);
   }, [modelPrices, priceSearch]);
 
+  const providerOptions = useMemo(() => {
+    return (providers || [])
+      .map((provider) => ({
+        id: String(provider.id || "").trim(),
+        label: provider.name ? `${provider.name} (${provider.id})` : provider.id
+      }))
+      .filter((provider) => provider.id);
+  }, [providers]);
+
   const paidOrders = (paymentOrders || []).filter((order) => order.status === "paid");
   const pendingOrders = (paymentOrders || []).filter((order) => order.status === "pending");
 
@@ -166,20 +205,113 @@ export function BillingSettingsSection({
     setPlans((current) => current.map((plan, i) => (i === index ? { ...plan, ...patch } : plan)));
   };
 
+  const addPlan = () => {
+    setPlans((current) => {
+      const nextIndex = current.length + 1;
+      const baseId = `custom-${nextIndex}`;
+      return [
+        ...current,
+        {
+          id: baseId,
+          name: "自定义套餐",
+          description: "",
+          rpmLimit: 30,
+          priceYuan: "0.00",
+          creditYuan: "0.00",
+          durationDays: 30,
+          modelProviderRoutes: [],
+          enabled: true,
+          sortOrder: nextIndex * 10
+        }
+      ];
+    });
+  };
+
+  const removePlan = (index) => {
+    const plan = plans[index];
+    if (!plan || isBuiltinPlan(plan)) {
+      onToast?.("内置套餐不能删除，可关闭启用状态", "warning");
+      return;
+    }
+    setPlans((current) => current.filter((_, i) => i !== index));
+  };
+
+  const updatePlanRoute = (planIndex, routeIndex, patch) => {
+    setPlans((current) => current.map((plan, index) => {
+      if (index !== planIndex) return plan;
+      const routes = (plan.modelProviderRoutes || []).map((route, i) => (i === routeIndex ? { ...route, ...patch } : route));
+      return { ...plan, modelProviderRoutes: routes };
+    }));
+  };
+
+  const addPlanRoute = (planIndex) => {
+    setPlans((current) => current.map((plan, index) => {
+      if (index !== planIndex) return plan;
+      return {
+        ...plan,
+        modelProviderRoutes: [
+          ...(plan.modelProviderRoutes || []),
+          { modelId: "", providerId: providers[0]?.id || "" }
+        ]
+      };
+    }));
+  };
+
+  const removePlanRoute = (planIndex, routeIndex) => {
+    setPlans((current) => current.map((plan, index) => {
+      if (index !== planIndex) return plan;
+      return {
+        ...plan,
+        modelProviderRoutes: (plan.modelProviderRoutes || []).filter((_, i) => i !== routeIndex)
+      };
+    }));
+  };
+
   const savePlans = async () => {
+    const ids = new Set();
+    for (const plan of plans) {
+      const id = normalizePlanId(plan.id);
+      if (!id) {
+        onToast?.("套餐 ID 不能为空", "warning");
+        return;
+      }
+      if (ids.has(id)) {
+        onToast?.(`套餐 ID 重复：${id}`, "warning");
+        return;
+      }
+      ids.add(id);
+
+      const routeModels = new Set();
+      for (const route of plan.modelProviderRoutes || []) {
+        const modelId = String(route.modelId || "").trim();
+        const providerId = String(route.providerId || "").trim();
+        if (!modelId && !providerId) continue;
+        if (!modelId || !providerId) {
+          onToast?.(`${plan.name || id} 的模型路由未填写完整`, "warning");
+          return;
+        }
+        const modelKey = modelId.toLowerCase();
+        if (routeModels.has(modelKey)) {
+          onToast?.(`${plan.name || id} 的模型路由重复：${modelId}`, "warning");
+          return;
+        }
+        routeModels.add(modelKey);
+      }
+    }
     setSavingPlans(true);
     try {
       await request("/api/admin/subscription-plans", {
         method: "PUT",
         body: {
           subscriptionPlans: plans.map((plan) => ({
-            id: plan.id,
+            id: normalizePlanId(plan.id),
             name: plan.name,
             description: plan.description,
             rpmLimit: Number(plan.rpmLimit || 0),
             priceCents: yuanToCents(plan.priceYuan),
             creditMicrounits: yuanToMicrounits(plan.creditYuan),
             durationDays: Number(plan.durationDays || 30),
+            modelProviderRoutes: planRoutesToMap(plan.modelProviderRoutes),
             enabled: Boolean(plan.enabled),
             sortOrder: Number(plan.sortOrder || 0)
           }))
@@ -301,33 +433,63 @@ export function BillingSettingsSection({
         title="订阅套餐"
         icon={<AccountBalanceWalletIcon />}
         action={
-          <Button
-            size="small"
-            variant="contained"
-            startIcon={savingPlans ? <CircularProgress size={16} /> : <SaveIcon />}
-            onClick={savePlans}
-            disabled={savingPlans}
-          >
-            保存套餐
-          </Button>
+          <Stack direction="row" spacing={1}>
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<AddIcon />}
+              onClick={addPlan}
+              disabled={savingPlans}
+            >
+              新增套餐
+            </Button>
+            <Button
+              size="small"
+              variant="contained"
+              startIcon={savingPlans ? <CircularProgress size={16} /> : <SaveIcon />}
+              onClick={savePlans}
+              disabled={savingPlans}
+            >
+              保存套餐
+            </Button>
+          </Stack>
         }
       >
         <Stack spacing={1.5}>
           <Alert severity="info" variant="outlined">
-            套餐 RPM 会作为用户默认限速；价格和入账额度用于在线支付。GitHub 用户为 10 RPM，edu.cn 用户为 30 RPM。
+            套餐 RPM 会作为用户默认限速；价格、时长和入账额度用于在线支付。模型路由为空时按全局上游优先级选择，填写后会强制走指定上游。
           </Alert>
           <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", lg: "repeat(2, minmax(0, 1fr))" }, gap: 1.25 }}>
             {plans.map((plan, index) => (
-              <Paper key={plan.id} variant="outlined" sx={{ p: 1.25, bgcolor: "app.paperAlt" }}>
+              <Paper key={`${plan.id || "plan"}-${index}`} variant="outlined" sx={{ p: 1.25, bgcolor: "app.paperAlt" }}>
                 <Stack spacing={1.25}>
                   <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "stretch", sm: "center" }}>
-                    <TextField label="ID" value={plan.id} disabled sx={{ width: { xs: "100%", sm: 110 } }} />
+                    <TextField
+                      label="ID"
+                      value={plan.id}
+                      disabled={isBuiltinPlan(plan)}
+                      onChange={(event) => updatePlan(index, { id: event.target.value })}
+                      onBlur={(event) => updatePlan(index, { id: normalizePlanId(event.target.value) })}
+                      sx={{ width: { xs: "100%", sm: 140 } }}
+                    />
                     <TextField label="名称" value={plan.name} onChange={(event) => updatePlan(index, { name: event.target.value })} fullWidth />
                     <FormControlLabel
                       control={<Switch checked={plan.enabled} onChange={(event) => updatePlan(index, { enabled: event.target.checked })} />}
                       label="启用"
                       sx={{ flexShrink: 0 }}
                     />
+                    <Tooltip title={isBuiltinPlan(plan) ? "内置套餐可禁用，不能删除" : "删除套餐"}>
+                      <span>
+                        <IconButton
+                          size="small"
+                          color="error"
+                          onClick={() => removePlan(index)}
+                          disabled={savingPlans || isBuiltinPlan(plan)}
+                        >
+                          <DeleteOutlineIcon fontSize="small" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
                   </Stack>
                   <TextField
                     label="说明"
@@ -345,6 +507,79 @@ export function BillingSettingsSection({
                   <Typography variant="caption" color="text.secondary">
                     {formatRpmLimit(plan.rpmLimit)} / 售价 {formatMoneyFromCents(yuanToCents(plan.priceYuan))} / 入账 {formatMoneyFromMicrounits(yuanToMicrounits(plan.creditYuan))}
                   </Typography>
+                  <Box sx={{ borderTop: "1px solid", borderColor: "divider", pt: 1 }}>
+                    <Stack spacing={1}>
+                      <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+                        <Typography variant="subtitle2" sx={{ fontWeight: 760 }}>
+                          模型路由
+                        </Typography>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          startIcon={<AddIcon />}
+                          onClick={() => addPlanRoute(index)}
+                        >
+                          添加模型路由
+                        </Button>
+                      </Stack>
+                      {(plan.modelProviderRoutes || []).length ? (
+                        <Stack spacing={1}>
+                          {(plan.modelProviderRoutes || []).map((route, routeIndex) => {
+                            const routeProviderMissing = route.providerId && !providerOptions.some((provider) => provider.id === route.providerId);
+                            return (
+                              <Box
+                                key={`${route.modelId || "route"}-${routeIndex}`}
+                                sx={{
+                                  display: "grid",
+                                  gridTemplateColumns: { xs: "1fr", sm: "minmax(0, 1fr) minmax(180px, 240px) auto" },
+                                  gap: 1,
+                                  alignItems: "center"
+                                }}
+                              >
+                                <TextField
+                                  size="small"
+                                  label="模型 ID"
+                                  placeholder="gpt-4o-mini"
+                                  value={route.modelId || ""}
+                                  onChange={(event) => updatePlanRoute(index, routeIndex, { modelId: event.target.value })}
+                                />
+                                <TextField
+                                  select
+                                  size="small"
+                                  label="路由上游"
+                                  value={route.providerId || ""}
+                                  onChange={(event) => updatePlanRoute(index, routeIndex, { providerId: event.target.value })}
+                                >
+                                  <MenuItem value="" disabled>
+                                    选择上游
+                                  </MenuItem>
+                                  {routeProviderMissing ? (
+                                    <MenuItem value={route.providerId}>
+                                      {route.providerId}（不存在）
+                                    </MenuItem>
+                                  ) : null}
+                                  {providerOptions.map((provider) => (
+                                    <MenuItem key={provider.id} value={provider.id}>
+                                      {provider.label}
+                                    </MenuItem>
+                                  ))}
+                                </TextField>
+                                <Tooltip title="删除路由">
+                                  <IconButton size="small" color="error" onClick={() => removePlanRoute(index, routeIndex)}>
+                                    <DeleteOutlineIcon fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+                              </Box>
+                            );
+                          })}
+                        </Stack>
+                      ) : (
+                        <Typography variant="caption" color="text.secondary">
+                          未指定模型路由。
+                        </Typography>
+                      )}
+                    </Stack>
+                  </Box>
                 </Stack>
               </Paper>
             ))}

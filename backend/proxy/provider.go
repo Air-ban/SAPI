@@ -139,6 +139,17 @@ func ChooseProviderCandidates(db *models.Database, body map[string]interface{}) 
 	return []ProviderCandidate{{Provider: enabled[0], UpstreamModel: ""}}
 }
 
+func ChooseProviderCandidatesForTier(db *models.Database, body map[string]interface{}, tier string) []ProviderCandidate {
+	candidates := ChooseProviderCandidates(db, body)
+	model := ""
+	if body != nil {
+		if m, ok := body["model"].(string); ok {
+			model = strings.TrimSpace(m)
+		}
+	}
+	return filterCandidatesBySubscriptionRoute(db, candidates, model, tier)
+}
+
 func ChooseAnthropicProviderCandidates(db *models.Database, model string) []ProviderCandidate {
 	model = strings.TrimSpace(model)
 	var enabled []models.Provider
@@ -194,6 +205,83 @@ func ChooseAnthropicProviderCandidates(db *models.Database, model string) []Prov
 		return []ProviderCandidate{{Provider: first, UpstreamModel: firstModel}}
 	}
 	return []ProviderCandidate{{Provider: first, UpstreamModel: model}}
+}
+
+func ChooseAnthropicProviderCandidatesForTier(db *models.Database, model string, tier string) []ProviderCandidate {
+	return filterCandidatesBySubscriptionRoute(db, ChooseAnthropicProviderCandidates(db, model), model, tier)
+}
+
+func filterCandidatesBySubscriptionRoute(db *models.Database, candidates []ProviderCandidate, model string, tier string) []ProviderCandidate {
+	model = strings.TrimSpace(model)
+	if db == nil || model == "" || len(candidates) == 0 {
+		return candidates
+	}
+	plan, ok := subscriptionPlanByID(db, tier)
+	if !ok || len(plan.ModelProviderRoutes) == 0 {
+		return candidates
+	}
+	providerID := routedProviderForModel(plan, model, candidates)
+	if providerID == "" {
+		return candidates
+	}
+	filtered := make([]ProviderCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if providerMatchesRoute(candidate.Provider, providerID) {
+			filtered = append(filtered, candidate)
+		}
+	}
+	return filtered
+}
+
+func subscriptionPlanByID(db *models.Database, tier string) (models.SubscriptionPlan, bool) {
+	tier = strings.TrimSpace(tier)
+	if tier == "" {
+		return models.SubscriptionPlan{}, false
+	}
+	for _, plan := range db.SubscriptionPlans {
+		if strings.EqualFold(strings.TrimSpace(plan.ID), tier) {
+			return plan, true
+		}
+	}
+	return models.SubscriptionPlan{}, false
+}
+
+func routedProviderForModel(plan models.SubscriptionPlan, model string, candidates []ProviderCandidate) string {
+	for routeModel, providerID := range plan.ModelProviderRoutes {
+		routeModel = strings.TrimSpace(routeModel)
+		providerID = strings.TrimSpace(providerID)
+		if routeModel == "" || providerID == "" {
+			continue
+		}
+		if modelRouteMatches(routeModel, model) {
+			return providerID
+		}
+		for _, candidate := range candidates {
+			if modelRouteMatches(routeModel, candidate.UpstreamModel) {
+				return providerID
+			}
+		}
+	}
+	return ""
+}
+
+func modelRouteMatches(routeModel, requestedModel string) bool {
+	routeModel = strings.TrimSpace(routeModel)
+	requestedModel = strings.TrimSpace(requestedModel)
+	if routeModel == "" || requestedModel == "" {
+		return false
+	}
+	return strings.EqualFold(routeModel, requestedModel) || IsModelAllowedByRule(routeModel, requestedModel)
+}
+
+func providerMatchesRoute(provider models.Provider, providerID string) bool {
+	providerID = strings.TrimSpace(providerID)
+	if providerID == "" {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(provider.ID), providerID) ||
+		strings.EqualFold(strings.TrimSpace(provider.Name), providerID) ||
+		ModelChannelMatchesProvider(provider, providerID)
 }
 
 func exactProviderModelMappings(providers []models.Provider, model string) []ProviderCandidate {
@@ -281,6 +369,9 @@ func checkProviderHealth(provider models.Provider) {
 	} else {
 		req.Header.Set("Authorization", "Bearer "+provider.APIKey)
 		req.Header.Set("Accept", "application/json")
+		if userAgent := models.NormalizeProviderUserAgent(provider.UserAgent); userAgent != "" {
+			req.Header.Set("User-Agent", userAgent)
+		}
 		resp, err := DoUpstream(req)
 		if err != nil {
 			latency = int(time.Since(startedAt).Milliseconds())

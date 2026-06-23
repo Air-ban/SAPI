@@ -134,7 +134,7 @@ func Health(ctx context.Context) map[string]interface{} {
 
 func RequestGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		setSecurityHeaders(w)
+		setSecurityHeaders(w, r.URL.Path)
 
 		if strings.ContainsAny(r.URL.Path, "\x00\r\n") {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -401,10 +401,19 @@ func requestBodyLimitForPath(path string) int64 {
 	return runtimeConfig.RequestBodyLimitBytes
 }
 
-func setSecurityHeaders(w http.ResponseWriter) {
+func setSecurityHeaders(w http.ResponseWriter, path string) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "same-origin")
+	if allowsSameOriginFrame(path) {
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		w.Header().Set("Content-Security-Policy", "frame-ancestors 'self'")
+		return
+	}
 	w.Header().Set("X-Frame-Options", "DENY")
+}
+
+func allowsSameOriginFrame(path string) bool {
+	return path == "/image-playground" || strings.HasPrefix(path, "/image-playground/")
 }
 
 func remoteAddrIP(remoteAddr string) string {

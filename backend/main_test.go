@@ -64,6 +64,29 @@ func TestDynamicNoStoreResponseWriterOverridesCacheableHeaders(t *testing.T) {
 	}
 }
 
+func TestSetStaticCacheHeaderCachesFingerprintAssets(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{name: "main app asset", path: "/assets/index-BvZkNJJk.js", want: "public, max-age=31536000, immutable"},
+		{name: "image playground asset", path: "/image-playground/assets/index-BHIzrGbo.js", want: "public, max-age=31536000, immutable"},
+		{name: "image playground html", path: "/image-playground/index.html", want: "no-store"},
+		{name: "image playground service worker", path: "/image-playground/sw.js", want: "no-store"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			setStaticCacheHeader(rec, tt.path)
+			if got := rec.Header().Get("Cache-Control"); got != tt.want {
+				t.Fatalf("Cache-Control = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func headerHasVaryValue(header http.Header, want string) bool {
 	for _, value := range header.Values("Vary") {
 		for _, part := range strings.Split(value, ",") {

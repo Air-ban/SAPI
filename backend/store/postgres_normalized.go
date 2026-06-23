@@ -360,7 +360,7 @@ ORDER BY position ASC
 func loadPostgresSubscriptionPlans(ctx context.Context, q postgresQuerier, db *models.Database) error {
 	rows, err := q.Query(ctx, `
 SELECT id, name, description, rpm_limit, price_cents, credit_microunits,
-  duration_days, enabled, sort_order
+  duration_days, model_provider_routes, enabled, sort_order
 FROM sapi_subscription_plans
 ORDER BY position ASC, sort_order ASC, id ASC
 `)
@@ -370,9 +370,13 @@ ORDER BY position ASC, sort_order ASC, id ASC
 	defer rows.Close()
 	for rows.Next() {
 		var plan models.SubscriptionPlan
+		var modelProviderRoutesRaw []byte
 		if err := rows.Scan(&plan.ID, &plan.Name, &plan.Description, &plan.RPMLimit, &plan.PriceCents,
-			&plan.CreditMicrounits, &plan.DurationDays, &plan.Enabled, &plan.SortOrder); err != nil {
+			&plan.CreditMicrounits, &plan.DurationDays, &modelProviderRoutesRaw, &plan.Enabled, &plan.SortOrder); err != nil {
 			return err
+		}
+		if len(modelProviderRoutesRaw) > 0 {
+			_ = json.Unmarshal(modelProviderRoutesRaw, &plan.ModelProviderRoutes)
 		}
 		db.SubscriptionPlans = append(db.SubscriptionPlans, plan)
 	}
@@ -437,7 +441,7 @@ ORDER BY position ASC, created_at ASC, id ASC
 func loadPostgresProviders(ctx context.Context, q postgresQuerier, db *models.Database) error {
 	rows, err := q.Query(ctx, `
 SELECT id, name, base_url, api_key, upstream_format, enabled, failover_threshold,
-  priority, health_status, latency, ping, availability_7d, last_health_check,
+  user_agent, priority, health_status, latency, ping, availability_7d, last_health_check,
   created_at, updated_at
 FROM sapi_providers
 ORDER BY position ASC, created_at ASC, id ASC
@@ -458,6 +462,7 @@ ORDER BY position ASC, created_at ASC, id ASC
 			&p.UpstreamFormat,
 			&p.Enabled,
 			&p.FailoverThreshold,
+			&p.UserAgent,
 			&p.Priority,
 			&p.HealthStatus,
 			&p.Latency,
@@ -1134,13 +1139,17 @@ VALUES ($1,$2,$3)
 
 func savePostgresSubscriptionPlans(ctx context.Context, q postgresQuerier, plans []models.SubscriptionPlan) error {
 	for i, plan := range billing.NormalizeSubscriptionPlans(plans) {
+		routesRaw, err := json.Marshal(plan.ModelProviderRoutes)
+		if err != nil {
+			routesRaw = []byte(`{}`)
+		}
 		if _, err := q.Exec(ctx, `
 INSERT INTO sapi_subscription_plans (
   id, position, name, description, rpm_limit, price_cents, credit_microunits,
-  duration_days, enabled, sort_order
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+  duration_days, model_provider_routes, enabled, sort_order
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 `, plan.ID, i, plan.Name, plan.Description, plan.RPMLimit, plan.PriceCents, plan.CreditMicrounits,
-			plan.DurationDays, plan.Enabled, plan.SortOrder); err != nil {
+			plan.DurationDays, routesRaw, plan.Enabled, plan.SortOrder); err != nil {
 			return err
 		}
 	}
@@ -1195,11 +1204,11 @@ func savePostgresProviders(ctx context.Context, q postgresQuerier, providers []m
 	for i, p := range providers {
 		if _, err := q.Exec(ctx, `
 INSERT INTO sapi_providers (
-  id, position, name, base_url, api_key, upstream_format, enabled, failover_threshold,
+  id, position, name, base_url, api_key, upstream_format, user_agent, enabled, failover_threshold,
   priority, health_status, latency, ping, availability_7d, last_health_check,
   created_at, updated_at
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-`, p.ID, i, p.Name, p.BaseURL, p.APIKey, p.UpstreamFormat, p.Enabled, p.FailoverThreshold,
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+`, p.ID, i, p.Name, p.BaseURL, p.APIKey, p.UpstreamFormat, p.UserAgent, p.Enabled, p.FailoverThreshold,
 			p.Priority, p.HealthStatus, p.Latency, p.Ping, p.Availability7d, p.LastHealthCheck,
 			p.CreatedAt, p.UpdatedAt); err != nil {
 			return err

@@ -201,6 +201,7 @@ export function AdminView({
                   afterChange={afterProviderChange}
                   onConfirm={onConfirm}
                   onToast={onToast}
+                  onCopy={onCopy}
                   onEdit={() => {
                     setEditingProvider(provider);
                     setProviderDialogOpen(true);
@@ -353,6 +354,7 @@ export function AdminView({
           />
           <BillingSettingsSection
             subscriptionTiers={subscriptionTiers}
+            providers={providers}
             billingConfig={state?.billingConfig || {}}
             paymentConfig={state?.paymentConfig || {}}
             modelPrices={state?.modelPrices || []}

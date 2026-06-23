@@ -36,8 +36,7 @@ import { EmptyState } from "../components/EmptyState";
 import { Metric } from "../components/Metric";
 import { PageHeader } from "../components/PageHeader";
 import { Section } from "../components/Section";
-import { getUserApiKeys } from "../utils/helpers";
-import { inlineCodeSx } from "../utils/helpers";
+import { getUserApiKeys, groupModelsByChannel, inlineCodeSx, modelDisplayParts } from "../utils/helpers";
 import { UsageSection } from "../user/UsageSection";
 import { UserSettingsSection } from "../user/UserSettingsSection";
 import { UserSuggestionSection } from "../user/UserSuggestionSection";
@@ -90,6 +89,7 @@ export function PortalView({
   const apiKeys = getUserApiKeys(user);
   const displayKey = selectedKey || apiKeys[0]?.key || user?.apiKey || "sk-sapi-REPLACE_WITH_YOUR_KEY";
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
+  const groupedModels = groupModelsByChannel(effectiveConfig.models);
   const firstModel = effectiveConfig.models[0];
   const model = (firstModel && typeof firstModel === "object" ? firstModel.id : firstModel) || "gpt-4o-mini";
   const curlExample = [
@@ -106,7 +106,7 @@ export function PortalView({
     key: { title: "API Key", description: "管理你的 HanGuan's SuperAPI 调用密钥。" },
     billing: { title: "计费套餐", description: "查看余额、额度消耗和订阅套餐。" },
     chat: { title: "站内 Chat", description: "基于 OpenAI Responses 协议测试文本、代码、视觉、音频、工具和结构化输出。" },
-    images: { title: "生图工坊", description: "基于 GPT Image Playground 的思路，使用 SAPI Key 调用 Images API 和 Responses 图像工具。" },
+    images: { title: "生图工坊", description: "内置 GPT Image Playground 与 NovelAI 两个独立生图模块。" },
     usage: { title: "请求与用量", description: "查看 Token 用量和请求记录。" },
     models: { title: "模型与端点", description: "查看当前可用模型和 OpenAI 兼容端点。" },
     example: { title: "调用示例", description: "复制可直接执行的 curl 请求。" },
@@ -296,68 +296,89 @@ export function PortalView({
         {["overview", "models"].includes(currentPage) ? (
         <Section title="可用模型" icon={<ApiIcon />}>
           {effectiveConfig.models.length ? (
-            <Box
-              sx={{
-                display: "grid",
-                gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))", md: "repeat(3, minmax(0, 1fr))" },
-                gap: 1.5
-              }}
-            >
-              {effectiveConfig.models.map((item) => {
-                const id = item?.id || item;
-                const name = item?.name || id;
-                const description = item?.description || "";
-                const cliSupport = item?.cliSupport || [];
-                const supportedSet = new Set(cliSupport);
-
-                return (
-                  <Paper
-                    key={id}
-                    variant="outlined"
-                    sx={{ p: 1.5, display: "flex", flexDirection: "column", gap: 0.8 }}
+            <Stack spacing={1.75}>
+              {groupedModels.map((group) => (
+                <Box key={group.id}>
+                  <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
+                    <Chip label={group.label} size="small" color="primary" variant="outlined" />
+                    <Typography variant="caption" color="text.secondary">
+                      {group.models.length} 个模型
+                    </Typography>
+                  </Stack>
+                  <Box
+                    sx={{
+                      display: "grid",
+                      gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))", md: "repeat(3, minmax(0, 1fr))" },
+                      gap: 1.5
+                    }}
                   >
-                    <Stack direction="row" alignItems="center" spacing={0.8}>
-                      <Typography
-                        variant="body2"
-                        sx={{
-                          fontWeight: 700,
-                          fontFamily: 'Consolas, "SFMono-Regular", Menlo, monospace',
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap"
-                        }}
-                        title={id}
-                      >
-                        {name}
-                      </Typography>
-                    </Stack>
-                    {description ? (
-                      <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.5 }}>
-                        {description}
-                      </Typography>
-                    ) : null}
-                    {supportedSet.size > 0 ? (
-                      <Stack direction="row" flexWrap="wrap" gap={0.4}>
-                        {CLI_TOOLS.filter((cli) => supportedSet.has(cli.id)).map((cli) => (
-                          <Chip
-                            key={cli.id}
-                            label={cli.name}
-                            size="small"
-                            variant="outlined"
-                            color="success"
-                            sx={{
-                              fontSize: "0.65rem",
-                              height: 20,
-                              "& .MuiChip-label": { px: 0.6 }
-                            }}
-                          />
-                        ))}
-                      </Stack>
-                    ) : null}
-                  </Paper>
-                );
-              })}
-            </Box>
+                    {group.models.map((rawItem) => {
+                      const item = modelDisplayParts(rawItem);
+                      const supportedSet = new Set(item.cliSupport || []);
+
+                      return (
+                        <Paper
+                          key={item.id}
+                          variant="outlined"
+                          sx={{ p: 1.5, display: "flex", flexDirection: "column", gap: 0.8 }}
+                        >
+                          <Stack spacing={0.25}>
+                            <Typography
+                              variant="body2"
+                              sx={{
+                                fontWeight: 700,
+                                fontFamily: 'Consolas, "SFMono-Regular", Menlo, monospace',
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap"
+                              }}
+                              title={item.displayName}
+                            >
+                              {item.displayName}
+                            </Typography>
+                            {item.secondary ? (
+                              <Typography
+                                variant="caption"
+                                color="text.secondary"
+                                sx={{
+                                  fontFamily: 'Consolas, "SFMono-Regular", Menlo, monospace',
+                                  overflowWrap: "anywhere"
+                                }}
+                              >
+                                {item.secondary}
+                              </Typography>
+                            ) : null}
+                          </Stack>
+                          {item.description ? (
+                            <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.5 }}>
+                              {item.description}
+                            </Typography>
+                          ) : null}
+                          {supportedSet.size > 0 ? (
+                            <Stack direction="row" flexWrap="wrap" gap={0.4}>
+                              {CLI_TOOLS.filter((cli) => supportedSet.has(cli.id)).map((cli) => (
+                                <Chip
+                                  key={cli.id}
+                                  label={cli.name}
+                                  size="small"
+                                  variant="outlined"
+                                  color="success"
+                                  sx={{
+                                    fontSize: "0.65rem",
+                                    height: 20,
+                                    "& .MuiChip-label": { px: 0.6 }
+                                  }}
+                                />
+                              ))}
+                            </Stack>
+                          ) : null}
+                        </Paper>
+                      );
+                    })}
+                  </Box>
+                </Box>
+              ))}
+            </Stack>
           ) : (
             <EmptyState text="管理员还没有配置可用模型。" />
           )}

@@ -23,7 +23,7 @@ import AddIcon from "@mui/icons-material/Add";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import EditIcon from "@mui/icons-material/Edit";
 import RefreshIcon from "@mui/icons-material/Refresh";
-import { CLI_TOOLS } from "../constants";
+import { CLI_TOOLS, CODE_AGENT_USER_AGENTS } from "../constants";
 import { request } from "../utils/api";
 
 export function ProviderDialog({ open, onClose, provider, afterChange, onToast }) {
@@ -33,6 +33,7 @@ export function ProviderDialog({ open, onClose, provider, afterChange, onToast }
     baseUrl: "",
     apiKey: "",
     upstreamFormat: "auto",
+    userAgent: "",
     enabled: true,
     failoverThreshold: 3
   });
@@ -43,7 +44,7 @@ export function ProviderDialog({ open, onClose, provider, afterChange, onToast }
   const [loading, setLoading] = useState(false);
 
   const reset = useCallback(() => {
-    setForm({ name: "", baseUrl: "", apiKey: "", upstreamFormat: "auto", enabled: true, failoverThreshold: 3, priority: 0 });
+    setForm({ name: "", baseUrl: "", apiKey: "", upstreamFormat: "auto", userAgent: "", enabled: true, failoverThreshold: 3, priority: 0 });
     setSelectedModels([]);
     setModelSelectionTouched(false);
     setLookup({ loading: false, error: "", models: [] });
@@ -56,8 +57,9 @@ export function ProviderDialog({ open, onClose, provider, afterChange, onToast }
       setForm({
         name: provider.name || "",
         baseUrl: provider.baseUrl || "",
-        apiKey: "",
+        apiKey: provider.apiKey || "",
         upstreamFormat: provider.upstreamFormat || "auto",
+        userAgent: provider.userAgent || "",
         enabled: provider.enabled !== false,
         failoverThreshold: typeof provider.failoverThreshold === 'number' ? provider.failoverThreshold : 3,
         priority: typeof provider.priority === 'number' ? provider.priority : 0
@@ -132,6 +134,7 @@ export function ProviderDialog({ open, onClose, provider, afterChange, onToast }
     async ({ force = false, signal } = {}) => {
       const baseUrl = form.baseUrl.trim();
       const apiKey = form.apiKey.trim();
+      const userAgent = form.userAgent.trim();
 
       if (!baseUrl || !apiKey) {
         setLookup({ loading: false, error: "", models: [] });
@@ -157,7 +160,7 @@ export function ProviderDialog({ open, onClose, provider, afterChange, onToast }
       try {
         const data = await request("/api/admin/providers/models", {
           method: "POST",
-          body: { baseUrl, apiKey },
+          body: { baseUrl, apiKey, userAgent },
           signal
         });
         const models = data.models || [];
@@ -182,7 +185,7 @@ export function ProviderDialog({ open, onClose, provider, afterChange, onToast }
         setLookup({ loading: false, error: error.message, models: [] });
       }
     },
-    [form.apiKey, form.baseUrl, isEdit, modelSelectionTouched, onToast]
+    [form.apiKey, form.baseUrl, form.userAgent, isEdit, modelSelectionTouched, onToast]
   );
 
   useEffect(() => {
@@ -260,8 +263,7 @@ export function ProviderDialog({ open, onClose, provider, afterChange, onToast }
             required
           />
           <TextField
-            label={isEdit ? "上游 API Key（留空则保持不变）" : "上游 API Key"}
-            type="password"
+            label="上游 API Key"
             value={form.apiKey}
             onChange={update("apiKey")}
             placeholder="sk-..."
@@ -279,6 +281,48 @@ export function ProviderDialog({ open, onClose, provider, afterChange, onToast }
             <MenuItem value="gemini">Gemini</MenuItem>
             <MenuItem value="anthropic">Anthropic</MenuItem>
           </TextField>
+          <Autocomplete
+            freeSolo
+            options={CODE_AGENT_USER_AGENTS}
+            value={form.userAgent}
+            inputValue={form.userAgent}
+            getOptionLabel={(option) => (typeof option === "string" ? option : option.value)}
+            isOptionEqualToValue={(option, value) => option.value === value || option.value === value?.value}
+            onChange={(_, value) => {
+              const next = typeof value === "string" ? value : value?.value || "";
+              setForm((current) => ({ ...current, userAgent: next }));
+            }}
+            onInputChange={(_, value) => {
+              setForm((current) => ({ ...current, userAgent: value }));
+            }}
+            renderOption={(props, option) => {
+              const { key, ...optionProps } = props;
+              return (
+                <Box component="li" {...optionProps} key={key || option.id}>
+                  <Stack spacing={0.2} sx={{ minWidth: 0 }}>
+                    <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                      {option.name}
+                    </Typography>
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ fontFamily: 'Consolas, "SFMono-Regular", Menlo, monospace', overflowWrap: "anywhere" }}
+                    >
+                      {option.value}
+                    </Typography>
+                  </Stack>
+                </Box>
+              );
+            }}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                label="上游 User-Agent"
+                placeholder="留空则保持系统默认，或选择 code agent 预设"
+                helperText="用于兼容会检查 code agent User-Agent 的上游；可选择预设，也可手动输入自定义值。"
+              />
+            )}
+          />
           <Stack
             direction={{ xs: "column", sm: "row" }}
             spacing={1}

@@ -1,6 +1,7 @@
 package security
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -48,5 +49,32 @@ func TestValidHTTPBaseURLRejectsUnsafeValues(t *testing.T) {
 	}
 	if !ValidHTTPBaseURL("https://api.example.com/v1") {
 		t.Fatal("expected normal https URL to be allowed")
+	}
+}
+
+func TestRequestGuardAllowsOnlyImagePlaygroundSameOriginFrames(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	handler := RequestGuard(next)
+
+	imageReq := httptest.NewRequest(http.MethodGet, "/image-playground/", nil)
+	imageRec := httptest.NewRecorder()
+	handler.ServeHTTP(imageRec, imageReq)
+	if got := imageRec.Header().Get("X-Frame-Options"); got != "SAMEORIGIN" {
+		t.Fatalf("image playground X-Frame-Options = %q, want SAMEORIGIN", got)
+	}
+	if got := imageRec.Header().Get("Content-Security-Policy"); got != "frame-ancestors 'self'" {
+		t.Fatalf("image playground CSP = %q, want frame-ancestors 'self'", got)
+	}
+
+	portalReq := httptest.NewRequest(http.MethodGet, "/#portal", nil)
+	portalRec := httptest.NewRecorder()
+	handler.ServeHTTP(portalRec, portalReq)
+	if got := portalRec.Header().Get("X-Frame-Options"); got != "DENY" {
+		t.Fatalf("portal X-Frame-Options = %q, want DENY", got)
+	}
+	if got := portalRec.Header().Get("Content-Security-Policy"); got != "" {
+		t.Fatalf("portal CSP = %q, want empty", got)
 	}
 }

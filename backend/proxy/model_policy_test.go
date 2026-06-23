@@ -136,3 +136,61 @@ func TestChooseProviderCandidatesKeepsLegacySlashMappings(t *testing.T) {
 		t.Fatalf("candidate = %#v, want mapped legacy slash model", candidates[0])
 	}
 }
+
+func TestChooseProviderCandidatesForTierRoutesModelToConfiguredProvider(t *testing.T) {
+	db := &models.Database{
+		SubscriptionPlans: []models.SubscriptionPlan{{
+			ID:                  "week",
+			ModelProviderRoutes: map[string]string{"chat-main": "prv_a"},
+			Enabled:             true,
+		}},
+		Providers: []models.Provider{
+			{
+				ID:            "prv_a",
+				Name:          "Alpha",
+				Models:        []models.Model{{ID: "chat-main", Name: "Chat Main"}},
+				ModelMappings: map[string]string{},
+				Enabled:       true,
+				Priority:      1,
+			},
+			{
+				ID:            "prv_b",
+				Name:          "Beta",
+				Models:        []models.Model{{ID: "chat-main", Name: "Chat Main"}},
+				ModelMappings: map[string]string{},
+				Enabled:       true,
+				Priority:      10,
+			},
+		},
+	}
+
+	candidates := ChooseProviderCandidatesForTier(db, map[string]interface{}{"model": "chat-main"}, "week")
+	if len(candidates) != 1 {
+		t.Fatalf("candidates = %#v, want one", candidates)
+	}
+	if candidates[0].Provider.ID != "prv_a" {
+		t.Fatalf("provider = %q, want prv_a", candidates[0].Provider.ID)
+	}
+}
+
+func TestChooseProviderCandidatesForTierReturnsNoCandidatesWhenRouteProviderUnavailable(t *testing.T) {
+	db := &models.Database{
+		SubscriptionPlans: []models.SubscriptionPlan{{
+			ID:                  "week",
+			ModelProviderRoutes: map[string]string{"chat-main": "prv_missing"},
+			Enabled:             true,
+		}},
+		Providers: []models.Provider{{
+			ID:            "prv_b",
+			Name:          "Beta",
+			Models:        []models.Model{{ID: "chat-main", Name: "Chat Main"}},
+			ModelMappings: map[string]string{},
+			Enabled:       true,
+		}},
+	}
+
+	candidates := ChooseProviderCandidatesForTier(db, map[string]interface{}{"model": "chat-main"}, "week")
+	if len(candidates) != 0 {
+		t.Fatalf("candidates = %#v, want none", candidates)
+	}
+}

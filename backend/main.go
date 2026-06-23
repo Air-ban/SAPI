@@ -117,14 +117,22 @@ func buildSpaHandler(publicDir string) http.HandlerFunc {
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !isAPIPath(r.URL.Path) && r.URL.Path != "/swagger" {
-			path := filepath.Join(publicDir, filepath.Clean(r.URL.Path))
-			if info, err := os.Stat(path); err == nil && !info.IsDir() {
-				setStaticCacheHeader(w, r.URL.Path)
-				if serveGzipStaticFile(w, r, path, info) {
+			staticPath := filepath.Join(publicDir, filepath.Clean(r.URL.Path))
+			requestPath := r.URL.Path
+			if info, err := os.Stat(staticPath); err == nil {
+				if info.IsDir() {
+					staticPath = filepath.Join(staticPath, "index.html")
+					requestPath = strings.TrimRight(r.URL.Path, "/") + "/index.html"
+					info, err = os.Stat(staticPath)
+				}
+				if err == nil && !info.IsDir() {
+					setStaticCacheHeader(w, requestPath)
+					if serveGzipStaticFile(w, r, staticPath, info) {
+						return
+					}
+					http.ServeFile(w, r, staticPath)
 					return
 				}
-				fs.ServeHTTP(w, r)
-				return
 			}
 
 			if indexErr == nil {
@@ -140,7 +148,7 @@ func buildSpaHandler(publicDir string) http.HandlerFunc {
 }
 
 func setStaticCacheHeader(w http.ResponseWriter, requestPath string) {
-	if strings.HasPrefix(requestPath, "/assets/") {
+	if strings.HasPrefix(requestPath, "/assets/") || strings.HasPrefix(requestPath, "/image-playground/assets/") {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		return
 	}

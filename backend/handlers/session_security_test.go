@@ -113,6 +113,80 @@ func TestDeprecatedSessionGETEndpointsDoNotReturnSessionData(t *testing.T) {
 	}
 }
 
+func TestAdminSessionShowsPlaintextKeysWithoutLeakingPublicProviderHealth(t *testing.T) {
+	mux, adminToken, _, _ := setupSessionSecurityTest(t)
+
+	const upstreamKey = "sk-upstream-plaintext"
+	const userKey = "sk-sapi-user-plaintext"
+	const adminKey = "sk-sapi-admin-plaintext"
+
+	store.MutateDB(func(db *models.Database) interface{} {
+		db.Providers = []models.Provider{{
+			ID:      "prv_plaintext",
+			Name:    "Plaintext Provider",
+			BaseURL: "https://api.example.com/v1",
+			APIKey:  upstreamKey,
+			Models:  []models.Model{{ID: "gpt-test", Name: "GPT Test"}},
+			Enabled: true,
+		}}
+		db.Users[0].APIKeys = []models.APIKeyRecord{{
+			ID:      "key_user_plaintext",
+			Name:    "User Key",
+			Key:     userKey,
+			Enabled: true,
+		}}
+		db.AdminAPIKeys = []models.APIKeyRecord{{
+			ID:      "key_admin_plaintext",
+			Name:    "Admin Key",
+			Key:     adminKey,
+			Enabled: true,
+		}}
+		return nil
+	})
+
+	adminRec := authedRequest(mux, http.MethodPost, "/api/admin/session", adminToken)
+	if adminRec.Code != http.StatusOK {
+		t.Fatalf("admin session returned %d body=%s", adminRec.Code, adminRec.Body.String())
+	}
+	var payload struct {
+		Providers []struct {
+			APIKey string `json:"apiKey"`
+		} `json:"providers"`
+		Users []struct {
+			APIKey  string `json:"apiKey"`
+			APIKeys []struct {
+				Key string `json:"key"`
+			} `json:"apiKeys"`
+		} `json:"users"`
+		AdminAPIKeys []struct {
+			Key string `json:"key"`
+		} `json:"adminApiKeys"`
+	}
+	if err := json.Unmarshal(adminRec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Providers) != 1 || payload.Providers[0].APIKey != upstreamKey {
+		t.Fatalf("admin providers = %#v, want plaintext upstream key", payload.Providers)
+	}
+	if len(payload.Users) != 1 || payload.Users[0].APIKey != userKey || len(payload.Users[0].APIKeys) != 1 || payload.Users[0].APIKeys[0].Key != userKey {
+		t.Fatalf("admin users = %#v, want plaintext user key", payload.Users)
+	}
+	if len(payload.AdminAPIKeys) != 1 || payload.AdminAPIKeys[0].Key != adminKey {
+		t.Fatalf("admin api keys = %#v, want plaintext admin key", payload.AdminAPIKeys)
+	}
+
+	healthRec := httptest.NewRecorder()
+	healthReq := httptest.NewRequest(http.MethodGet, "/api/health/providers", nil)
+	handleProvidersHealth(healthRec, healthReq)
+	if healthRec.Code != http.StatusOK {
+		t.Fatalf("provider health returned %d body=%s", healthRec.Code, healthRec.Body.String())
+	}
+	healthBody := healthRec.Body.String()
+	if strings.Contains(healthBody, upstreamKey) || strings.Contains(healthBody, `"apiKey"`) {
+		t.Fatalf("provider health leaked provider key: %s", healthBody)
+	}
+}
+
 func TestAdminUserPortalAPIKeysAreAdminKeysAndUnlimited(t *testing.T) {
 	mux, adminToken, _, _ := setupSessionSecurityTest(t)
 

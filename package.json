@@ -4,7 +4,9 @@
   "private": true,
   "description": "HanGuan's SuperAPI - a lightweight LLM API relay with admin-managed upstream APIs and user-facing API keys.",
   "scripts": {
-    "build": "vite build",
+    "build": "npm run build:image-playground && npm run build:sapi",
+    "build:sapi": "vite build",
+    "build:image-playground": "node scripts/sync-image-playground.mjs",
     "client:dev": "vite --host 0.0.0.0",
     "smoke": "node scripts/smoke.mjs"
   },

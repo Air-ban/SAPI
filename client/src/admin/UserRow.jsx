@@ -368,6 +368,7 @@ export function UserRow({ user, usage, subscriptionTiers = FALLBACK_TIERS, after
                   userId={user.id}
                   afterChange={afterChange}
                   onToast={onToast}
+                  onCopy={onCopy}
                 />
               ))}
             </Stack>

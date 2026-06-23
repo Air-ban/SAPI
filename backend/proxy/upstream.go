@@ -64,9 +64,8 @@ func BuildChatCompletionsUpstreamRequest(provider models.Provider, path, rawQuer
 
 func BuildChatCompletionsUpstreamRequestDetailed(provider models.Provider, path, rawQuery string, body map[string]interface{}, upstreamModel string) (ChatCompletionsUpstreamRequest, error) {
 	kind := ProviderUpstreamKind(provider)
-	headers := make(http.Header)
+	headers := baseUpstreamHeaders(provider)
 	headers.Set("Content-Type", "application/json")
-	headers.Set("Accept-Encoding", "identity")
 
 	if !isChatCompletionsPath(path) {
 		kind = UpstreamOpenAI
@@ -150,9 +149,8 @@ func BuildAnthropicMessagesUpstreamRequestDetailed(provider models.Provider, bod
 	}
 	reqBody, err := json.Marshal(payload)
 
-	headers := make(http.Header)
+	headers := baseUpstreamHeaders(provider)
 	headers.Set("Content-Type", "application/json")
-	headers.Set("Accept-Encoding", "identity")
 	headers.Set("x-api-key", provider.APIKey)
 	headers.Set("anthropic-version", "2023-06-01")
 	if stream, _ := payload["stream"].(bool); stream {
@@ -175,9 +173,8 @@ func BuildAnthropicCountTokensUpstreamRequestDetailed(provider models.Provider, 
 	}
 	reqBody, err := json.Marshal(payload)
 
-	headers := make(http.Header)
+	headers := baseUpstreamHeaders(provider)
 	headers.Set("Content-Type", "application/json")
-	headers.Set("Accept-Encoding", "identity")
 	headers.Set("x-api-key", provider.APIKey)
 	headers.Set("anthropic-version", "2023-06-01")
 
@@ -191,8 +188,7 @@ func BuildAnthropicCountTokensUpstreamRequestDetailed(provider models.Provider, 
 }
 
 func BuildOpenAICompatibleUpstreamRequestDetailed(provider models.Provider, path, rawQuery string, body []byte, contentType, upstreamModel string) (ChatCompletionsUpstreamRequest, error) {
-	headers := make(http.Header)
-	headers.Set("Accept-Encoding", "identity")
+	headers := baseUpstreamHeaders(provider)
 	headers.Set("Authorization", "Bearer "+provider.APIKey)
 
 	var reqBody []byte
@@ -238,9 +234,8 @@ func BuildOpenAIJSONUpstreamRequestDetailed(provider models.Provider, path, rawQ
 	}
 	reqBody, err := json.Marshal(payload)
 
-	headers := make(http.Header)
+	headers := baseUpstreamHeaders(provider)
 	headers.Set("Content-Type", "application/json")
-	headers.Set("Accept-Encoding", "identity")
 	headers.Set("Authorization", "Bearer "+provider.APIKey)
 	if stream, _ := payload["stream"].(bool); stream {
 		headers.Set("Accept", "text/event-stream")
@@ -454,4 +449,13 @@ func cloneMap(input map[string]interface{}) map[string]interface{} {
 		result[k] = v
 	}
 	return result
+}
+
+func baseUpstreamHeaders(provider models.Provider) http.Header {
+	headers := make(http.Header)
+	headers.Set("Accept-Encoding", "identity")
+	if userAgent := models.NormalizeProviderUserAgent(provider.UserAgent); userAgent != "" {
+		headers.Set("User-Agent", userAgent)
+	}
+	return headers
 }

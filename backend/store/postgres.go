@@ -123,6 +123,7 @@ CREATE TABLE IF NOT EXISTS sapi_subscription_plans (
   price_cents integer NOT NULL DEFAULT 0,
   credit_microunits bigint NOT NULL DEFAULT 0,
   duration_days integer NOT NULL DEFAULT 30,
+  model_provider_routes jsonb NOT NULL DEFAULT '{}'::jsonb,
   enabled boolean NOT NULL DEFAULT true,
   sort_order integer NOT NULL DEFAULT 0
 );
@@ -170,6 +171,7 @@ CREATE TABLE IF NOT EXISTS sapi_providers (
   base_url text NOT NULL,
   api_key text NOT NULL,
   upstream_format text NOT NULL,
+  user_agent text NOT NULL DEFAULT '',
   enabled boolean NOT NULL,
   failover_threshold integer NOT NULL,
   priority integer NOT NULL,
@@ -408,6 +410,7 @@ ALTER TABLE sapi_request_logs ADD COLUMN IF NOT EXISTS request_content jsonb NOT
 ALTER TABLE sapi_request_logs ADD COLUMN IF NOT EXISTS cost_usd double precision NOT NULL DEFAULT 0;
 ALTER TABLE sapi_request_logs ADD COLUMN IF NOT EXISTS cost_cny double precision NOT NULL DEFAULT 0;
 ALTER TABLE sapi_request_logs ADD COLUMN IF NOT EXISTS billable_microunits bigint NOT NULL DEFAULT 0;
+ALTER TABLE sapi_subscription_plans ADD COLUMN IF NOT EXISTS model_provider_routes jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS registration_disabled boolean NOT NULL DEFAULT false;
 ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS billing_enabled boolean NOT NULL DEFAULT true;
 ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS billing_currency text NOT NULL DEFAULT 'CNY';
@@ -426,6 +429,7 @@ ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS payment_site_name text NOT 
 ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS payment_notify_url text NOT NULL DEFAULT '';
 ALTER TABLE sapi_app_config ADD COLUMN IF NOT EXISTS payment_return_url text NOT NULL DEFAULT '';
 ALTER TABLE sapi_providers ADD COLUMN IF NOT EXISTS position integer NOT NULL DEFAULT 0;
+ALTER TABLE sapi_providers ADD COLUMN IF NOT EXISTS user_agent text NOT NULL DEFAULT '';
 ALTER TABLE sapi_users ADD COLUMN IF NOT EXISTS position integer NOT NULL DEFAULT 0;
 ALTER TABLE sapi_users ADD COLUMN IF NOT EXISTS subscription_expires_at text NOT NULL DEFAULT '';
 ALTER TABLE sapi_users ADD COLUMN IF NOT EXISTS credit_balance_microunits bigint NOT NULL DEFAULT 0;

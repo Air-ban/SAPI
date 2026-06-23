@@ -58,10 +58,12 @@ func DefaultSubscriptionPlans() []models.SubscriptionPlan {
 	return []models.SubscriptionPlan{
 		{ID: "email", Name: "Email", Description: "普通邮箱注册默认套餐", RPMLimit: 1, PriceCents: 0, CreditMicrounits: 0, DurationDays: 30, Enabled: true, SortOrder: 10},
 		{ID: "lite", Name: "Lite", Description: "轻量体验套餐", RPMLimit: 10, PriceCents: 0, CreditMicrounits: 0, DurationDays: 30, Enabled: true, SortOrder: 20},
-		{ID: "base", Name: "Base", Description: "日常使用套餐", RPMLimit: 30, PriceCents: 990, CreditMicrounits: 10 * MicrounitsPerCNY, DurationDays: 30, Enabled: true, SortOrder: 30},
-		{ID: "pro", Name: "Pro", Description: "高频调用套餐", RPMLimit: 50, PriceCents: 2990, CreditMicrounits: 35 * MicrounitsPerCNY, DurationDays: 30, Enabled: true, SortOrder: 40},
-		{ID: "ultra", Name: "Ultra", Description: "大额度调用套餐", RPMLimit: 100, PriceCents: 6990, CreditMicrounits: 90 * MicrounitsPerCNY, DurationDays: 30, Enabled: true, SortOrder: 50},
-		{ID: "MAX", Name: "MAX", Description: "管理员或无限制套餐", RPMLimit: 0, PriceCents: 0, CreditMicrounits: 0, DurationDays: 3650, Enabled: true, SortOrder: 60},
+		{ID: "day", Name: "日卡", Description: "按天体验套餐", RPMLimit: 30, PriceCents: 199, CreditMicrounits: 2 * MicrounitsPerCNY, DurationDays: 1, Enabled: true, SortOrder: 30},
+		{ID: "week", Name: "周卡", Description: "短期高频体验套餐", RPMLimit: 50, PriceCents: 999, CreditMicrounits: 12 * MicrounitsPerCNY, DurationDays: 7, Enabled: true, SortOrder: 40},
+		{ID: "base", Name: "Base", Description: "日常使用套餐", RPMLimit: 30, PriceCents: 990, CreditMicrounits: 10 * MicrounitsPerCNY, DurationDays: 30, Enabled: true, SortOrder: 50},
+		{ID: "pro", Name: "Pro", Description: "高频调用套餐", RPMLimit: 50, PriceCents: 2990, CreditMicrounits: 35 * MicrounitsPerCNY, DurationDays: 30, Enabled: true, SortOrder: 60},
+		{ID: "ultra", Name: "Ultra", Description: "大额度调用套餐", RPMLimit: 100, PriceCents: 6990, CreditMicrounits: 90 * MicrounitsPerCNY, DurationDays: 30, Enabled: true, SortOrder: 70},
+		{ID: "MAX", Name: "MAX", Description: "管理员或无限制套餐", RPMLimit: 0, PriceCents: 0, CreditMicrounits: 0, DurationDays: 3650, Enabled: true, SortOrder: 80},
 	}
 }
 
@@ -155,6 +157,7 @@ func NormalizeSubscriptionPlans(plans []models.SubscriptionPlan) []models.Subscr
 		if plan.DurationDays > 0 {
 			base.DurationDays = plan.DurationDays
 		}
+		base.ModelProviderRoutes = normalizeModelProviderRoutes(plan.ModelProviderRoutes)
 		base.Enabled = plan.Enabled
 		if plan.SortOrder > 0 {
 			base.SortOrder = plan.SortOrder
@@ -180,6 +183,19 @@ func NormalizePlanID(value string) string {
 		return "MAX"
 	}
 	return strings.ToLower(trimmed)
+}
+
+func normalizeModelProviderRoutes(routes map[string]string) map[string]string {
+	result := map[string]string{}
+	for modelID, providerID := range routes {
+		modelID = strings.TrimSpace(modelID)
+		providerID = strings.TrimSpace(providerID)
+		if modelID == "" || providerID == "" {
+			continue
+		}
+		result[modelID] = providerID
+	}
+	return result
 }
 
 func PlanByID(plans []models.SubscriptionPlan, id string) (models.SubscriptionPlan, bool) {

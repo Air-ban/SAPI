@@ -635,7 +635,7 @@ func findSubscriptionPlan(db *models.Database, tier string) (models.Subscription
 	}
 	normalized := subscription.NormalizeTier(tier)
 	for _, plan := range db.SubscriptionPlans {
-		if subscription.NormalizeTier(plan.ID) == normalized {
+		if strings.EqualFold(subscription.NormalizeTier(plan.ID), normalized) {
 			return plan, true
 		}
 	}

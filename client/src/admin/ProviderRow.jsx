@@ -5,12 +5,13 @@ import {
   Tooltip
 } from "@mui/material";
 import ApiIcon from "@mui/icons-material/Api";
+import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import EditIcon from "@mui/icons-material/Edit";
 import { EntityRow } from "../components/EntityRow";
 import { request } from "../utils/api";
 
-export function ProviderRow({ provider, afterChange, onConfirm, onEdit, onToast }) {
+export function ProviderRow({ provider, afterChange, onConfirm, onEdit, onToast, onCopy }) {
   const upstreamFormat = provider.upstreamFormat || "auto";
   const upstreamFormatLabels = {
     auto: "自动识别",
@@ -26,6 +27,7 @@ export function ProviderRow({ provider, afterChange, onConfirm, onEdit, onToast 
         name: provider.name,
         baseUrl: provider.baseUrl,
         upstreamFormat,
+        userAgent: provider.userAgent || "",
         models: provider.models,
         modelMappings: provider.modelMappings,
         enabled: !provider.enabled,
@@ -81,6 +83,7 @@ export function ProviderRow({ provider, afterChange, onConfirm, onEdit, onToast 
       meta={[
         ["Base URL", provider.baseUrl],
         ["上游格式", upstreamFormatLabels[upstreamFormat] || upstreamFormat],
+        ["User-Agent", provider.userAgent || "默认"],
         ["API Key", provider.apiKey || "-"],
         ["模型", modelLabels.join(", ") || "-"],
         ...(mappingLabels.length ? [["映射", mappingLabels.join(", ")]] : []),
@@ -92,6 +95,11 @@ export function ProviderRow({ provider, afterChange, onConfirm, onEdit, onToast 
           <Button size="small" variant="outlined" onClick={() => toggle().catch((e) => onToast(e.message, "error"))}>
             {provider.enabled ? "停用" : "启用"}
           </Button>
+          <Tooltip title="复制上游 Key">
+            <IconButton onClick={() => onCopy?.(provider.apiKey)} disabled={!provider.apiKey}>
+              <ContentCopyIcon />
+            </IconButton>
+          </Tooltip>
           <Tooltip title="编辑">
             <IconButton onClick={onEdit}>
               <EditIcon />

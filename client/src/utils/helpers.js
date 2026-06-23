@@ -128,6 +128,43 @@ export function normalizeModelFrontend(item) {
   return { id: String(item || ""), name: String(item || ""), description: "", cliSupport: [] };
 }
 
+export function splitModelChannel(id = "") {
+  const value = String(id || "").trim();
+  const index = value.indexOf("/");
+  if (index <= 0 || index === value.length - 1) return { channel: "", model: value };
+  return {
+    channel: value.slice(0, index),
+    model: value.slice(index + 1)
+  };
+}
+
+export function modelDisplayParts(item) {
+  const normalized = normalizeModelFrontend(item);
+  const { channel, model } = splitModelChannel(normalized.id);
+  const name = normalized.name || normalized.id;
+  const displayName = channel ? normalized.id : name;
+  return {
+    ...normalized,
+    channel,
+    model: model || normalized.id,
+    displayName,
+    secondary: channel && name && name !== normalized.id ? name : normalized.id && displayName !== normalized.id ? normalized.id : ""
+  };
+}
+
+export function groupModelsByChannel(models = []) {
+  const groups = new Map();
+  for (const item of models) {
+    const parts = modelDisplayParts(item);
+    const key = parts.channel || "默认渠道";
+    if (!groups.has(key)) {
+      groups.set(key, { id: key, label: key, models: [] });
+    }
+    groups.get(key).models.push(parts);
+  }
+  return Array.from(groups.values()).sort((a, b) => a.label.localeCompare(b.label));
+}
+
 export const inlineCodeSx = {
   display: "inline",
   px: 0.5,

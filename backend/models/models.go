@@ -47,6 +47,7 @@ type Provider struct {
 	BaseURL           string               `json:"baseUrl"`
 	APIKey            string               `json:"apiKey"`
 	UpstreamFormat    string               `json:"upstreamFormat"`
+	UserAgent         string               `json:"userAgent"`
 	Models            []Model              `json:"models"`
 	ModelMappings     map[string]string    `json:"modelMappings"`
 	Enabled           bool                 `json:"enabled"`
@@ -76,6 +77,14 @@ func NormalizeUpstreamFormat(value string) string {
 	default:
 		return UpstreamFormatAuto
 	}
+}
+
+func NormalizeProviderUserAgent(value string) string {
+	value = strings.TrimSpace(strings.NewReplacer("\x00", "", "\r", " ", "\n", " ").Replace(value))
+	if len(value) > 512 {
+		return value[:512]
+	}
+	return value
 }
 
 type Model struct {
@@ -306,15 +315,16 @@ type SiteBanner struct {
 }
 
 type SubscriptionPlan struct {
-	ID               string `json:"id"`
-	Name             string `json:"name"`
-	Description      string `json:"description"`
-	RPMLimit         int    `json:"rpmLimit"`
-	PriceCents       int    `json:"priceCents"`
-	CreditMicrounits int64  `json:"creditMicrounits"`
-	DurationDays     int    `json:"durationDays"`
-	Enabled          bool   `json:"enabled"`
-	SortOrder        int    `json:"sortOrder"`
+	ID                  string            `json:"id"`
+	Name                string            `json:"name"`
+	Description         string            `json:"description"`
+	RPMLimit            int               `json:"rpmLimit"`
+	PriceCents          int               `json:"priceCents"`
+	CreditMicrounits    int64             `json:"creditMicrounits"`
+	DurationDays        int               `json:"durationDays"`
+	ModelProviderRoutes map[string]string `json:"modelProviderRoutes"`
+	Enabled             bool              `json:"enabled"`
+	SortOrder           int               `json:"sortOrder"`
 }
 
 type ModelPrice struct {

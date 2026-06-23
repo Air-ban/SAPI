@@ -59,6 +59,8 @@ go build .
 
 `npm run build` 会把 `client/` 构建到 `public/`。后端启动后优先托管 `public/index.html`。
 
+生图工坊使用旁边目录的 `gpt_image_playground` 作为静态子应用。默认路径是 `../gpt_image_playground`；如需改路径，设置 `SAPI_IMAGE_PLAYGROUND_ROOT` 后再运行 `npm run build`。构建结果会同步到 `client/public/image-playground/`，并随 Vite 输出到 `public/image-playground/`。
+
 ## 测试
 后端:
 ```bash
@@ -233,7 +235,7 @@ store.AppendRequestLog(item)
 5. 检查 RPM。
 6. 选择可用上游 Provider。
 7. 根据 `upstreamFormat` 转换请求体。
-8. 重写上游模型和鉴权 Header。
+8. 重写上游模型、鉴权 Header 和 Provider `userAgent`。
 9. 转发上游响应。
 10. 写入结构化请求日志，包括请求 JSON、状态、耗时和 token 用量。
 
@@ -242,6 +244,8 @@ store.AppendRequestLog(item)
 - `openai`: 强制 OpenAI Chat/Completions/Embeddings 格式。
 - `anthropic`: 强制 Anthropic Messages 格式。
 - `gemini`: 强制 Gemini generateContent 格式。
+
+Provider `userAgent` 为空时保持系统默认；非空时覆盖转发给该上游的 `User-Agent`。
 
 ## 安全开发
 默认安全入口在 `security.RequestGuard`:

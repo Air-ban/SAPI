@@ -215,3 +215,93 @@ func TestAdminEmailUpdateRestoresEduDefaultTier(t *testing.T) {
 		t.Fatalf("rpm = %d, want 30", got)
 	}
 }
+
+func TestAdminUpdateSubscriptionPlansAllowsCustomPlanAndRoutes(t *testing.T) {
+	t.Setenv("SAPI_DATA_FILE", filepath.Join(t.TempDir(), "sapi.json"))
+	t.Setenv("SAPI_ADMIN_USER", "admin")
+	t.Setenv("SAPI_ADMIN_PASSWORD", "secret-password")
+	cfg := config.Load()
+	security.Configure(cfg)
+	if err := store.Init(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	store.MutateDB(func(db *models.Database) interface{} {
+		db.Providers = []models.Provider{{ID: "prv_fast", Name: "Fast", Enabled: true}}
+		return nil
+	})
+	db := store.ReadDB()
+	token := auth.SignTokenString(auth.TokenPayload{Role: "admin", Sub: "admin"}, db.AppSecret)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/subscription-plans", strings.NewReader(`{
+		"subscriptionPlans": [{
+			"id": "trial-2d",
+			"name": "Two Day Trial",
+			"description": "custom",
+			"rpmLimit": 12,
+			"priceCents": 299,
+			"creditMicrounits": 3000000,
+			"durationDays": 2,
+			"modelProviderRoutes": {"gpt-4o-mini": "prv_fast"},
+			"enabled": true,
+			"sortOrder": 15
+		}]
+	}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	middleware.RequireAdmin(handleAdminUpdateSubscriptionPlans)(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	updated := store.ReadDB()
+	var found *models.SubscriptionPlan
+	for i := range updated.SubscriptionPlans {
+		if updated.SubscriptionPlans[i].ID == "trial-2d" {
+			found = &updated.SubscriptionPlans[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("custom plan not found in %#v", updated.SubscriptionPlans)
+	}
+	if found.DurationDays != 2 || found.RPMLimit != 12 {
+		t.Fatalf("custom plan = %#v, want rpm 12 duration 2", found)
+	}
+	if got := found.ModelProviderRoutes["gpt-4o-mini"]; got != "prv_fast" {
+		t.Fatalf("route = %q, want prv_fast", got)
+	}
+}
+
+func TestAdminUpdateSubscriptionPlansRejectsDuplicatePlanID(t *testing.T) {
+	t.Setenv("SAPI_DATA_FILE", filepath.Join(t.TempDir(), "sapi.json"))
+	t.Setenv("SAPI_ADMIN_USER", "admin")
+	t.Setenv("SAPI_ADMIN_PASSWORD", "secret-password")
+	cfg := config.Load()
+	security.Configure(cfg)
+	if err := store.Init(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	db := store.ReadDB()
+	token := auth.SignTokenString(auth.TokenPayload{Role: "admin", Sub: "admin"}, db.AppSecret)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/subscription-plans", strings.NewReader(`{
+		"subscriptionPlans": [
+			{"id": "trial", "name": "Trial A", "enabled": true},
+			{"id": "TRIAL", "name": "Trial B", "enabled": true}
+		]
+	}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	middleware.RequireAdmin(handleAdminUpdateSubscriptionPlans)(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "duplicate_subscription_tier") {
+		t.Fatalf("expected duplicate_subscription_tier, body=%s", rec.Body.String())
+	}
+}

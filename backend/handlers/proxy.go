@@ -317,7 +317,7 @@ func handleResponsesProxyHandler(w http.ResponseWriter, r *http.Request) {
 		stream = s
 	}
 
-	candidates := proxy.ChooseProviderCandidates(info.DB, responseRequest)
+	candidates := proxy.ChooseProviderCandidatesForTier(info.DB, responseRequest, info.User.SubscriptionTier)
 	if len(candidates) == 0 {
 		utils.SendError(w, 503, "No enabled upstream provider is configured.", "no_provider")
 		return
@@ -871,7 +871,7 @@ func handleAnthropicCountTokensHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	candidates := proxy.ChooseAnthropicProviderCandidates(info.DB, model)
+	candidates := proxy.ChooseAnthropicProviderCandidatesForTier(info.DB, model, info.User.SubscriptionTier)
 	if len(candidates) == 0 {
 		proxy.SendAnthropicError(w, 503, "api_error", "No enabled upstream provider is configured.")
 		return
@@ -1033,7 +1033,7 @@ func handleAnthropicMessagesProxyHandler(w http.ResponseWriter, r *http.Request)
 	openAIBody["model"] = model
 	wantStream, _ := openAIBody["stream"].(bool)
 
-	candidates := proxy.ChooseAnthropicProviderCandidates(info.DB, model)
+	candidates := proxy.ChooseAnthropicProviderCandidatesForTier(info.DB, model, info.User.SubscriptionTier)
 	if len(candidates) == 0 {
 		proxy.SendAnthropicError(w, 503, "api_error", "No enabled upstream provider is configured.")
 		return
@@ -1558,7 +1558,7 @@ func handleProxyToProvider(w http.ResponseWriter, r *http.Request) {
 	if model != "" {
 		routingBody["model"] = model
 	}
-	candidates := proxy.ChooseProviderCandidates(info.DB, routingBody)
+	candidates := proxy.ChooseProviderCandidatesForTier(info.DB, routingBody, info.User.SubscriptionTier)
 	if len(candidates) == 0 {
 		log.Printf("[V1CHAT] NO_PROVIDER model=%s", model)
 		utils.SendError(w, 503, "No enabled upstream provider is configured.", "no_provider")

@@ -18,7 +18,10 @@ go build -o sapi-main .
 产物:
 - `public/index.html`
 - `public/assets/*`
+- `public/image-playground/*`
 - `backend/sapi-main` 或指定输出二进制
+
+`npm run build` 会先构建并同步 `gpt_image_playground` 静态子应用。默认查找路径是仓库同级目录 `../gpt_image_playground`；部署机路径不同时可设置 `SAPI_IMAGE_PLAYGROUND_ROOT=/path/to/gpt_image_playground`。
 
 ## 最小生产环境变量
 ```bash

@@ -75,12 +75,14 @@ curl http://localhost:3000/api/admin/passkeys/login/options \
 - API Key
 - 启用状态
 - 上游格式
+- 上游 User-Agent
 - 模型列表
 - 模型映射
 - 优先级
 - 故障阈值
 
 Base URL 必须是 `http` 或 `https`，不能包含用户信息、空字节、回车或换行。
+`userAgent` 可留空；非空时会作为所有转发到该 Provider 的上游请求 `User-Agent`，可用于兼容检查 code agent UA 的上游，例如 `Claude-User (claude-code/2.1.87; +https://support.anthropic.com/)`。
 
 获取上游模型:
 ```bash

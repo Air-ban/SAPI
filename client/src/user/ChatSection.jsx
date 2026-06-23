@@ -38,6 +38,7 @@ import VideocamIcon from "@mui/icons-material/Videocam";
 import { marked } from "marked";
 import { EmptyState } from "../components/EmptyState";
 import { openAICompatRequest, useOpenAIModelCatalog } from "../utils/openaiCompat";
+import { modelDisplayParts } from "../utils/helpers";
 
 const MAX_ATTACHMENTS = 6;
 const MAX_TEXT_BYTES = 2 * 1024 * 1024;
@@ -1191,11 +1192,23 @@ export function ChatSection({ config, apiKeys = [], selectedKey = "", onToast, o
                   value={model}
                   onChange={(event) => setModel(event.target.value)}
                 >
-                  {availableModels.map((item) => (
-                    <MenuItem key={item.id} value={item.id}>
-                      {item.name || item.id}
-                    </MenuItem>
-                  ))}
+                  {availableModels.map((rawItem) => {
+                    const item = modelDisplayParts(rawItem);
+                    return (
+                      <MenuItem key={item.id} value={item.id}>
+                        <Stack spacing={0.15} sx={{ minWidth: 0 }}>
+                          <Typography variant="body2" noWrap title={item.displayName}>
+                            {item.displayName}
+                          </Typography>
+                          {item.secondary ? (
+                            <Typography variant="caption" color="text.secondary" sx={{ overflowWrap: "anywhere" }}>
+                              {item.secondary}
+                            </Typography>
+                          ) : null}
+                        </Stack>
+                      </MenuItem>
+                    );
+                  })}
                 </Select>
               </FormControl>
             ) : (

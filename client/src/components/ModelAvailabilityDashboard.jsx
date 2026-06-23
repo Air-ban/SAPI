@@ -15,7 +15,7 @@ import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
 import TimerIcon from "@mui/icons-material/Timer";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import { CLI_TOOLS } from "../constants";
-import { formatDate, statusLabel } from "../utils/helpers";
+import { formatDate, groupModelsByChannel, modelDisplayParts, statusLabel } from "../utils/helpers";
 import { EmptyState } from "./EmptyState";
 import { Section } from "./Section";
 
@@ -110,6 +110,7 @@ export function ModelAvailabilityDashboard({ availability }) {
   const unavailable = models.length - healthy - degraded;
   const available = healthy + degraded;
   const remaining = getRemainingText(availability?.expiresAt);
+  const groupedModels = groupModelsByChannel(models);
 
   return (
     <Section
@@ -136,33 +137,43 @@ export function ModelAvailabilityDashboard({ availability }) {
           <StatusMetric icon={<TimerIcon />} label="缓存更新" value={formatDate(availability?.cachedAt)} color="primary.main" />
         </Box>
 
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))", xl: "repeat(3, minmax(0, 1fr))" },
-            gap: 1.25
-          }}
-        >
-          {models.map((model) => {
-            const availability7d = Number(model.availability7d ?? 100);
-            const providerTotal = Number(model.providers || 0);
-            const providerAvailable = Number(model.availableProviders || 0);
-            const supportedSet = new Set(Array.isArray(model.cliSupport) ? model.cliSupport : []);
-            const history = Array.isArray(model.healthHistory) ? model.healthHistory.slice(-24) : [];
-
-            return (
-              <Paper
-                key={model.id}
-                variant="outlined"
+        <Stack spacing={1.75}>
+          {groupedModels.map((group) => (
+            <Box key={group.id}>
+              <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
+                <Chip label={group.label} size="small" color="primary" variant="outlined" />
+                <Typography variant="caption" color="text.secondary">
+                  {group.models.length} 个模型
+                </Typography>
+              </Stack>
+              <Box
                 sx={{
-                  p: 1.5,
-                  minWidth: 0,
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 1.1,
-                  bgcolor: "background.paper"
+                  display: "grid",
+                  gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))", xl: "repeat(3, minmax(0, 1fr))" },
+                  gap: 1.25
                 }}
               >
+                {group.models.map((rawModel) => {
+                  const model = modelDisplayParts(rawModel);
+                  const availability7d = Number(rawModel.availability7d ?? 100);
+                  const providerTotal = Number(rawModel.providers || 0);
+                  const providerAvailable = Number(rawModel.availableProviders || 0);
+                  const supportedSet = new Set(Array.isArray(rawModel.cliSupport) ? rawModel.cliSupport : []);
+                  const history = Array.isArray(rawModel.healthHistory) ? rawModel.healthHistory.slice(-24) : [];
+
+                  return (
+                    <Paper
+                      key={model.id}
+                      variant="outlined"
+                      sx={{
+                        p: 1.5,
+                        minWidth: 0,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 1.1,
+                        bgcolor: "background.paper"
+                      }}
+                    >
                 <Stack direction="row" alignItems="flex-start" justifyContent="space-between" spacing={1}>
                   <Stack spacing={0.35} sx={{ minWidth: 0 }}>
                     <Typography
@@ -174,19 +185,31 @@ export function ModelAvailabilityDashboard({ availability }) {
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap"
                       }}
-                      title={model.id}
+                      title={model.displayName}
                     >
-                      {model.name || model.id}
+                      {model.displayName}
                     </Typography>
+                    {model.secondary ? (
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{
+                          fontFamily: 'Consolas, "SFMono-Regular", Menlo, monospace',
+                          overflowWrap: "anywhere"
+                        }}
+                      >
+                        {model.secondary}
+                      </Typography>
+                    ) : null}
                     <Typography variant="caption" color="text.secondary" sx={{ overflowWrap: "anywhere" }}>
                       {providerAvailable}/{providerTotal} 个上游可路由
                     </Typography>
                   </Stack>
                   <Chip
-                    icon={statusIcon(model.healthStatus)}
-                    label={statusLabel(model.healthStatus)}
+                    icon={statusIcon(rawModel.healthStatus)}
+                    label={statusLabel(rawModel.healthStatus)}
                     size="small"
-                    color={statusChipColor(model.healthStatus)}
+                    color={statusChipColor(rawModel.healthStatus)}
                     variant="outlined"
                     sx={{
                       flexShrink: 0,
@@ -208,7 +231,7 @@ export function ModelAvailabilityDashboard({ availability }) {
                       延迟
                     </Typography>
                     <Typography variant="body2" sx={{ fontWeight: 780 }}>
-                      {model.latency || 0}
+                      {rawModel.latency || 0}
                       <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 0.25 }}>
                         ms
                       </Typography>
@@ -219,7 +242,7 @@ export function ModelAvailabilityDashboard({ availability }) {
                       PING
                     </Typography>
                     <Typography variant="body2" sx={{ fontWeight: 780 }}>
-                      {model.ping || 0}
+                      {rawModel.ping || 0}
                       <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 0.25 }}>
                         ms
                       </Typography>
@@ -238,7 +261,7 @@ export function ModelAvailabilityDashboard({ availability }) {
                 <LinearProgress
                   variant="determinate"
                   value={providerTotal ? Math.round((providerAvailable / providerTotal) * 100) : 0}
-                  color={model.healthStatus === "healthy" ? "success" : model.healthStatus === "degraded" ? "warning" : "error"}
+                  color={rawModel.healthStatus === "healthy" ? "success" : rawModel.healthStatus === "degraded" ? "warning" : "error"}
                   sx={{
                     height: 6,
                     borderRadius: 1,
@@ -296,14 +319,17 @@ export function ModelAvailabilityDashboard({ availability }) {
 
                 <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
                   <Typography variant="caption" color="text.secondary" sx={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {model.availableProviderNames?.length ? model.availableProviderNames.join(", ") : "暂无可路由上游"}
+                    {rawModel.availableProviderNames?.length ? rawModel.availableProviderNames.join(", ") : "暂无可路由上游"}
                   </Typography>
                   <DnsIcon sx={{ color: "text.disabled", fontSize: 15, flexShrink: 0 }} />
                 </Stack>
               </Paper>
-            );
-          })}
-        </Box>
+                  );
+                })}
+              </Box>
+            </Box>
+          ))}
+        </Stack>
       </Stack>
     </Section>
   );
