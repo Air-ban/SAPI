@@ -3,105 +3,95 @@ import { createTheme } from "@mui/material";
 const palettes = {
   light: {
     mode: "light",
-    bg: "#eef3f8",
-    pageBg:
-      "linear-gradient(135deg, #f7fafc 0%, #eef5f9 38%, #f6f2fb 72%, #f8fafc 100%)",
-    paper: "rgba(255,255,255,0.78)",
-    paperAlt: "rgba(244,248,252,0.72)",
-    elevated: "rgba(255,255,255,0.88)",
-    glass: "linear-gradient(145deg, rgba(255,255,255,0.82), rgba(255,255,255,0.58))",
-    glassStrong: "linear-gradient(145deg, rgba(255,255,255,0.94), rgba(247,251,255,0.74))",
-    glassBorder: "rgba(96, 115, 138, 0.22)",
-    glassEdge: "rgba(255,255,255,0.78)",
-    inputBg: "rgba(255,255,255,0.72)",
-    text: "#101828",
-    muted: "#475467",
-    subtle: "#667085",
-    border: "rgba(98, 116, 142, 0.22)",
-    borderStrong: "rgba(75, 90, 112, 0.34)",
-    primary: "#1263d1",
-    primaryHover: "#0a55ba",
-    primarySoft: "rgba(18,99,209,0.12)",
+    bg: "#ffffff",
+    pageBg: "#ffffff",
+    paper: "#ffffff",
+    paperAlt: "#fafafa",
+    elevated: "#ffffff",
+    glass: "#ffffff",
+    glassStrong: "#ffffff",
+    glassBorder: "rgba(0, 0, 0, 0.08)",
+    glassEdge: "rgba(0, 0, 0, 0.08)",
+    inputBg: "#ffffff",
+    text: "#171717",
+    muted: "#4d4d4d",
+    subtle: "#666666",
+    border: "rgba(0, 0, 0, 0.08)",
+    borderStrong: "rgba(0, 0, 0, 0.15)",
+    primary: "#171717",
+    primaryHover: "#333333",
+    primarySoft: "rgba(0, 0, 0, 0.04)",
     primaryText: "#ffffff",
-    accentCyan: "#008fa3",
-    accentViolet: "#7657d6",
-    accentRose: "#c43b6b",
-    accentAmber: "#b66a00",
-    accentGreen: "#067647",
-    accentSoftCyan: "rgba(0,143,163,0.12)",
-    accentSoftViolet: "rgba(118,87,214,0.12)",
-    accentSoftRose: "rgba(196,59,107,0.12)",
-    accentSoftAmber: "rgba(182,106,0,0.14)",
-    success: "#067647",
-    successSoft: "#e8f7ef",
-    warning: "#b54708",
-    warningSoft: "#fff4e5",
-    error: "#c9181f",
-    errorSoft: "#fde8ea",
-    codeBg: "#111827",
-    codeText: "#d1fae5",
-    sidebarBg: "linear-gradient(165deg, #101826 0%, #0f2530 52%, #181927 100%)",
-    sidebarText: "#f9fafb",
-    sidebarMuted: "#cbd5e1",
-    sidebarBorder: "rgba(255,255,255,0.16)",
-    sidebarSurface: "rgba(255,255,255,0.06)",
-    sidebarHover: "rgba(255,255,255,0.10)",
-    sidebarActive: "rgba(255,255,255,0.14)",
-    overlay: "rgba(255,255,255,0.74)",
-    shadow: "0 18px 48px rgba(31, 44, 62, 0.14)",
-    softShadow: "0 10px 30px rgba(31, 44, 62, 0.08)",
-    accentGradient: "linear-gradient(135deg, #1263d1 0%, #008fa3 52%, #7657d6 100%)"
+    accentCyan: "#0070f3",
+    accentViolet: "#7928ca",
+    accentRose: "#eb367f",
+    accentAmber: "#f7c46c",
+    accentGreen: "#0068d6",
+    success: "#0068d6",
+    successSoft: "#ebf5ff",
+    warning: "#f7c46c",
+    warningSoft: "#fffdf0",
+    error: "#ff5b4f",
+    errorSoft: "#fff5f5",
+    codeBg: "#0a0a0a",
+    codeText: "#ededed",
+    sidebarBg: "#ffffff",
+    sidebarText: "#171717",
+    sidebarMuted: "#666666",
+    sidebarBorder: "rgba(0, 0, 0, 0.08)",
+    sidebarSurface: "rgba(0, 0, 0, 0.02)",
+    sidebarHover: "rgba(0, 0, 0, 0.04)",
+    sidebarActive: "rgba(0, 0, 0, 0.06)",
+    overlay: "rgba(255, 255, 255, 0.8)",
+    shadow: "rgba(0,0,0,0.08) 0px 0px 0px 1px, rgba(0,0,0,0.04) 0px 8px 8px -8px, #fafafa 0px 0px 0px 1px",
+    softShadow: "rgba(0,0,0,0.08) 0px 0px 0px 1px, rgba(0,0,0,0.02) 0px 2px 2px, #fafafa 0px 0px 0px 1px",
+    accentGradient: "linear-gradient(135deg, #171717 0%, #4d4d4d 100%)"
   },
   dark: {
     mode: "dark",
-    bg: "#080d17",
-    pageBg:
-      "linear-gradient(135deg, #080d17 0%, #0d1824 42%, #171626 76%, #0b111f 100%)",
-    paper: "rgba(18,26,39,0.76)",
-    paperAlt: "rgba(28,39,57,0.68)",
-    elevated: "rgba(21,31,48,0.88)",
-    glass: "linear-gradient(145deg, rgba(31,43,62,0.76), rgba(13,22,36,0.62))",
-    glassStrong: "linear-gradient(145deg, rgba(42,57,80,0.86), rgba(18,28,45,0.74))",
-    glassBorder: "rgba(202, 220, 255, 0.16)",
-    glassEdge: "rgba(255,255,255,0.16)",
-    inputBg: "rgba(13,22,36,0.64)",
-    text: "#f8fafc",
-    muted: "#d0d7e2",
-    subtle: "#aab4c5",
-    border: "rgba(148,163,184,0.20)",
-    borderStrong: "rgba(194,210,235,0.30)",
-    primary: "#8fc5ff",
-    primaryHover: "#b8dcff",
-    primarySoft: "rgba(124,183,255,0.16)",
-    primaryText: "#07111f",
-    accentCyan: "#6ee7d8",
-    accentViolet: "#b69bff",
-    accentRose: "#ff8ab3",
-    accentAmber: "#ffd166",
-    accentGreen: "#5ee0a0",
-    accentSoftCyan: "rgba(110,231,216,0.14)",
-    accentSoftViolet: "rgba(182,155,255,0.14)",
-    accentSoftRose: "rgba(255,138,179,0.14)",
-    accentSoftAmber: "rgba(255,209,102,0.14)",
-    success: "#5ee0a0",
-    successSoft: "rgba(94,224,160,0.14)",
+    bg: "#0a0a0a",
+    pageBg: "#0a0a0a",
+    paper: "#000000",
+    paperAlt: "#111111",
+    elevated: "#000000",
+    glass: "#000000",
+    glassStrong: "#000000",
+    glassBorder: "rgba(255, 255, 255, 0.15)",
+    glassEdge: "rgba(255, 255, 255, 0.15)",
+    inputBg: "#000000",
+    text: "#ededed",
+    muted: "#a0a0a0",
+    subtle: "#808080",
+    border: "rgba(255, 255, 255, 0.15)",
+    borderStrong: "rgba(255, 255, 255, 0.25)",
+    primary: "#ffffff",
+    primaryHover: "#e6e6e6",
+    primarySoft: "rgba(255, 255, 255, 0.06)",
+    primaryText: "#0a0a0a",
+    accentCyan: "#0070f3",
+    accentViolet: "#7928ca",
+    accentRose: "#eb367f",
+    accentAmber: "#f7c46c",
+    accentGreen: "#0068d6",
+    success: "#0068d6",
+    successSoft: "rgba(0, 104, 214, 0.15)",
     warning: "#f7c46c",
-    warningSoft: "rgba(247,196,108,0.16)",
-    error: "#ff8a90",
-    errorSoft: "rgba(255,138,144,0.16)",
-    codeBg: "#050b16",
-    codeText: "#c9f7df",
-    sidebarBg: "linear-gradient(165deg, #050b16 0%, #0a1d28 48%, #171426 100%)",
-    sidebarText: "#f8fafc",
-    sidebarMuted: "#c8d2e1",
-    sidebarBorder: "rgba(255,255,255,0.14)",
-    sidebarSurface: "rgba(255,255,255,0.07)",
-    sidebarHover: "rgba(255,255,255,0.11)",
-    sidebarActive: "rgba(124,183,255,0.18)",
-    overlay: "rgba(13,22,36,0.72)",
-    shadow: "0 22px 60px rgba(0, 0, 0, 0.38)",
-    softShadow: "0 12px 34px rgba(0, 0, 0, 0.22)",
-    accentGradient: "linear-gradient(135deg, #8fc5ff 0%, #6ee7d8 52%, #b69bff 100%)"
+    warningSoft: "rgba(247, 196, 108, 0.15)",
+    error: "#ff5b4f",
+    errorSoft: "rgba(255, 91, 79, 0.15)",
+    codeBg: "#000000",
+    codeText: "#ffffff",
+    sidebarBg: "#000000",
+    sidebarText: "#ededed",
+    sidebarMuted: "#808080",
+    sidebarBorder: "rgba(255, 255, 255, 0.15)",
+    sidebarSurface: "rgba(255, 255, 255, 0.04)",
+    sidebarHover: "rgba(255, 255, 255, 0.08)",
+    sidebarActive: "rgba(255, 255, 255, 0.12)",
+    overlay: "rgba(0, 0, 0, 0.8)",
+    shadow: "rgba(255, 255, 255, 0.15) 0px 0px 0px 1px, rgba(0, 0, 0, 0.5) 0px 8px 8px -8px, #111111 0px 0px 0px 1px",
+    softShadow: "rgba(255, 255, 255, 0.15) 0px 0px 0px 1px, rgba(0, 0, 0, 0.3) 0px 2px 2px, #111111 0px 0px 0px 1px",
+    accentGradient: "linear-gradient(135deg, #ffffff 0%, #a0a0a0 100%)"
   }
 };
 
@@ -121,7 +111,7 @@ export function createAppTheme(mode = "light") {
         main: c.success,
         light: c.success,
         dark: c.success,
-        contrastText: c.mode === "dark" ? "#07111f" : "#ffffff"
+        contrastText: c.mode === "dark" ? "#0a0a0a" : "#ffffff"
       },
       success: { main: c.success, light: c.success, dark: c.success },
       warning: { main: c.warning, light: c.warning, dark: c.warning },
@@ -155,10 +145,10 @@ export function createAppTheme(mode = "light") {
         accentRose: c.accentRose,
         accentAmber: c.accentAmber,
         accentGreen: c.accentGreen,
-        accentSoftCyan: c.accentSoftCyan,
-        accentSoftViolet: c.accentSoftViolet,
-        accentSoftRose: c.accentSoftRose,
-        accentSoftAmber: c.accentSoftAmber,
+        accentSoftCyan: c.successSoft,
+        accentSoftViolet: c.successSoft,
+        accentSoftRose: c.errorSoft,
+        accentSoftAmber: c.warningSoft,
         codeBg: c.codeBg,
         codeText: c.codeText,
         sidebarBg: c.sidebarBg,
@@ -176,56 +166,56 @@ export function createAppTheme(mode = "light") {
       }
     },
     shape: {
-      borderRadius: 8
+      borderRadius: 6
     },
     shadows: Array(25).fill("none"),
     typography: {
       fontFamily:
-        'Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        'Geist, Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
       h2: {
-        fontWeight: 760,
-        letterSpacing: 0,
-        lineHeight: 1.05
+        fontWeight: 600,
+        letterSpacing: "-2.4px",
+        lineHeight: 1.1
       },
       h4: {
-        fontWeight: 680,
-        letterSpacing: 0,
-        lineHeight: 1.22
-      },
-      h5: {
-        fontWeight: 650,
-        letterSpacing: 0,
+        fontWeight: 600,
+        letterSpacing: "-1.28px",
         lineHeight: 1.25
       },
+      h5: {
+        fontWeight: 600,
+        letterSpacing: "-0.96px",
+        lineHeight: 1.3
+      },
       h6: {
-        fontWeight: 650,
-        letterSpacing: 0,
+        fontWeight: 600,
+        letterSpacing: "-0.32px",
         lineHeight: 1.35
       },
       subtitle1: {
-        fontWeight: 600,
-        letterSpacing: 0
+        fontWeight: 500,
+        letterSpacing: "-0.32px"
       },
       body1: {
-        lineHeight: 1.6,
-        letterSpacing: 0
+        lineHeight: 1.5,
+        letterSpacing: "normal"
       },
       body2: {
-        lineHeight: 1.55,
-        letterSpacing: 0
+        lineHeight: 1.5,
+        letterSpacing: "normal"
       },
       button: {
-        fontWeight: 560,
-        letterSpacing: 0
+        fontWeight: 500,
+        letterSpacing: "normal"
       },
       overline: {
         fontWeight: 600,
-        letterSpacing: 0,
+        letterSpacing: "normal",
         fontSize: "0.75rem",
         textTransform: "none"
       },
       caption: {
-        letterSpacing: 0
+        letterSpacing: "normal"
       }
     },
     components: {
@@ -234,28 +224,27 @@ export function createAppTheme(mode = "light") {
           "*, *::before, *::after": {
             boxSizing: "border-box",
             transition:
-              "background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease, box-shadow 0.18s ease"
+              "background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease"
           },
           body: {
             minHeight: "100vh",
             background: c.pageBg,
-            backgroundAttachment: "fixed",
             color: c.text
           },
           "#root": {
             minHeight: "100vh"
           },
           "::-webkit-scrollbar": {
-            width: 8,
-            height: 8
+            width: 6,
+            height: 6
           },
           "::-webkit-scrollbar-track": {
             background: "transparent"
           },
           "::-webkit-scrollbar-thumb": {
             background: c.borderStrong,
-            borderRadius: 8,
-            border: "2px solid transparent",
+            borderRadius: 6,
+            border: "1px solid transparent",
             backgroundClip: "padding-box"
           },
           "::-webkit-scrollbar-thumb:hover": {
@@ -263,7 +252,7 @@ export function createAppTheme(mode = "light") {
             backgroundClip: "padding-box"
           },
           ":focus-visible": {
-            outline: `2px solid ${c.primary}`,
+            outline: `2px solid #0070f3`,
             outlineOffset: 2
           },
           "@media (prefers-reduced-motion: reduce)": {
@@ -281,40 +270,32 @@ export function createAppTheme(mode = "light") {
         styleOverrides: {
           root: {
             textTransform: "none",
-            borderRadius: 7,
-            padding: "6px 14px",
+            borderRadius: 6,
+            padding: "6px 12px",
             minHeight: 34,
             fontSize: 14,
-            fontWeight: 560,
+            fontWeight: 500,
             borderColor: c.border,
-            transition:
-              "transform 0.18s cubic-bezier(.2,.8,.2,1), box-shadow 0.18s ease, background 0.18s ease, border-color 0.18s ease",
+            transition: "background 0.12s ease, border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease",
             "&:hover": {
-              transform: "translateY(-1px)",
               boxShadow: c.softShadow
-            },
-            "&:active": {
-              transform: "translateY(0) scale(0.985)"
             }
           },
           contained: {
-            background: c.accentGradient,
+            background: c.primary,
             color: c.primaryText,
-            border: `1px solid ${c.glassEdge}`,
-            boxShadow: c.softShadow,
+            border: `1px solid transparent`,
             "&:hover": {
-              background: c.accentGradient,
-              borderColor: c.primaryHover,
-              boxShadow: c.shadow
+              background: c.primaryHover,
+              borderColor: "transparent"
             }
           },
           outlined: {
             color: c.text,
             borderColor: c.border,
-            background: c.glass,
-            backdropFilter: "blur(18px) saturate(1.18)",
+            background: c.bg,
             "&:hover": {
-              background: c.glassStrong,
+              background: c.paperAlt,
               borderColor: c.borderStrong
             }
           },
@@ -326,13 +307,13 @@ export function createAppTheme(mode = "light") {
           },
           sizeSmall: {
             minHeight: 30,
-            padding: "4px 10px",
+            padding: "4px 8px",
             fontSize: 13,
-            borderRadius: 7
+            borderRadius: 6
           },
           sizeLarge: {
-            minHeight: 42,
-            padding: "8px 18px",
+            minHeight: 40,
+            padding: "8px 16px",
             fontSize: 15
           }
         }
@@ -340,10 +321,8 @@ export function createAppTheme(mode = "light") {
       MuiPaper: {
         styleOverrides: {
           root: {
-            backgroundImage: c.glass,
             backgroundColor: c.paper,
-            color: c.text,
-            backdropFilter: "blur(22px) saturate(1.18)"
+            color: c.text
           },
           outlined: {
             borderColor: c.glassBorder,
@@ -355,7 +334,7 @@ export function createAppTheme(mode = "light") {
         styleOverrides: {
           root: {
             borderRadius: 8,
-            border: `1px solid ${c.glassBorder}`,
+            border: 0,
             boxShadow: c.softShadow,
             backgroundColor: c.paper,
             color: c.text
@@ -368,8 +347,7 @@ export function createAppTheme(mode = "light") {
             border: `1px solid ${c.border}`,
             borderRadius: 8,
             overflow: "hidden",
-            background: c.glass,
-            backdropFilter: "blur(18px) saturate(1.12)"
+            background: c.paper
           }
         }
       },
@@ -380,7 +358,7 @@ export function createAppTheme(mode = "light") {
             fontSize: 12,
             fontWeight: 600,
             textTransform: "none",
-            letterSpacing: 0,
+            letterSpacing: "normal",
             backgroundColor: c.paperAlt,
             borderBottom: `1px solid ${c.border}`
           },
@@ -406,19 +384,18 @@ export function createAppTheme(mode = "light") {
         styleOverrides: {
           root: {
             height: 24,
-            borderRadius: 999,
-            fontWeight: 520,
-            letterSpacing: 0,
-            backdropFilter: "blur(12px)"
+            borderRadius: 9999,
+            fontWeight: 500,
+            letterSpacing: "normal"
           },
           sizeSmall: {
-            height: 22,
+            height: 20,
             fontSize: 12
           },
           outlined: {
             borderColor: c.border,
             color: c.text,
-            backgroundColor: c.mode === "dark" ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.46)"
+            backgroundColor: c.paperAlt
           }
         }
       },
@@ -429,10 +406,9 @@ export function createAppTheme(mode = "light") {
         styleOverrides: {
           root: {
             "& .MuiOutlinedInput-root": {
-              minHeight: 40,
-              borderRadius: 7,
+              minHeight: 38,
+              borderRadius: 6,
               background: c.inputBg,
-              backdropFilter: "blur(16px) saturate(1.12)",
               color: c.text,
               "& .MuiOutlinedInput-notchedOutline": {
                 borderColor: c.border
@@ -442,7 +418,7 @@ export function createAppTheme(mode = "light") {
               },
               "&.Mui-focused .MuiOutlinedInput-notchedOutline": {
                 borderWidth: 1,
-                borderColor: c.primary
+                borderColor: "#0070f3"
               }
             },
             "& .MuiInputLabel-root": {
@@ -459,20 +435,16 @@ export function createAppTheme(mode = "light") {
           root: {
             color: c.muted,
             borderColor: c.border,
-            backgroundColor: c.mode === "dark" ? "rgba(255,255,255,0.02)" : "rgba(255,255,255,0.42)",
-            transition: "transform 0.16s cubic-bezier(.2,.8,.2,1), background-color 0.16s ease",
+            backgroundColor: c.paperAlt,
+            transition: "background-color 0.12s ease",
             "&:hover": {
-              transform: "translateY(-1px)",
               backgroundColor: c.paperAlt
-            },
-            "&:active": {
-              transform: "scale(0.985)"
             },
             "&.Mui-selected": {
               color: c.primaryText,
-              background: c.accentGradient,
+              background: c.primary,
               "&:hover": {
-                background: c.accentGradient
+                background: c.primary
               }
             }
           }
@@ -481,8 +453,8 @@ export function createAppTheme(mode = "light") {
       MuiTooltip: {
         styleOverrides: {
           tooltip: {
-            borderRadius: 6,
-            padding: "6px 8px",
+            borderRadius: 4,
+            padding: "4px 8px",
             fontSize: 12,
             backgroundColor: c.text,
             color: c.bg
@@ -492,29 +464,28 @@ export function createAppTheme(mode = "light") {
       MuiAlert: {
         styleOverrides: {
           root: {
-            borderRadius: 8,
+            borderRadius: 6,
             border: `1px solid ${c.border}`,
-            backgroundColor: c.paper,
+            backgroundColor: c.paperAlt,
             color: c.text
           },
           filledSuccess: {
             backgroundColor: c.success,
-            color: c.mode === "dark" ? "#07111f" : "#ffffff"
+            color: "#ffffff"
           },
           filledError: {
             backgroundColor: c.error,
-            color: c.mode === "dark" ? "#07111f" : "#ffffff"
+            color: "#ffffff"
           }
         }
       },
       MuiDialog: {
         styleOverrides: {
           paper: {
-            borderRadius: 10,
+            borderRadius: 8,
             border: `1px solid ${c.glassBorder}`,
             boxShadow: c.shadow,
-            background: c.glassStrong,
-            backdropFilter: "blur(28px) saturate(1.22)",
+            background: c.paper,
             color: c.text
           }
         }
@@ -522,14 +493,9 @@ export function createAppTheme(mode = "light") {
       MuiIconButton: {
         styleOverrides: {
           root: {
-            transition:
-              "transform 0.18s cubic-bezier(.2,.8,.2,1), background-color 0.18s ease, color 0.18s ease",
+            transition: "background-color 0.12s ease, color 0.12s ease",
             "&:hover": {
-              transform: "translateY(-1px)",
               backgroundColor: c.primarySoft
-            },
-            "&:active": {
-              transform: "translateY(0) scale(0.94)"
             }
           }
         }
@@ -548,44 +514,41 @@ export function createAppTheme(mode = "light") {
             backgroundColor: c.borderStrong
           },
           track: {
-            background: c.accentGradient,
+            background: c.primary,
             border: 0
           },
           thumb: {
-            width: 16,
-            height: 16,
-            backgroundColor: c.mode === "dark" ? "#f8fafc" : "#ffffff",
-            border: `2px solid ${c.primary}`,
-            boxShadow: c.softShadow,
-            "&:hover, &.Mui-focusVisible": {
-              boxShadow: c.shadow
-            }
+            width: 14,
+            height: 14,
+            backgroundColor: c.mode === "dark" ? "#ffffff" : "#000000",
+            border: `1px solid ${c.border}`,
+            boxShadow: c.softShadow
           }
         }
       },
       MuiSwitch: {
         styleOverrides: {
           root: {
-            width: 38,
-            height: 22,
+            width: 36,
+            height: 20,
             padding: 0,
             "& .MuiSwitch-switchBase": {
               padding: 2,
               "&.Mui-checked": {
                 transform: "translateX(16px)",
-                color: c.primaryText,
+                color: "#ffffff",
                 "& + .MuiSwitch-track": {
                   opacity: 1,
-                  backgroundColor: c.primary
+                  backgroundColor: "#0070f3"
                 }
               }
             },
             "& .MuiSwitch-thumb": {
-              width: 18,
-              height: 18
+              width: 16,
+              height: 16
             },
             "& .MuiSwitch-track": {
-              borderRadius: 999,
+              borderRadius: 9999,
               opacity: 1,
               backgroundColor: c.borderStrong
             }

@@ -314,10 +314,10 @@ export function AuthPage({
             width: "100%",
             maxWidth: 440,
             p: { xs: 2.25, sm: 3 },
-            boxShadow: (theme) => theme.palette.app.shadow,
-            borderColor: "app.glassBorder",
-            background: (theme) => theme.palette.app.glassStrong,
-            backdropFilter: "blur(26px) saturate(1.2)"
+            borderRadius: "8px",
+            borderColor: "app.sidebarBorder",
+            bgcolor: "background.paper",
+            boxShadow: (theme) => theme.palette.app.shadow
           }}
         >
           <Stack spacing={2.2}>
@@ -327,23 +327,23 @@ export function AuthPage({
             <Stack spacing={1} alignItems="center" textAlign="center">
               <Box
                 sx={{
-                  width: 42,
-                  height: 42,
-                  borderRadius: 1.25,
+                  width: 40,
+                  height: 40,
+                  borderRadius: "8px",
                   display: "grid",
                   placeItems: "center",
-                  background: (theme) => theme.palette.app.accentGradient,
-                  color: "primary.contrastText",
+                  bgcolor: "text.primary",
+                  color: "background.default",
                   boxShadow: (theme) => theme.palette.app.softShadow
                 }}
               >
                 {isRegister ? <PersonAddIcon /> : isAdminLogin ? <AdminPanelSettingsIcon /> : <LoginIcon />}
               </Box>
               <Box>
-                <Typography variant="h5">
+                <Typography variant="h5" sx={{ fontWeight: 600, letterSpacing: "-0.96px" }}>
                   {isRegister ? "创建 SAPI 账号" : isAdminLogin ? "管理后台登录" : "登录 SAPI"}
                 </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, fontSize: "0.9rem" }}>
                   {isAdminLogin
                     ? "使用管理员账号进入 SAPI 管理后台。"
                     : isRegister
@@ -412,7 +412,7 @@ export function AuthPage({
                       variant="outlined"
                       onClick={sendCode}
                       disabled={codeLoading || countdown > 0 || registrationDisabled}
-                      sx={{ minWidth: 120, height: 56 }}
+                      sx={{ minWidth: 120, height: 38 }}
                     >
                       {countdown > 0 ? `${countdown} 秒` : "获取验证码"}
                     </Button>
@@ -429,10 +429,16 @@ export function AuthPage({
                       onChange={(_, value) => {
                         if (value) setRegisterMethod(value);
                       }}
+                      sx={{
+                        "& .MuiToggleButton-root": {
+                          borderColor: "app.sidebarBorder",
+                          fontSize: "0.82rem"
+                        }
+                      }}
                     >
-                      <ToggleButton value="email">普通邮箱注册</ToggleButton>
-                      <ToggleButton value="edu">教育邮箱注册</ToggleButton>
-                      <ToggleButton value="invite">邀请码注册</ToggleButton>
+                      <ToggleButton value="email">普通注册</ToggleButton>
+                      <ToggleButton value="edu">教育注册</ToggleButton>
+                      <ToggleButton value="invite">邀请注册</ToggleButton>
                     </ToggleButtonGroup>
                     {registerMethod === "invite" ? (
                       <TextField
@@ -442,18 +448,13 @@ export function AuthPage({
                         placeholder="输入管理员提供的邀请码"
                         required
                         helperText="使用管理员提供的邀请码进行注册。"
-                        sx={{
-                          '& .MuiOutlinedInput-root': {
-                            bgcolor: 'app.inputBg'
-                          }
-                        }}
                       />
                     ) : registerMethod === "edu" ? (
-                      <Typography variant="body2" color="text.secondary">
+                      <Typography variant="body2" color="text.secondary" sx={{ fontSize: "0.85rem" }}>
                         使用 .edu.cn 教育邮箱注册，无需邀请码。
                       </Typography>
                     ) : (
-                      <Typography variant="body2" color="text.secondary">
+                      <Typography variant="body2" color="text.secondary" sx={{ fontSize: "0.85rem" }}>
                         普通邮箱可直接注册，默认限速 1 RPM。
                       </Typography>
                     )}
@@ -469,9 +470,9 @@ export function AuthPage({
                       />
                     }
                     label={
-                      <Typography variant="body2" color="text.secondary">
+                      <Typography variant="body2" color="text.secondary" sx={{ fontSize: "0.85rem" }}>
                         我已阅读并同意
-                        <Button size="small" sx={{ p: 0, minWidth: 0, verticalAlign: "baseline" }} onClick={() => setTermsOpen(true)}>
+                        <Button size="small" sx={{ p: 0, minWidth: 0, verticalAlign: "baseline", fontSize: "0.85rem" }} onClick={() => setTermsOpen(true)}>
                           《用户协议与隐私政策》
                         </Button>
                       </Typography>
@@ -548,58 +549,58 @@ export function AuthPage({
         </Paper>
       </Box>
       <ForgotPasswordDialog
-        open={forgotOpen}
-        onClose={() => setForgotOpen(false)}
-        onSendCode={async (email) => {
-          if (captchaRequired && !turnstileTokenRef.current) {
-            onToast("请先完成人机验证", "warning");
-            throw new Error("captcha");
-          }
-          await onSendForgotCode(email, turnstileTokenRef.current);
-          resetTurnstile();
-        }}
-        onReset={onResetPassword}
-        onToast={onToast}
-      />
-      <Dialog open={termsOpen} onClose={() => setTermsOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>用户协议与隐私政策</DialogTitle>
-        <DialogContent>
-          <DialogContentText component="div" sx={{ whiteSpace: "pre-line" }}>
-            <Typography variant="subtitle2" gutterBottom>一、用户协议</Typography>
-            <Typography variant="body2" paragraph>
-              1. 服务说明：本服务提供 API 代理转发功能，用户可通过创建 API Key 调用第三方大模型服务。
-            </Typography>
-            <Typography variant="body2" paragraph>
-              2. 使用规范：用户不得利用本服务从事违法违规活动，不得滥用 API 接口。
-            </Typography>
-            <Typography variant="body2" paragraph>
-              3. 数据承诺：我们不会将用户的任何数据（包括但不限于 API 请求内容、响应内容、用量数据）用于训练人工智能模型或任何机器学习目的。
-            </Typography>
-            <Typography variant="subtitle2" gutterBottom sx={{ mt: 2 }}>二、隐私政策</Typography>
-            <Typography variant="body2" paragraph>
-              1. 信息收集：我们仅收集提供服务所必需的最少信息，包括用户名、邮箱地址、密码哈希及 API 用量统计。
-            </Typography>
-            <Typography variant="body2" paragraph>
-              2. 隐私保护：模型转发请求会保存用户提交的请求 JSON 内容 7 天，用于用量核对、故障排查和安全审计；响应正文不会持久化保存。
-            </Typography>
-            <Typography variant="body2" paragraph>
-              3. 数据安全：用户数据采用加密存储，仅用于身份验证、用量统计和服务运营，不会向任何第三方披露或出售。
-            </Typography>
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setTermsOpen(false)}>关闭</Button>
-          <Button
-            variant="contained"
-            onClick={() => {
-              setAgreed(true);
-              setTermsOpen(false);
-            }}
-          >
-            同意
-          </Button>
-        </DialogActions>
-      </Dialog>
-    </>
-  );
-}
+          open={forgotOpen}
+          onClose={() => setForgotOpen(false)}
+          onSendCode={async (email) => {
+            if (captchaRequired && !turnstileTokenRef.current) {
+              onToast("请先完成人机验证", "warning");
+              throw new Error("captcha");
+            }
+            await onSendForgotCode(email, turnstileTokenRef.current);
+            resetTurnstile();
+          }}
+          onReset={onResetPassword}
+          onToast={onToast}
+        />
+        <Dialog open={termsOpen} onClose={() => setTermsOpen(false)} maxWidth="sm" fullWidth>
+          <DialogTitle>用户协议与隐私政策</DialogTitle>
+          <DialogContent>
+            <DialogContentText component="div" sx={{ whiteSpace: "pre-line" }}>
+              <Typography variant="subtitle2" gutterBottom>一、用户协议</Typography>
+              <Typography variant="body2" paragraph>
+                1. 服务说明：本服务提供 API 代理转发功能，用户可通过创建 API Key 调用第三方大模型服务。
+              </Typography>
+              <Typography variant="body2" paragraph>
+                2. 使用规范：用户不得利用本服务从事违法违规活动，不得滥用 API 接口。
+              </Typography>
+              <Typography variant="body2" paragraph>
+                3. 数据承诺：我们不会将用户的任何数据（包括但不限于 API 请求内容、响应内容、用量数据）用于训练人工智能模型或任何机器学习目的。
+              </Typography>
+              <Typography variant="subtitle2" gutterBottom sx={{ mt: 2 }}>二、隐私政策</Typography>
+              <Typography variant="body2" paragraph>
+                1. 信息收集：我们仅收集提供服务所必需的最少信息，包括用户名、邮箱地址、密码哈希及 API 用量统计。
+              </Typography>
+              <Typography variant="body2" paragraph>
+                2. 隐私保护：模型转发请求会保存用户提交的请求 JSON 内容 7 天，用于用量核对、故障排查和安全审计；响应正文不会持久化保存。
+              </Typography>
+              <Typography variant="body2" paragraph>
+                3. 数据安全：用户数据采用加密存储，仅用于身份验证、用量统计和服务运营，不会向任何第三方披露或出售。
+              </Typography>
+            </DialogContentText>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setTermsOpen(false)}>关闭</Button>
+            <Button
+              variant="contained"
+              onClick={() => {
+                setAgreed(true);
+                setTermsOpen(false);
+              }}
+            >
+              同意
+            </Button>
+          </DialogActions>
+        </Dialog>
+      </>
+    );
+  }

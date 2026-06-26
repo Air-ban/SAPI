@@ -58,6 +58,7 @@ export function Sidebar({
     fail: { label: "服务异常", color: "error.main" },
     checking: { label: "检查中", color: "warning.main" }
   }[health];
+
   const portalPages = [
     { id: "overview", icon: <AnalyticsIcon />, primary: "首页概览", secondary: "账号、Key、模型总览" },
     { id: "key", icon: <KeyIcon />, primary: "我的 Key", secondary: "复制、创建、轮换" },
@@ -71,6 +72,7 @@ export function Sidebar({
     { id: "swagger", icon: <SchoolIcon />, primary: "接口文档", secondary: "打开 Swagger" },
     { id: "settings", icon: <SettingsIcon />, primary: "通知开关", secondary: "是否接收公告邮件" }
   ];
+
   const adminNavGroups = [
     {
       label: "日常管理",
@@ -100,35 +102,35 @@ export function Sidebar({
         <Box
           aria-hidden="true"
           sx={{
-            width: 30,
-            height: 30,
-            borderRadius: 1,
+            width: 28,
+            height: 28,
+            borderRadius: "6px",
             display: "grid",
             placeItems: "center",
-            bgcolor: "primary.main",
-            color: "primary.contrastText",
-            fontSize: 14,
-            fontWeight: 760
+            bgcolor: "text.primary",
+            color: "background.default",
+            fontSize: 13,
+            fontWeight: 700
           }}
         >
           S
         </Box>
         <Box sx={{ minWidth: 0, flexGrow: 1 }}>
-          <Typography variant="subtitle2" sx={{ lineHeight: 1.1, color: "app.sidebarText", fontWeight: 650 }}>
+          <Typography variant="subtitle2" sx={{ lineHeight: 1.1, color: "text.primary", fontWeight: 600 }}>
             SAPI
           </Typography>
-          <Typography variant="caption" sx={{ color: "app.sidebarMuted" }}>
+          <Typography variant="caption" sx={{ color: "text.secondary" }}>
             AI SDK Gateway
           </Typography>
         </Box>
         <ThemeModeToggle
           mode={themeMode}
           onToggle={onToggleThemeMode}
-          sx={{ color: "app.sidebarText" }}
+          sx={{ color: "text.primary" }}
         />
       </Stack>
 
-      <List disablePadding sx={{ display: "grid", gap: 1 }}>
+      <List disablePadding sx={{ display: "grid", gap: 0.5 }}>
         {user ? (
           <NavItem
             active={route === "portal"}
@@ -150,9 +152,9 @@ export function Sidebar({
       </List>
 
       {route === "portal" && user ? (
-        <Stack spacing={1.25}>
+        <Stack spacing={1}>
           <Box sx={{ px: 1, pt: 0.5 }}>
-            <Typography variant="caption" sx={{ color: "app.sidebarMuted", fontWeight: 600 }}>
+            <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 600, textTransform: "uppercase", fontSize: "0.68rem", letterSpacing: "0.5px" }}>
               用户前台
             </Typography>
           </Box>
@@ -174,9 +176,9 @@ export function Sidebar({
       {route === "admin" && admin ? (
         <Stack spacing={2}>
           {adminNavGroups.map((group) => (
-            <Stack key={group.label} spacing={1.25}>
+            <Stack key={group.label} spacing={1}>
               <Box sx={{ px: 1, pt: 0.5 }}>
-                <Typography variant="caption" sx={{ color: "app.sidebarMuted", fontWeight: 600 }}>
+                <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 600, textTransform: "uppercase", fontSize: "0.68rem", letterSpacing: "0.5px" }}>
                   {group.label}
                 </Typography>
               </Box>
@@ -207,15 +209,15 @@ export function Sidebar({
             borderColor: "app.sidebarBorder",
             bgcolor: "app.sidebarSurface",
             color: "inherit",
-            borderRadius: 1.25
+            borderRadius: "6px"
           }}
         >
           <Stack spacing={1.25}>
             <Box sx={{ minWidth: 0 }}>
-              <Typography variant="body2" sx={{ fontWeight: 720 }} noWrap>
+              <Typography variant="body2" sx={{ fontWeight: 600 }} noWrap>
                 {user.name}
               </Typography>
-              <Typography variant="caption" sx={{ color: "app.sidebarMuted" }} noWrap>
+              <Typography variant="caption" sx={{ color: "text.secondary" }} noWrap>
                 {user.username}
               </Typography>
             </Box>
@@ -225,19 +227,14 @@ export function Sidebar({
               startIcon={<LogoutIcon />}
               onClick={onUserLogout}
               sx={{
-                borderColor: "rgba(255,255,255,0.42)",
-                borderRadius: 1,
-                color: "#f8fafc",
-                bgcolor: "rgba(255,255,255,0.08)",
+                width: "100%",
+                borderColor: "app.sidebarBorder",
+                color: "text.primary",
+                bgcolor: "transparent",
+                borderRadius: "6px",
                 "&:hover": {
-                  bgcolor: "rgba(255,255,255,0.14)",
-                  borderColor: "#f8fafc"
-                },
-                "& .MuiButton-startIcon": {
-                  color: "inherit"
-                },
-                "& .MuiSvgIcon-root": {
-                  color: "inherit"
+                  bgcolor: "app.sidebarHover",
+                  borderColor: "text.primary"
                 }
               }}
             >
@@ -254,14 +251,14 @@ export function Sidebar({
           borderColor: "app.sidebarBorder",
           bgcolor: "app.sidebarSurface",
           color: "inherit",
-          borderRadius: 1.25
+          borderRadius: "6px"
         }}
       >
         <Stack direction="row" spacing={1.5} alignItems="center">
           <Box
             sx={{
-              width: 10,
-              height: 10,
+              width: 8,
+              height: 8,
               borderRadius: "50%",
               bgcolor: healthMeta.color,
               flexShrink: 0,
@@ -276,15 +273,15 @@ export function Sidebar({
             }}
           />
           <Box sx={{ minWidth: 0, flexGrow: 1 }}>
-            <Typography variant="body2" sx={{ fontWeight: 700 }}>
+            <Typography variant="body2" sx={{ fontWeight: 600 }}>
               {healthMeta.label}
             </Typography>
-            <Typography variant="caption" sx={{ color: "app.sidebarMuted" }}>
+            <Typography variant="caption" sx={{ color: "text.secondary" }}>
               API 服务状态
             </Typography>
           </Box>
           <Tooltip title="刷新状态">
-            <IconButton size="small" onClick={onRefresh} sx={{ color: "app.sidebarText" }}>
+            <IconButton size="small" onClick={onRefresh} sx={{ color: "text.primary" }}>
               <RefreshIcon fontSize="small" />
             </IconButton>
           </Tooltip>
